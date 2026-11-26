@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-26T08:12:52.373Z",
+  "computedAt": "2026-11-26T08:57:32.919Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -14,23 +14,18 @@
         "state": "OPEN"
       },
       {
-        "number": 6118,
-        "updatedAt": "2026-11-26T07:01:55Z",
-        "state": "OPEN"
-      },
-      {
         "number": 6010,
         "updatedAt": "2026-11-26T08:11:23Z",
         "state": "OPEN"
       },
       {
         "number": 6009,
-        "updatedAt": "2026-11-26T08:11:18Z",
+        "updatedAt": "2026-11-26T08:41:30Z",
         "state": "OPEN"
       },
       {
         "number": 5833,
-        "updatedAt": "2026-11-26T08:11:06Z",
+        "updatedAt": "2026-11-26T08:43:47Z",
         "state": "OPEN"
       },
       {
@@ -535,7 +530,7 @@
       },
       {
         "number": 4209,
-        "updatedAt": "2026-11-24T14:08:39Z",
+        "updatedAt": "2026-11-26T08:27:29Z",
         "state": "OPEN"
       },
       {
@@ -667,168 +662,6 @@
           "breaking": false,
           "needsDefinition": false,
           "priority": null,
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: backend\nRisk-flags: public-contract\n\n## Overview\n\nAdds the run's cost to its `manifest.json`: tokens by model, the list-price cost of those tokens, and the run's minutes, written when the run closes. The run manifest (#5903) carries run-start facts only (plugin version, lane, ceremony profile, policy hash, base commit, model profile). The design (`docs/superpowers/specs/2026-11-18-pipeline-economy-design.md`, Goal 7 and `## Phase 11`) asks that every run record what it cost and which policy it ran under, in a file Dispatch can read; the policy half shipped as `policyHash`, and this record adds the cost half.\n\nDollars are list-price equivalents of recorded token usage, one comparable unit, not invoices (the design's Non-goals). The price table that produces them lives today in maintainer-side `tools/pipeline-cost-report/spend.js`, which does not ship; this record moves it into the plugin payload so the shipped close path and the report price tokens identically.\n\n**Complexity:** Medium\n**Estimated tasks:** 6\n\n## Non-Goals\n\n- Model and effort per role: record #6010 \"Record each role's model and effort in the run manifest\".\n- Dispatch reading the new fields. Dispatch's manifest parser (thn-inc/dispatch #1958's `parseRunManifest`) stores nine named fields and ignores every other key, so reading `costUsd` is a change in thn-inc/dispatch, tracked there, not here. This record documents the fields in `docs/reference/run-manifest.md`, the contract Dispatch reads.\n- Real invoices, subscription accounting, or Claude Code's own `total_cost_usd`.\n- A cost for a run whose token rows could not be read: that is `null`, never `0`.\n- Changing how `timing.json` attributes tokens to phases.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| #5903 | Write a run manifest.json when minting a run directory | closed (PR #5944) |\n| #5647 | Attribute dispatched runs' subagent transcripts to timing.json token totals | open, ready; without it a dispatched run's timing has no token totals (73 of 94 closed runs in its replay), so this record's cost would be `null` for most standard-lane runs |\n| #5967 | Read transcript usage through one shared max-per-message.id reader | open, ready; exposes the 5-minute / 1-hour cache-write split in `readUsage`, which list-price cost needs (the two rates differ) |\n\n## Current State\n\n- `plugin/bin/lib/run-manifest/write.js`: `initRunManifest` (mint, never overwrites) and `fillRunManifest(runDir, fields, deps)`; `FILL_ONLY_NULL = ['pluginVersion', 'policyHash', 'baseCommit', 'modelProfile']` with a `FILL_VALID` shape check per field; `lane` first-known-wins; `ceremonyProfile` the one overwrite; `MANIFEST_VERSION = 1`; a `spec-N` child directory never gets its own manifest. Every write is best-effort with one stderr line on failure.\n- `docs/reference/run-manifest.md` documents the nine fields, the writers per field, and the reading rules (\"ignore fields you do not know\", \"check both locations\", archive moves the manifest with the run).\n- `plugin/bin/lib/timing/at-close.js` `writeTimingAtClose(runDir, { tokens, env, homeDir, boundMs })` writes `timing.json` when a run closes. Every closing path calls it (`hooks.js close-run` and `teardown-run`, the reconciler's `archiveRunDir`, and `plugin/bin/timing-at-close.js`, the detached token pass `spawnTokenPass` starts). Token totals come from the run's own transcript, clipped to the run's lifetime; a `timing.json` that already has token totals is kept byte-identical; a `spec-N` child gets none.\n- `plugin/bin/lib/timing/run-timing.js` `deriveTiming` joins transcript usage rows into `timing.phases[*].tokens` and `timing.totals.tokens` (`{ input, output, cacheRead, cacheCreate }`), `timing.totals.modelMix` (turn-start counts per model id, not tokens) and `timing.dispatches` (`aggregateDispatches` in `plugin/bin/lib/timing/derive.js`: `byTier` and `byRole` buckets of subagent `tokens`, each item carrying `rawModel` and `tier`). `timing.totals.minutes` is the union of phase spans, not elapsed time.\n- `plugin/bin/lib/timing/transcript.js` `readUsage` keeps the maximum of each usage field per `message.id`; it does not return the cache-write split (#5967 adds it).\n- `tools/pipeline-cost-report/spend.js` (#5914) holds `PRICES` (dollars per million tokens, dated `2026-11-03`; per family `[input, output, cache read, 5-minute cache write, 1-hour cache write]` for fable, opus, sonnet, haiku), `familyOf(id)` (substring match, else `unpriced`), and `priceRequest(u)` (Haiku's long-prompt rate per request over 100k tokens). `tools/pipeline-cost-report/guards.js:20` already requires a plugin module (`../../plugin/bin/lib/markdown-blocks.js`), so a tool requiring plugin code is the existing direction.\n- Driver lane: each worker launch's step event carries `usage`, `costUsd`, `sessionId` and the launched `model` (`plugin/bin/lib/driver/steps.js` around lines 725-811), written to the run's `events.jsonl`.\n\n## Deliverables\n\n- [ ] `plugin/bin/lib/pricing/prices.js` (new): `PRICES`, `familyOf`, `priceRequest` moved from `tools/pipeline-cost-report/spend.js` unchanged in behaviour; `spend.js` requires them from the plugin path and keeps no copy.\n- [ ] `plugin/bin/lib/run-manifest/cost.js` (new): `deriveRunCost({ rows, events, manifest, closedAt, runStartAt })` returns `{ tokensByModel, costUsd, priceDate, unpricedModels, costPartial, minutes, closedAt }`. `rows` are per-request usage rows read through `readUsage` (`plugin/bin/lib/timing/transcript.js`, with #5967's `message.id` and cache-write split) from the run's main-session transcript and from each subagent transcript the token pass resolved, clipped to the run's lifetime exactly as the timing pass clips them; `deriveRunCost` never reads `timing.json`'s summed tokens, and `timing.json` is unchanged. Session lanes: per model id (each row's `model`), the sum of those rows; each row is priced with `priceRequest`, so Haiku's per-request long-prompt rate applies to main-session and subagent requests alike. A row with no cache-write split prices all of its cache write at the 5-minute rate, the rule `tools/pipeline-cost-report/spend.js` applies today. Driver lane: per launched model, the sum of each worker step event's `usage`. An unrecognised model id is listed in `unpricedModels` and left out of `costUsd`. `costUsd` is `null` when no token source was read, and `costPartial: true` when some sources were read and some were not (a transcript not found, an event with `usage: null`). `closedAt` is the run's close time (`runStartAt` and `closedAt` are passed by the close path; see the `writeTimingAtClose` deliverable), never the time of the fill. `minutes` is elapsed wall-clock from `runStartAt` to `closedAt`, to one decimal, and `null` when either is unknown.\n  One token source per lane, chosen by `manifest.lane`: the driver lane prices from its worker step events only, every other lane from the transcript rows only, so nothing is counted twice. A launched alias (`sonnet`, `opus`) is priced by `familyOf` as is and keyed as launched; a step event with `usage: null` makes `costPartial` true. `costUsd` is the sum of `priceRequest` over the priced rows, rounded once to cents. `priceDate` is `PRICES.date`.\n- [ ] `fillRunManifest` accepts the close-out fields with a `FILL_VALID`-style shape check each. `v` stays `1` (`MANIFEST_VERSION` unchanged): `docs/reference/run-manifest.md`'s Compatibility section adds a field without a version bump and reserves a bump for a removed field or a changed type or meaning. The mint writes nothing new; a manifest without the fields reads them as unknown. Fill rules: `closedAt` and `minutes` are fill-only-null. The cost group (`tokensByModel`, `costUsd`, `priceDate`, `unpricedModels`, `costPartial`) is written as one unit: written when `costUsd` is `null`; replaced once more when the stored group has `costPartial: true` or `costUsd: null` and the new group has `costPartial: false` and a non-null `costUsd`; never replaced after a complete group is stored. A partial group never replaces a complete one.\n- [ ] `writeTimingAtClose` fills the manifest after it writes a `timing.json` that has token totals (the token pass), passing the derived cost; a phase-rows-only write fills `closedAt` and `minutes` only. `closedAt` is the run's close time: the timestamp of the run's close event in `events.jsonl` (the event `hooks.js close-run` / `teardown-run` / `archiveRunDir` write), else the last timestamp the timing derivation saw, else `null`; never the detached token pass's own clock. `runStartAt` is the manifest's `createdAt` only when the mint wrote it (the manifest carries `pluginVersion`, `policyHash` or `baseCommit` from the mint, or `run-state.json`'s creation time agrees with it within one minute); for a manifest a fill created, `runStartAt` is the run's first event timestamp, and `minutes` is `null` when neither is known. A `spec-N` child is skipped, as for timing. A failed fill changes nothing about the timing write and leaves one stderr line (the manifest module's existing drop rule).\n- [ ] `docs/reference/run-manifest.md` documents the added fields (still version 1): their types, the `null`, `costPartial` and one-upgrade rules, the price date, that dollars are list-price equivalents priced per request, the 5-minute-rate rule for a row with no cache-write split, and the writer (the close path).\n- [ ] Tests: `tests/bin-lib/pricing/prices.test.js`, `tests/bin-lib/run-manifest/cost.test.js`, and extensions of `tests/bin-lib/run-manifest/write.test.js` and the at-close tests; the existing `tests/pipeline-cost-report/*.test.js` pass unchanged against the moved table.\n\n## Acceptance Criteria\n\n1. `git grep -n \"fable: \\[\" -- tools/` prints nothing and `git grep -n \"fable: \\[\" -- plugin/bin/lib/pricing/prices.js` prints one line (run both once before the change to see the first match in `tools/pipeline-cost-report/spend.js`).\n2. `deriveRunCost` over fixture rows from a main-session transcript on `claude-opus-5-5` and one subagent transcript on `claude-sonnet-5-5` returns both model ids in `tokensByModel` with the summed token counts, and a `costUsd` equal to the sum of `priceRequest` over the fixture's rows, rounded to cents (computed in the test from `prices.js`, not hard-coded), and `priceDate` equal to `PRICES.date`.\n3. A fixture row on a model id no family matches appears in `tokensByModel` and `unpricedModels` and adds nothing to `costUsd`.\n4. A fixture where no transcript resolves gives `costUsd: null`; one with one readable and one unreadable transcript gives a number and `costPartial: true`.\n4a. A Haiku row over 100k prompt tokens in a subagent transcript is priced at the long-prompt rate (the test computes the expected value with `priceRequest`), and a row with a cache write but no 5-minute / 1-hour split prices the whole write at the 5-minute rate.\n5. A driver-lane fixture `events.jsonl` with two worker step events (one `usage` object each, models `sonnet` and `opus` as launched) gives `tokensByModel` keyed by those two models and `costUsd` from their usage.\n6. After `writeTimingAtClose` writes a timing file with token totals for a fixture run, the run's `manifest.json` has `v: 1`, non-null `costUsd`, `tokensByModel`, `minutes` and `closedAt`, and every pre-existing field byte-identical in value; `closedAt` equals the fixture's close-event timestamp, not the test's clock; running the close again changes nothing in the manifest.\n7. A `spec-N` child directory gets no manifest fill from the close path, and a fill into a manifest that is not a JSON object leaves it untouched with one stderr line.\n8. A manifest minted before this change (`v: 1`, nine fields) filled at close gains the new fields, keeps `v: 1`, and keeps its nine fields' values; `git diff` of `write.js` shows `MANIFEST_VERSION` still `1`.\n8a. A stored cost group with `costPartial: true` is replaced by a later complete group (`costPartial: false`); a stored complete group is not replaced by a later complete or partial group; a stored partial group is not replaced by another partial group.\n8b. A manifest created by a fill (no mint facts, `createdAt` the fill's time) gets `minutes` from the run's first event timestamp, and `minutes: null` when the fixture has no events.\n9. `tests/pipeline-cost-report/*.test.js` pass with no edit to their assertions.\n\n## Release Note\n\nEvery pipeline run now records its token use by model, its list-price cost and its minutes in its run manifest when it closes.\n\n## Technical Approach\n\nThe close path already resolves everything cost needs: the token pass resolves the run's main-session and subagent transcripts, and the driver's events carry each worker's usage. Cost re-reads those transcripts' per-request rows rather than `timing.json`'s summed tokens, which carry no model key, no cache-write split and no per-request rows. A pure `deriveRunCost` turns those into the manifest fields, and the existing best-effort `fillRunManifest` writes them. Moving the price table into `plugin/bin/lib/` gives the shipped close path and the maintainer report one table.\n\nDecided while specifying: cost is priced from tokens with the plugin's table for every lane, including the driver, rather than taking the CLI's `total_cost_usd`, so every lane reports in the same unit the design's evidence uses; an unknown model id is listed, never priced at a guessed rate; `minutes` is elapsed time from the run's start to its close, because the design's Goal 1 measures time to a green pull request; the version stays `1`, as the manifest's own Compatibility rule requires for added fields; a partial cost may be upgraded once by a complete one (a close before #5647's attribution, or with a transcript briefly missing, would otherwise freeze a wrong figure), and a complete cost is never rewritten, so a figure Dispatch has copied changes at most from partial to complete.\n\n### Data / API Surface\n\n`manifest.json` adds, at `v: 1`:\n\n| Field | Type | Meaning |\n|---|---|---|\n| `tokensByModel` | object, nullable | `{ \"<model id>\": { \"input\", \"output\", \"cacheRead\", \"cacheWrite5m\", \"cacheWrite1h\" } }` |\n| `costUsd` | number, nullable | List-price dollars for the priced models, rounded to cents |\n| `priceDate` | string, nullable | The `PRICES.date` the cost used |\n| `unpricedModels` | string[], nullable | Model ids counted but not priced |\n| `costPartial` | boolean, nullable | `true` when some token sources could not be read |\n| `minutes` | number, nullable | Elapsed minutes from the run's start to `closedAt`, one decimal |\n| `closedAt` | string, nullable | ISO-8601 UTC time the run closed (its close event), not the time of the fill |\n\n`deriveRunCost({ rows, events, manifest, closedAt, runStartAt }) -> { tokensByModel, costUsd, priceDate, unpricedModels, costPartial, minutes, closedAt }`\n\n### Key Files\n\n- `plugin/bin/lib/pricing/prices.js` — new: the price table, moved from the tool\n- `tools/pipeline-cost-report/spend.js` — require the table from the plugin path\n- `plugin/bin/lib/run-manifest/cost.js` — new: `deriveRunCost`\n- `plugin/bin/lib/run-manifest/write.js` — close-out fields, cost-group upgrade rule (`v` stays `1`)\n- `plugin/bin/lib/timing/at-close.js` — fill the manifest after the timing write; pass the transcript rows, `closedAt` and `runStartAt`\n- `plugin/bin/lib/timing/run-timing.js` — expose the clipped per-request rows and resolved subagent transcripts the token pass already reads\n- `plugin/bin/lib/timing/transcript.js` — read only: `readUsage` (with #5967's split) supplies the rows\n- `plugin/bin/timing-at-close.js` — the detached token pass reaches the fill\n- `docs/reference/run-manifest.md` — document the added fields\n- `tests/bin-lib/pricing/prices.test.js` — new\n- `tests/bin-lib/run-manifest/cost.test.js` — new\n- `tests/bin-lib/run-manifest/write.test.js` — extend\n\n## Gotchas\n\n- `timing.totals.minutes` is the union of phase spans, not elapsed time; do not use it for `minutes`.\n- Price by each row's `model` (the model id), never by a dispatch item's `tier`, which is a profile bucket.\n- `timing.dispatches` items carry token totals per agent, not per request; that is why cost reads the subagent transcripts' rows instead.\n- ASSUMPTION — verify at build: after #5967, `readUsage` rows carry the 5-minute / 1-hour cache-write split — via reading `plugin/bin/lib/timing/transcript.js` on main once #5967 has merged. Until then a cache write cannot be priced at the right rate.\n- Count each transcript once: after #5647, the set of transcripts the token pass resolves may include subagent transcripts it also attributes to `timing.dispatches`. Dedupe the transcript paths (by real path) before reading rows, and dedupe rows by `message.id` across files.\n- #5969 (make `initRunManifest`'s never-overwrite rule hold under a concurrent fill) also edits `write.js`. A close-path fill can race a late lane fill; keep every new field fill-only-null so a lost update cannot replace a real value with a wrong one.\n- The token pass runs detached after close (`spawnTokenPass`) and may run after archival moved the run directory; `at-close.js` already follows a moved directory to its archive twin. Fill the manifest at the path the timing write used.\n- The detached token pass must not change any closing path's exit code or timing (`TIMING_BOUND_MS`, 60 s): the fill is synchronous, small, and inside the existing try/catch.\n\n\n<!-- work-fingerprint: pipeline-economy-phase-11:record-a-run-s-tokens-by-model-list-price-cost-and-minutes-i -->\nwork-fingerprint: pipeline-economy-phase-11:record-a-run-s-tokens-by-model-list-price-cost-and-minutes-i\n- Risk proof required: this record carries kept risk flags, so one plan step must contain, per slug, a line `Proof(<slug>): <text>` with a specific proof of at least 20 characters. Lines: `Proof(public-contract): …`.\n",
-        "createdAt": "2026-11-21T17:37:41Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 6009,
-        "state": "OPEN",
-        "title": "Record a run's tokens by model, list-price cost and minutes in its manifest",
-        "updatedAt": "2026-11-26T08:11:18Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": null,
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "## Current State\n\nUnder `consoleAutoResolve`, `console-resolve.js --policy console-auto` computes the merge half once and persists it to `{run-dir}/console.json` as `merge.resolution`. `mergeResolution()` in `plugin/bin/lib/console/resolve.js` honours a needs-human verdict only through `needsHumanVerdict(decisions)`, which reads `decisions.md` at that moment.\n\n`wrap-up/execution-and-verification.md`'s Branch finish then routes the pr-first merge on `console.json`'s `merge.resolution` directly, and `_shared/pr-first-merge.md` never re-reads a needs-human verdict. `review-console.md` orders the Auto-merge short-circuit (which logs the `assess-agent-autonomy` merge-check verdict) before the Auto-resolution short-circuit, but nothing mechanical enforces that order.\n\nObserved in run `2026-11-16T183913-record-5770` (#5770, PR #5780): `console-resolve.js` ran at 20:12:39Z and recorded `merge.resolution: merge`; the short-circuit's `needs-human` verdict was logged at 20:13:22Z, 43 seconds later. Only the dispatched agent's manual hold kept the PR from merging.\n\n## Deliverables\n\n1. At Branch finish, before acting on `merge.resolution: merge`, re-evaluate `needsHumanVerdict` against the current `decisions.md`. On a hit, resolve leave-open (`pending-review`) and log one decision line naming the late verdict.\n2. Have `console-resolve.js` refuse to resolve the merge half, or mark it stale, when the Auto-merge short-circuit applies to the run (live `auto:build` + `auto:merge`/`auto:merge-pending`) but no merge-check verdict line exists yet.\n\n## Acceptance Criteria\n\n- A test where `decisions.md` gains a needs-human merge-check line after `console.json` records `merge.resolution: merge` shows Branch finish leaving the PR open, never merging.\n- A test where `console-resolve.js` runs with the short-circuit applicable and no verdict line yet shows it not resolving `merge`.\n- The in-order path (verdict logged before the resolve) is unchanged: existing `console-resolve` tests stay green.\n\n## Release Note\n\nAn unattended run no longer merges a PR whose merge check asked for a human, even when the check finished after the Review Console resolved.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/console/resolve.js` — needsHumanVerdict / mergeResolution: refuse or mark stale before a verdict exists\n- `plugin/bin/console-resolve.js` — surface the stale merge half\n- `plugin/skills/wrap-up/execution-and-verification.md` — Branch finish re-checks the verdict before merging\n- `plugin/skills/wrap-up/review-console.md` — state the ordering requirement as enforced\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-11-17T05:57:57Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 5833,
-        "state": "OPEN",
-        "title": "wrap-up: Branch finish merges on a console.json merge resolution computed before a later needs-human verdict",
-        "updatedAt": "2026-11-26T08:11:06Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
           "stage": "ready",
           "grants": {
             "build": true,
@@ -6866,96 +6699,6 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n**Related:** #4202, #4180, #4253, #3193, #3977, #3990, #4217, #4285, #4289\n\nOrigin: #4202 whole-branch review (Minor 4)\n\nDefer-reason: needs-human-decision\n\n## Current State\n\n- `pruneResidueFailures` (`plugin/bin/lib/reconcile/cache.js:393-415`) deletes a `residueFailures` entry whose path is gone from disk (`delete failures[key]`, `:403`) *before* its best-effort resolve. It keeps that deletion whatever the resolve returns. A failed resolve is only reported, through the returned `failures` list (`:409-411`).\n- Since #4202, an archive success resolves an escalated `structurally-stuck` entry through `clearResidue` (`:300`), which keeps the entry when that resolve fails (`:315`; pinned by `tests/bin-lib/reconcile/cache.test.js:432`, \"#2724 clearResidue: an escalated entry whose resolve returns resolution-failed is kept for the next pass\"). The same pass's prune then retries exactly once and drops the entry regardless. So a resolve that fails twice in one pass (a `gh` outage) leaves the path orphaned on the consolidated record.\n- This drop-on-failure posture is deliberate. #1892 Deliverable 3 documents it (\"a resolution failure still drops the cache entry\"), and two tests pin it: `cache.test.js:352` (\"…triggers exactly one resolve call… and is still dropped\") and `:371` (\"a resolve failure (gh absent / network) still drops the cache entry, never throws\").\n- #4202's convergence only drops an orphan on a later edit of the record. When the orphan was the last listed path, the record stays open until an unrelated stuck dir is escalated or resolved.\n- `recordResidueError` (`:264`) already records the last failed op and reason on a kept entry (#4180), as `lastResidueError`. The cache schema has no retry counter today.\n\n## Deliverables\n\n1. Make `pruneResidueFailures` keep an escalated entry whose resolve did not land, the way `clearResidue` already does, so the next pass retries it. \"Did not land\" means a status outside `RESIDUE_RESOLVED_STATUSES` (`:288`) or a throw.\n2. Bound the gh-absent posture so a machine with no `gh` does not retry forever. Count failed prune retries on the entry and drop it after a fixed bound, never reverting to drop-on-first-failure. Document the bound beside the existing #1892 comment (`cache.test.js:325`) and in the function's header.\n3. Update the two tests that pin the old posture (`cache.test.js:352`, `:371`) to the new contract, and keep the non-escalated drop test (`:328`) unchanged.\n\n## Acceptance Criteria\n\n- [ ] A `tests/bin-lib/reconcile/cache.test.js` test: an escalated entry whose path is gone and whose injected resolve returns `resolution-failed` survives `pruneResidueFailures`. It fails when the change is reverted.\n- [ ] A test pins the bound: after the configured number of failed prune retries the entry is dropped, and the returned `failures` list still reports each failed resolve.\n- [ ] A non-escalated entry whose path is gone is still dropped without a resolve call (the existing `:328` test passes unchanged).\n- [ ] `npm test` is green.\n\n## Release Note\n\nReconcile no longer forgets a stuck run directory's escalation when GitHub is briefly unreachable.\n\n## Technical Approach\n\nMove the `delete failures[key]` for escalated entries to after the resolve, and delete only on a resolved status or once the retry bound is reached. Store the count on the entry itself (for example `pruneRetries`), next to the `lastResidueError` field #4180 added (`cache.js:65`). That way the bound survives across passes and needs no new cache key. Non-escalated entries keep today's immediate drop, since they never had a GitHub-side record to resolve.\n\n### Key Files\n\n- `plugin/bin/lib/reconcile/cache.js` — `pruneResidueFailures` keep-on-failure plus retry bound; entry schema comment (`:65`)\n- `tests/bin-lib/reconcile/cache.test.js` — new keep and bound tests; rewrite the `:352` and `:371` pins\n\n## Gotchas\n\n- This reverses a documented decision (#1892 Deliverable 3). The record was filed with `Defer-reason: needs-human-decision` for that reason, and the reversal is the subject of this record, not a side effect. A reviewer should confirm the chosen bound before merge. The bound's value is the one open choice, and it is left to the plan to propose.\n- `pruneResidueFailures` is reason-agnostic by design (`cache.test.js:325-327`, shared with #1811's structurally-stuck prune). The keep-on-failure rule applies to every escalated entry, not only `structurally-stuck`.\n- #4253 (open, `ready`) retries a failed residue *escalation* in the same `cache.js`, and its Key Files overlap this record. Its retry bound and this one should share one counter shape and one bound constant, never two parallel conventions. Whichever lands second adopts the first one.\n- Callers read the returned `{ failures }` list for reporting. Keep reporting each failed resolve even when the entry is kept, so a gh outage stays visible in the reconcile output.\n\n## Original request\n\nreconcile: pruneResidueFailures drops an escalated entry whose retry resolve failed, orphaning its path\n\n**Related:** #4202, #4180\n\nOrigin: #4202 whole-branch review (Minor 4)\n\nDefer-reason: needs-human-decision\n\n## Current State\n\n- `pruneResidueFailures` (`plugin/bin/lib/reconcile/cache.js` ~286) deletes a `residueFailures` entry whose path is gone from disk *before* its best-effort resolve, and keeps the deletion whatever that resolve returns.\n- Since #4202, an archive success resolves an escalated `structurally-stuck` entry through `clearResidue`, which keeps the entry when that resolve fails. The same pass's prune then retries exactly once and drops the entry regardless, so a resolve that fails twice in one pass (a `gh` outage) leaves the path orphaned on the consolidated record.\n- This drop-on-failure posture is deliberate: #1892 Deliverable 3 documents it (\"a resolution failure still drops the cache entry\"), and `tests/bin-lib/reconcile/cache.test.js` pins it. Keeping the entry instead, and choosing a retry bound for a machine with no `gh`, reverses that decision, so it needs a human call.\n- #4202's convergence only drops an orphan on a later edit of the record. When the orphan was the last listed path, the record stays open until an unrelated stuck dir is escalated or resolved.\n\n## Deliverables\n\n1. Make `pruneResidueFailures` keep an escalated entry whose resolve did not land (a status outside `RESIDUE_RESOLVED_STATUSES`, or a throw), the way `clearResidue` already does, so the next pass retries it.\n2. Decide and document the gh-absent posture: a machine with no `gh` would otherwise retry forever. Bound it (for example, drop after N failed prune retries, recording the count on the entry) rather than reverting to drop-on-first-failure.\n\n## Acceptance Criteria\n\n- [ ] A `tests/bin-lib/reconcile/cache.test.js` test: an escalated entry whose path is gone and whose injected resolve returns `resolution-failed` survives `pruneResidueFailures`; it fails when the change is reverted.\n- [ ] A test pins the bound: after the configured number of failed prune retries the entry is dropped.\n- [ ] `npm test` is green.\n\n## Release Note\n\nReconcile no longer forgets a stuck run directory's escalation when GitHub is briefly unreachable.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/reconcile/cache.js` — modify\n\n_Filed by `build` via specShapedBody._",
-        "createdAt": "2026-10-24T20:48:17Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 4209,
-        "state": "OPEN",
-        "title": "reconcile: pruneResidueFailures drops an escalated entry whose retry resolve failed, orphaning its path",
-        "updatedAt": "2026-11-24T14:08:39Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
         "body": "Surface: infra\n\n**Related:** #3813, #4125, #4162\n\nOrigin: #3950 final whole-branch review, finding I2 (PR #3992)\nDefer-reason: genuinely-larger\n\n## Current State\n\n`/claude-tweaks:tidy`'s console backfill mode (`plugin/skills/tidy/console-backfill.md`, CLI `plugin/bin/console-backfill.js`) settles Review Console residue left in archived runs: it files records, posts digest lines, and rewrites each `console.json`. Its filing and digest steps go through GitHub Issues only (`gh issue create`, `gh issue comment` on the digest issue), so Step 3's backend gate stops any project whose `work-backend` is not `github-issues` with:\n\n`HELD — console backfill needs work-backend: github-issues; local-files support is tracked as the backlog record \"Console backfill: settle Review Console residue under work-backend: local-files\"`\n\nA `work-backend: local-files` project therefore keeps every unreviewed console item forever, and its session-start residue notice never clears except by a blanket `console-residue.js --ack-all`.\n\n## Deliverables\n\n- Console backfill runs under `work-backend: local-files`: filings become local record files through the same writer `/claude-tweaks:capture` uses under that backend, and digest lines append to the local digest the materiality floor names for that backend (`_shared/materiality-floor.md`).\n- Filing dedup (claim fingerprint and `consolebackfill-item` marker) and digest dedup read the local records and local digest, so the crash-resume guarantees hold as they do on GitHub.\n- Step 3's backend gate passes `local-files`; the HELD line is removed or narrowed to backends that remain unsupported, and its pin in `tests/tidy-console-backfill-conformance.test.js` is updated.\n\n## Acceptance Criteria\n\n- On a `local-files` fixture project with one archived run holding a confirmed finding, a digest-bound finding and a dismissal, a backfill pass leaves one local record, one local digest line, and a `console.json` whose items all carry a `ref`.\n- A second pass over the same fixture writes nothing.\n- A pass interrupted after the record write and resumed after a claim-text change reuses that record rather than writing a second one.\n\n## Release Note\n\nConsole backfill now settles Review Console residue in projects that keep work records as local files.\n\n## Technical Approach\n\nThe CLI already plans from data the procedure hands it, so most of the change belongs in the procedure. `console-backfill.js dispose` takes `--existing` (today a `gh issue list --state all --json number,title,body` array) and `--digest-comments` (the digest issue's comment objects) (`plugin/bin/console-backfill.js:10-22`). Under `local-files`, the procedure builds `--existing` from `queryRecords` (`bin/lib/issues/local-store.js`) mapped to the same `{number,title,body}` shape, and passes the current `specs/digest.md` body as the digest input. `_shared/materiality-floor.md:70` already names that body a trusted single-writer string. Filing uses `createRecord`, the writer `/claude-tweaks:capture` uses under `local-files` (`plugin/skills/capture/SKILL.md:306-310`), and never `allocateId` + `writeRecord`. Digest lines append to `specs/digest.md` (`_shared/materiality-floor.md:158`).\n\n### Key Files\n\n- `plugin/skills/tidy/console-backfill.md` — backend gate and filing/digest steps\n- `plugin/bin/lib/console/backfill-dispose.js` — filing and digest planning\n- `plugin/bin/console-backfill.js` — `dispose` inputs (`--existing`, `--digest-comments`) for the local-files shapes\n- `tests/tidy-console-backfill-conformance.test.js` — HELD-line pin (`:55`)\n- `tests/bin-lib/console/backfill-dispose.test.js` — local-files planning cases\n\n## Gotchas\n\n- Under `local-files`, a record file and `specs/digest.md` are tracked files. Each landed write needs a commit, which the GitHub path never needs, so the procedure must run in a worktree and commit per write. Otherwise a crash leaves an uncommitted record that the next pass's `queryRecords` still sees. That is fine for dedup, but it must be committed before `console.json` cites it.\n- A local record's ref is its id, not `#N` under a GitHub repo. Check that `apply`'s `ref` field and the residue reader (`lib/console/residue.js`) accept the local ref form before the console item is marked settled.\n- The digest dedup input differs by backend: comment objects with author association on GitHub, a trusted file body on local-files (`_shared/materiality-floor.md:63-70`). `heldDigestComment` in `backfill-dispose.js` must take the local form without treating it as an untrusted comment.\n- The HELD line is pinned verbatim in `tests/tidy-console-backfill-conformance.test.js:55` and also names this record by title. Update both when narrowing the gate.\n\n_Filed from the #3950 final review (I2)._\n\n## Original request\n\nConsole backfill: settle Review Console residue under work-backend: local-files\n\nOrigin: #3950 final whole-branch review, finding I2 (PR #3992)\nDefer-reason: genuinely-larger\n\n## Current State\n\n`/claude-tweaks:tidy`'s console backfill mode (`plugin/skills/tidy/console-backfill.md`, CLI `plugin/bin/console-backfill.js`) settles Review Console residue left in archived runs: it files records, posts digest lines, and rewrites each `console.json`. Its filing and digest steps go through GitHub Issues only (`gh issue create`, `gh issue comment` on the digest issue), so Step 3's backend gate stops any project whose `work-backend` is not `github-issues` with:\n\n`HELD — console backfill needs work-backend: github-issues; local-files support is tracked as the backlog record \"Console backfill: settle Review Console residue under work-backend: local-files\"`\n\nA `work-backend: local-files` project therefore keeps every unreviewed console item forever, and its session-start residue notice never clears except by a blanket `console-residue.js --ack-all`.\n\n## Deliverables\n\n- Console backfill runs under `work-backend: local-files`: filings become local record files through the same writer `/claude-tweaks:capture` uses under that backend, and digest lines append to the local digest the materiality floor names for that backend (`_shared/materiality-floor.md`).\n- Filing dedup (claim fingerprint and `consolebackfill-item` marker) and digest dedup read the local records and local digest, so the crash-resume guarantees hold as they do on GitHub.\n- Step 3's backend gate passes `local-files`; the HELD line is removed or narrowed to backends that remain unsupported, and its pin in `tests/tidy-console-backfill-conformance.test.js` is updated.\n\n## Acceptance Criteria\n\n- On a `local-files` fixture project with one archived run holding a confirmed finding, a digest-bound finding and a dismissal, a backfill pass leaves one local record, one local digest line, and a `console.json` whose items all carry a `ref`.\n- A second pass over the same fixture writes nothing.\n- A pass interrupted after the record write and resumed after a claim-text change reuses that record rather than writing a second one.\n\n## Release Note\n\nConsole backfill now settles Review Console residue in projects that keep work records as local files.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/tidy/console-backfill.md` — backend gate and filing/digest steps\n- `plugin/bin/lib/console/backfill-dispose.js` — filing and digest planning\n- `tests/tidy-console-backfill-conformance.test.js` — HELD-line pin\n\n_Filed from the #3950 final review (I2)._\n\n## Plan Review Clarifications\n\nDecided by the user at plan review (2026-10-30), from the plan-review question comment on this record:\n\n- Q1 (when backfill commits land): Reading A — land each pass's record and digest commits before `apply` writes any `console.json`. Do it with `_shared/scratch-worktree.md` §5, then push to origin when the project has an origin remote. Step 5 bases every run's worktree on `origin/{integration-branch}`, so a commit that only reached the local ref stays invisible to the next run. If the landing is refused or is not a fast-forward, or the push fails, stop the pass before `apply`: those items stay unsettled and the outcome is PARTIAL (failed when nothing landed). `console.json` never cites a record that is not on the integration branch. Under `integration-model: pr-first`, a direct landing is not the sanctioned path, so local-files backfill stays HELD there before any write.\n\n",
         "createdAt": "2026-10-24T16:33:56Z",
         "labels": [
@@ -8889,8 +8632,7 @@
     {
       "number": 6120,
       "blockedBy": [
-        6119,
-        6118
+        6119
       ]
     },
     {
