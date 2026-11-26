@@ -669,7 +669,7 @@ function classify(ctx, read, runs, ready, { now, committedAt = null } = {}) {
       .filter((f) => typeof f === 'string' && f !== '');
     return { kind: 'draft-skip', files: files.length ? files : ['unnamed'] };
   }
-  if (base.state === 'pending' || ready.state === 'awaiting') return base.prEventSettle ? { kind: 'pending', settling: true } : { kind: 'pending' };
+  if (base.state === 'pending' || ready.state === 'awaiting') return { kind: 'pending', settling: Boolean(base.prEventSettle) };
   return { kind: 'green' };
 }
 

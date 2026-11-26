@@ -81,7 +81,7 @@ function scopeProblem({ isCrossRepository, headRefName } = {}, files) {
 }
 
 // 'green' | 'pending' | 'red' | 'conflicting' | 'closed'. `ready` is the ready-run read's envelope.
-// `clockInputs` ({ now, committedAt }) switches on the PR-event settle window (#3468); without it the
+// The last argument ({ now, committedAt }) switches on the PR-event settle window (#3468); without it the
 // window is inactive. `judgePr` is the same verdict plus `settling` (a pending that is the window).
 function judgePr(view, headRuns, ready, { now, committedAt = null } = {}) {
   if (!view || view.state !== 'OPEN') return { verdict: 'closed', settling: false };
