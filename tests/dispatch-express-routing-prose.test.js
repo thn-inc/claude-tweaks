@@ -351,7 +351,7 @@ const CLOSED_ROWS = [
   ['| `--check` admits |',
     /\| `drive\.js \{n\} --run "\{minted-run-dir\}" --no-settle --in-flight-prs "\{drain-prs\}"` runs as one background Bash call [^|]*; no express gate call is made for this record \|/, 'AC5.1: admits → drive.js --run as one background call, no express gate'],
   ['| bare drain, `split` or `on`, `express-driver-runner: script`, record is a driver-routable singleton |',
-    /\| the route is never consulted: the queue pull's `driver-lane` exclusion \(`queue-pull-notes\.md`\) never selects it\. A named form \(`#N`, `#N,#M,\.\.\.`\) still reaches the `--check` row above \|/, '#6119: bare drain under express-driver-runner: script → route never consulted, named form still reaches --check'],
+    /\| the route is not consulted for a record the queue pull excluded as `driver-lane` \(`queue-pull-notes\.md`\), because bare drain's ranking never selects it\. A named form \(`#N`, `#N,#M,\.\.\.`\) still reaches the `--check` row above \|/, '#6119: bare drain under express-driver-runner: script → route not consulted for a driver-lane record, named form still reaches --check'],
   ['| a bundle group |',
     /\| today's path; the route is never consulted\. The queue pull keeps a record the driver would take out of bundles \(`bin\/lib\/express\/queue\.js`'s `keepSingleton`\), so a bundle has no member the driver would take \|/, 'a bundle group → today\'s path, never consulted'],
 ];

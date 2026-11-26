@@ -2,14 +2,17 @@
 
 Referenced by `skills/dispatch/SKILL.md` Step 3, cited after the Neighbour-in-flight report (refs #6119).
 
-Read this run's session-scoped `dispatch-exclusions.json` (`bin/lib/dispatch/exclusions.js`'s
-`readExclusions`), filtered to `reason: 'driver-lane'` entries (`records: [number], detail: {runner: 'script'}`
-each). Non-empty: render one line before the rest of Step 3, comma-joining the record numbers:
+The queue pull prints the report line itself, on stderr, on every pull that excludes a record
+(`bin/lib/dispatch/driver-lane.js`), so Step 3 surfaces that line and renders no second one:
 
-`driver-lane: left to the script job: #{a}, #{b}; bare drain skips them under express-driver-runner: script`
+`driver-lane: left to the script job: #a, #b`
+
+It names every record the pull excluded as `reason: 'driver-lane'` in this run's session-scoped
+`dispatch-exclusions.json` (`bin/lib/dispatch/exclusions.js`'s `readExclusions`; `records: [number],
+detail: {runner: 'script'}` each). Quote the line from the pull's output; do not rephrase it. No job drains
+the lane unless a `drive.js --budget` script job runs, and the pull prints the line every firing, so a lane
+nobody drains shows each time.
 
 The records stay in `dispatch-groups.json`: the exclusion is non-removing, so `#N`/`#N,#M,...` still
 dispatch them through the driver route (`driver-route.md`) and bare drain's ranking skips them, as it
-skips oversized groups. No job drains the lane unless a `drive.js --budget` script job runs, so print this
-line on every firing that has entries, never only the first: a lane nobody drains must show each time.
-Same drain+zero-eligible exception as the Blocked-exclusion report (`SKILL.md` Step 3); omit when empty.
+skips oversized groups. Under the default `express-driver-runner: session` the pull prints no such line.

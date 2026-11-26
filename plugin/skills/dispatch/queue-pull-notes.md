@@ -1,6 +1,6 @@
 # Dispatch — Queue-Pull Notes
 
-Loaded by `/claude-tweaks:dispatch` Step 2 on demand. Nothing here changes the queue pull `bin/queue-pull.js` runs — it explains it. Read it when this repo sets `work-links: native` (the `bin/resolve-blockers.js` branch that pull runs), when either pull returns exactly its `--limit` cap (the CLI prints a `--limit`-cap `Warning:` line), or when diagnosing a record that should have been in the queue and wasn't. A `#N` form's line about a named record outside the pool is explained under Typed command, below.
+Loaded by `/claude-tweaks:dispatch` Step 2 on demand. Nothing here changes the queue pull `bin/queue-pull.js` runs — it explains it. Read it when this repo sets `work-links: native` (the `bin/resolve-blockers.js` branch that pull runs), when either pull returns exactly its `--limit` cap (the CLI prints a `--limit`-cap `Warning:` line), when diagnosing a record that should have been in the queue and wasn't, when a `driver-lane` line appears or `express-driver-runner` is `script` (Driver-lane pass, below), or when changing Step 2's `reconcile` call (Reconcile call, below). A `#N` form's line about a named record outside the pool is explained under Typed command, below.
 
 "The first pull" and "the second pull" below name the CLI's queue fetch (`--label auto:build`, `--limit 500`) and its open-issues fetch (`--limit 200`); the retained `queue-pull-script.md` mirrors both. "Above" throughout refers to that pull, not to anything in this file.
 
