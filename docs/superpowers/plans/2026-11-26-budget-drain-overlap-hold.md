@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+, `node --test`.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-26T051448-record-6117/work/6117-spec.md` (record #6117)
+**Spec:** `.claude-tweaks/pipelines/2026-11-26T053027-record-6117/work/6117-spec.md` (record #6117)
 
 ## Global Constraints
 
@@ -16,6 +16,8 @@
 - The session directory is `sessionTmpRoot(sessionId)` from `plugin/bin/lib/session-tmp.js` (pure path, the same root `sessionTmpPath` — which the queue pull uses for `dispatch-near-dup-pairs.json` — joins under). budget.js creates it with `deps.mkdirSync(root, { recursive: true })` instead of calling `sessionTmpPath`, which would `fs.mkdirSync` itself and break the no-file-call rule.
 - File names, exact: `dispatch-drain-prs.json` (the list), `dispatch-drain-prs.missing.json` (the never-written sibling used once the list is broken), `dispatch-near-dup-pairs.json` (the pull's pairs file).
 - The list file's shape is an array of `{ "number": <pr> }` only.
+- The list file is left in place when a `--budget` run ends (spec Decision, Reading A): the queue pull leaves its own session files in the same `ct-session-drive-{ts}-{pid}/` directory, so session-temp cleanup is out of scope. budget.js's header says so.
+- Tests name the three file names as string literals (`'dispatch-drain-prs.json'`, `'dispatch-drain-prs.missing.json'`, `'dispatch-near-dup-pairs.json'`), never by importing new budget.js exports (spec Decision), so the AC7 revert check fails on missing behaviour rather than an undefined import.
 - `--in-flight-prs` / `--near-dup-pairs` stay refused beside `--budget` (exit 2); `parseArgs` is unchanged.
 - Governing skill `.claude/skills/driver-step-addition/SKILL.md`, "A loop above the record", quoted verbatim: "**Facts from the record's ctx, never parsed from its event lines.** `driveRecord` returns the final event plus `outcome`, `claimed` and `claimExit`." — the append reads the returned `facts.final.pr`, never stdout. Also: "**stdout only.** The loop's event sink is never bound to a run directory" — the new stderr lines go through `deps.stderr`, never the event sink; no new event field and no new step name.
 - Scope and edit discipline: "Commit tests only where the task asks for them or the repo already keeps tests for this kind of change, sized like the neighboring test files; scratch checks stay scratch. Touch only what the task requires — a pre-existing bug you notice is a follow-up to report, not a fix to fold in, unless the task cannot work without it. Don't reformat or "improve" adjacent code; edit in place rather than rewrite when the result is the same."
@@ -44,7 +46,7 @@
 
 **Interfaces:**
 - Consumes: `sessionTmpRoot(sessionId) -> string|null` (session-tmp.js); `merge(ctx, deps) -> Promise<{ outcome, reason, ... }>` (merge.js); `deps.writeFile(p, s)`, `deps.mkdirSync(p, opts)`, `deps.lstatType(p) -> { type, code }`.
-- Produces: exported constants `DRAIN_PRS_FILE = 'dispatch-drain-prs.json'`, `DRAIN_PRS_MISSING_FILE = 'dispatch-drain-prs.missing.json'`, `NEAR_DUP_PAIRS_FILE = 'dispatch-near-dup-pairs.json'` from budget.js (added to `module.exports`).
+- Produces: module-private constants `DRAIN_PRS_FILE = 'dispatch-drain-prs.json'`, `DRAIN_PRS_MISSING_FILE = 'dispatch-drain-prs.missing.json'`, `NEAR_DUP_PAIRS_FILE = 'dispatch-near-dup-pairs.json'` in budget.js — not added to `module.exports` (tests use the literals).
 
 - [ ] **Step 1: Extend the fake and write the failing tests**
 
@@ -57,7 +59,7 @@ Tests (names carry the AC clause ids):
 - `AC2.1, AC2.2: a first PR no longer OPEN does not hold the second record` — same, `prViews[101].state = 'MERGED'`; record 2 reaches the supplier (`verdict-not-confirmed`).
 - `AC3.1, AC3.2: a strong pair in the pull's dispatch-near-dup-pairs.json holds the second record near-duplicate` — the fake queuePull writes `files.set(pairsPath, JSON.stringify([{ records: [1, 2] }]))` on every pull; PR 101 `OPEN`, disjoint files (`a.js` vs `b.js`), `closingIssuesReferences: [{ number: 1 }]`; record 2's reason is `near-duplicate`. Also assert `shared.nearDupPairsFile === pairsPath` while driving.
 - `pairs file absent: shared.nearDupPairsFile is null, and goes back to null when a later pull leaves no file` — pull 1 writes the pairs file, pull 2 deletes it (`files.delete`) before returning; assert the value seen by driveOne for record 1 is the path and for record 2 is `null`.
-- `AC4.1, AC4.2: a failed append makes every later driven record hold in-flight-unreadable` — the injected `writeFile` throws on its second call (the first append; the first call is the `[]` write); queue `[1]`, `[2]`, `[3]`. Assert records 2 and 3 have reason `in-flight-unreadable`; `shared.inFlightPrsFile` ends as `path.join(root, DRAIN_PRS_MISSING_FILE)`; exactly one stderr line matching `/drive\.js: drain-PR list .*failed/` (match `listPath` in it). A second variant throws on the first (`[]`) write: record 1 holds `in-flight-unreadable` too.
+- `AC4.1, AC4.2: a failed append makes every later driven record hold in-flight-unreadable` — the injected `writeFile` throws on its second call (the first append; the first call is the `[]` write); queue `[1]`, `[2]`, `[3]`. Assert records 2 and 3 have reason `in-flight-unreadable`; `shared.inFlightPrsFile` ends as `path.join(root, 'dispatch-drain-prs.missing.json')`; exactly one stderr line matching `/drive\.js: drain-PR list .*failed/` (match `listPath` in it). A second variant throws on the first (`[]`) write: record 1 holds `in-flight-unreadable` too.
 - `AC8.1, AC8.2: a driven record returning no final line makes every later record hold in-flight-unreadable` — `driveOne` for record 1 returns `{ final: null, outcome: null, claimed: true, claimExit: 0 }` (no merge call); records 2 and 3 hold `in-flight-unreadable`; exactly one stderr line matching `/#1 .*no final line/`.
 - `a final line with no pr appends nothing and keeps the list healthy` — record 1's final `{ pr: null }`; record 2 not held; file content `[{"number":102}]`; no stderr line matching `drain-PR list`.
 - `driveOne throwing marks the list broken before the throw propagates` — `assert.rejects(run(f))` with the thrown error; the stderr line names `#1`.
@@ -77,7 +79,7 @@ Expected: FAIL — the new cases red (no list file is written, record 2 is never
 - After each successful `checkedPull`: `shared.nearDupPairsFile = pairsPresent ? pairsPath : null`, where present means `deps.lstatType(pairsPath).type !== 'missing'`; a throwing `lstatType` counts as present (fail closed: merge.js then reads and holds).
 - Before each `driveOne(n)`: `shared.inFlightPrsFile = listBroken ? missingPath : listPath` (never cleared between records).
 - `driveOne(n)` in a `try`; on a throw `breakList(`#${n} threw before returning its final line`)` and rethrow. After it returns: no `facts.final` → `breakList(`#${n} returned no final line`)`; else a positive safe-integer `facts.final.pr` → push `{ number: pr }` and `writeList(`append for #${n}`)`. This happens before the existing interrupt check and counting.
-- Update the module header's "Every effect goes through `deps`" paragraph to name the list file and the pairs path, and why (one or two sentences).
+- Update the module header's "Every effect goes through `deps`" paragraph to name the list file and the pairs path, and why (one or two sentences), and say the list file is left in place when the run ends, beside the pull's own session files (spec Decision).
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -86,7 +88,7 @@ Expected: PASS, every case.
 
 - [ ] **Step 5: Prove the new tests discriminate (AC7.1, AC7.2)**
 
-Never `git stash`. Copy the edited budget.js aside (`cp -p plugin/bin/lib/driver/budget.js "{scratchpad}/budget.js.new"`), restore the pre-change file with `git show HEAD:plugin/bin/lib/driver/budget.js > plugin/bin/lib/driver/budget.js`, run `node --test tests/bin-lib/driver/budget.test.js` and record which new cases fail (every new case must fail; the pre-existing ones may fail only where they reference the new exports), then restore with `cp -p "{scratchpad}/budget.js.new" plugin/bin/lib/driver/budget.js` and re-run to green.
+Never `git stash`. Copy the edited budget.js aside (`cp -p plugin/bin/lib/driver/budget.js "{scratchpad}/budget.js.new"`), restore the pre-change file with `git show HEAD:plugin/bin/lib/driver/budget.js > plugin/bin/lib/driver/budget.js`, run `node --test tests/bin-lib/driver/budget.test.js` and record which new cases fail (every new case must fail; every pre-existing case stays green, since no test imports a new export), then restore with `cp -p "{scratchpad}/budget.js.new" plugin/bin/lib/driver/budget.js` and re-run to green.
 Expected: every new case red on the reverted file; all green after restoring.
 
 - [ ] **Step 6: Commit**

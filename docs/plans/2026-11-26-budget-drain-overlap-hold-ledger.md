@@ -2,3 +2,4 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
+| 1 | ops | Branch-divergence: origin/main was 1 commit ahead at pre-flight (resume) | open | Pre-verification catch-up (Common Step 5) merges origin/main before verification |
