@@ -507,7 +507,7 @@ test('AC5.1: in an unprotected repo (CLEAN) a drain never merges a PR whose chec
   const rollups = {
     empty: { rollup: [], reason: 'timeout' },
     partial: { rollup: [{ name: 'a', status: 'IN_PROGRESS', conclusion: null }, { name: 'b', status: 'COMPLETED', conclusion: 'SUCCESS' }], reason: 'timeout' },
-    cancelled: { rollup: [{ name: 'a', status: 'COMPLETED', conclusion: 'CANCELLED' }], reason: 'red' },
+    cancelled: { rollup: [{ name: 'a', status: 'COMPLETED', conclusion: 'CANCELLED' }], reason: 'timeout' },
     headRun: { rollup: OK, runs: [{ workflowName: 'w', status: 'in_progress', conclusion: '' }], reason: 'timeout' },
   };
   for (const [name, c] of Object.entries(rollups)) {
@@ -576,8 +576,20 @@ test('classifyPr: closed, conflicting, draft and green verdicts', () => {
   assert.equal(classifyPr(view(), [], { state: 'met' }), 'green');
   assert.equal(classifyPr(view({ isDraft: true }), [], { state: 'met' }), 'pending');
   assert.equal(classifyPr(view({ mergeable: 'CONFLICTING' }), [], { state: 'awaiting' }), 'conflicting');
-  assert.equal(classifyPr(view(), [{ workflowName: 'w', status: 'completed', conclusion: 'cancelled' }], { state: 'met' }), 'red');
+  assert.equal(classifyPr(view(), [{ workflowName: 'w', status: 'completed', conclusion: 'cancelled' }], { state: 'met' }), 'pending');
   assert.equal(classifyPr(view(), [], { state: 'draft-skip-without-ready-trigger' }), 'red');
+});
+
+test('classifyPr: a held newest run is pending, a newer success over a cancelled run is green, a non-held non-OK conclusion stays red', () => {
+  const T1 = '2026-11-26T10:00:00Z';
+  const T2 = '2026-11-26T11:00:00Z';
+  assert.equal(classifyPr(view(), [{ workflowName: 'w', status: 'completed', conclusion: 'action_required', startedAt: T1, databaseId: 1 }], { state: 'met' }), 'pending');
+  assert.equal(classifyPr(view(), [
+    { workflowName: 'w', status: 'completed', conclusion: 'cancelled', startedAt: T1, databaseId: 1 },
+    { workflowName: 'w', status: 'completed', conclusion: 'success', startedAt: T2, databaseId: 2 },
+  ], { state: 'met' }), 'green');
+  const weird = view({ statusCheckRollup: [{ name: 'x', status: 'COMPLETED', conclusion: 'WEIRD' }] });
+  assert.equal(classifyPr(weird, [], { state: 'met' }), 'red');
 });
 
 // The Step 2.5 table's header columns and Value column, parsed from the shared contract.
