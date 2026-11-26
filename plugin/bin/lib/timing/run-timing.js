@@ -214,10 +214,11 @@ function dispatchFileReads(dispatches, paths, cwd) {
 }
 
 // The dispatches value as timing.json carries it: each item without
-// procedureFileRows and transcriptPath, which only dispatchFileReads reads.
+// procedureFileRows and transcriptPath (which only dispatchFileReads reads) and
+// usageRows (the cost derivation's input, carried by deriveTiming's costRows).
 function stripInternalFields(dispatches) {
   if (!dispatches || !Array.isArray(dispatches.items)) return dispatches;
-  return { ...dispatches, items: dispatches.items.map(({ procedureFileRows: _rows, transcriptPath: _path, ...item }) => item) };
+  return { ...dispatches, items: dispatches.items.map(({ procedureFileRows: _rows, usageRows: _usage, transcriptPath: _path, ...item }) => item) };
 }
 
 // runDir -> { ok: true, timing, out, events, runState } | { ok: false, error }.
@@ -261,13 +262,13 @@ async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, dea
   const { timing, out, events, runState } = base;
   const withTokens = wantTokens === undefined ? transcriptPaths.length > 0 : wantTokens;
   const outNotes = [...notes];
-  if (!withTokens) return { ok: true, timing, out, tokens: null, guard: null, notes: outNotes, deadlineHit: false };
+  if (!withTokens) return { ok: true, timing, out, tokens: null, guard: null, notes: outNotes, deadlineHit: false, costRows: null };
 
   const read = readUsageImpl || ((p, o) => require('./transcript').readUsage(p, o));
   // A closed run has worktree null; worktreeAtClose keeps the path (#3023).
   const worktree = givenWorktree !== undefined ? givenWorktree : priorWorktree(runState);
   const at = cwd === undefined ? process.cwd() : cwd;
-  const hit = () => ({ ok: true, timing, out, tokens: null, guard: null, notes: outNotes, deadlineHit: true });
+  const hit = () => ({ ok: true, timing, out, tokens: null, guard: null, notes: outNotes, deadlineHit: true, costRows: null });
   const transcripts = [];
   const clip = clipToRunWindow ? runWindow(runDir, events, runState) : null;
   const inClip = (row) => { const ms = Date.parse(row && row.ts); return ms >= clip.start && ms <= clip.end; };
@@ -317,7 +318,10 @@ async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, dea
   if (outNotes.length) timing.notes = outNotes;
   timing.dispatches = stripInternalFields(dispatches);
   timing.questions = deriveQuestions(rows);
-  return { ok: true, timing, out, tokens, guard, notes: outNotes, deadlineHit: false };
+  // The cost derivation's inputs, never part of timing: the clipped rows, the transcript list, the pre-strip
+  // items, and the cwd the transcript paths were resolved against.
+  const costRows = { rows, transcripts, cwd: at, items: Array.isArray(dispatches.items) ? dispatches.items : [] };
+  return { ok: true, timing, out, tokens, guard, notes: outNotes, deadlineHit: false, costRows };
 }
 
 // kept usage rows -> [{ id, askTs, answerTs, questions }], one per AskUserQuestion

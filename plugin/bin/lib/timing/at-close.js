@@ -19,14 +19,18 @@
 // (creation through close), so two runs of one session transcript never share
 // them. The read-check-write runs under the run dir's .timing.lock; a run dir a
 // concurrent archive moved away is followed to its archive twin, never
-// recreated. Nothing here throws: a failure is one SKIP line in the run's
+// recreated. The close also fills the run's manifest.json (#6009): closedAt and minutes on every
+// closing path, the list-price cost group on the token paths (a kept close upgrades a partial or
+// null-cost stored group, never rewrites timing.json). Nothing here throws: a failure is one SKIP line in the run's
 // decisions.md (_shared/auto-decision-log.md's Degrade-trace rule).
 'use strict';
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { lstatType } = require('../path-guard');
-const { derivePhaseTiming, deriveTiming, hasTokenTotals, writeTimingFile } = require('./run-timing');
+const { derivePhaseTiming, deriveTiming, hasTokenTotals, writeTimingFile, readEvents } = require('./run-timing');
+const { fillRunManifest, MANIFEST_FILE } = require('../run-manifest/write');
+const { costRowsFrom, deriveRunCost } = require('../run-manifest/cost');
 const { priorWorktree } = require('../run-state-worktree');
 const { acquireLock, releaseLock } = require('../file-lock');
 const timingSkip = require('../log-decision/timing-skip');
@@ -39,6 +43,12 @@ const TIMING_BOUND_MS = 60000;
 // transcript and holds the lock for milliseconds, so it never borrows the transcript bound.
 // (Read through module.exports at call time, like TIMING_BOUND_MS, so a test can shorten it.)
 const PHASE_LOCK_WAIT_MS = 2000;
+// The cap on a kept close's cost re-derive (ms), inside the close deadline: the re-derive shares that
+// deadline with finish's step-yield write, so an uncapped re-derive could spend the yield's time. The
+// trade-off: a kept re-derive that needs longer than the cap fills no cost this close (the stored group
+// stays partial; a later close retries), where an uncapped one would finish and drop the yield.
+// (Read through module.exports at call time, like TIMING_BOUND_MS, so a test can shorten it.)
+const KEPT_COST_BOUND_MS = 15000;
 
 const PHASE_ONLY = 'timing.json phase rows written without token totals';
 const NOTHING_WRITTEN = 'no timing.json written';
@@ -206,6 +216,110 @@ function write(runDir, timing, skip, deadlineAt, needRunState) {
   return { dir: twin, result: { status: 'failed', tokens: false, skip: `condition: run dir and its archive twin are gone → fallback: ${NOTHING_WRITTEN}` } };
 }
 
+// The manifest at dir, parsed: null when absent or not JSON (the fill reports an unusable file itself).
+function readManifestOrNull(dir) {
+  try { return JSON.parse(fs.readFileSync(path.join(dir, MANIFEST_FILE), 'utf8')); } catch { return null; }
+}
+
+function warnManifestFailure(err) {
+  try { process.stderr.write(`claude-tweaks: run-manifest: ${errText(err)}\n`); } catch { /* never break a close */ }
+}
+
+const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const stampOf = (e) => Date.parse(e && e.ts);
+const liveEvents = (events) => (Array.isArray(events) ? events : []).filter((e) => e && e.type !== 'worktree-reaped' && Number.isFinite(stampOf(e)));
+
+// closedAt, in the spec's order: run-state.json's updatedAt once its status is clean, else the last
+// event ts (worktree-reaped aside), else null. Never the clock.
+function closedAtOf(runState, events) {
+  if (isObj(runState) && runState.status === 'clean' && typeof runState.updatedAt === 'string' && Number.isFinite(Date.parse(runState.updatedAt))) return runState.updatedAt;
+  const live = liveEvents(events);
+  if (!live.length) return null;
+  return live.reduce((a, b) => (stampOf(b) > stampOf(a) ? b : a)).ts;
+}
+
+// The run's start for `minutes`: the manifest's createdAt when the mint wrote it, else the first event.
+// A manifest a fill created carries the fill's own clock in createdAt, which would make `minutes` about 0,
+// so createdAt counts only when the manifest has a mint-written fact (pluginVersion, policyHash, baseCommit)
+// or agrees with run-state.json's createdAt within one minute (the spec's close-path `runStartAt` rule, #6009).
+function runStartAtOf(manifest, runState, events) {
+  const m = isObj(manifest) ? manifest : null;
+  const mintFacts = m && ['pluginVersion', 'policyHash', 'baseCommit'].some((k) => m[k] != null);
+  if (m && typeof m.createdAt === 'string') {
+    const created = Date.parse(m.createdAt);
+    const rsCreated = isObj(runState) && typeof runState.createdAt === 'string' ? Date.parse(runState.createdAt) : NaN;
+    if (Number.isFinite(created) && (mintFacts || (Number.isFinite(rsCreated) && Math.abs(created - rsCreated) <= 60000))) return m.createdAt;
+  }
+  const live = liveEvents(events);
+  if (!live.length) return null;
+  return live.reduce((a, b) => (stampOf(b) < stampOf(a) ? b : a)).ts;
+}
+
+// One fill of dir's manifest.json after a close (#6009): closedAt and minutes always, the cost group
+// when withCost. base is a derivePhaseTiming result (its events and runState are the close's own),
+// costRows deriveTiming's. A spec-N child gets none. Every throw is one stderr line; nothing here
+// changes the close's result.
+function fillManifestAtClose(dir, { base, costRows = null, withCost = false } = {}) {
+  try {
+    if (isSpecChildDir(dir)) return;
+    const manifest = readManifestOrNull(dir);
+    const events = base.events;
+    const closedAt = closedAtOf(base.runState, events);
+    const runStartAt = runStartAtOf(manifest, base.runState, events);
+    const driver = isObj(manifest) && manifest.lane === 'driver';
+    const input = { manifest, closedAt, runStartAt };
+    if (withCost) {
+      if (driver) input.events = readEvents(path.join(dir, 'driver-events.jsonl')).events || [];
+      else Object.assign(input, costRowsFrom(costRows));
+    }
+    const r = deriveRunCost(input);
+    const fields = { closedAt: r.closedAt, minutes: r.minutes };
+    if (withCost) fields.cost = { tokensByModel: r.tokensByModel, costUsd: r.costUsd, priceDate: r.priceDate, unpricedModels: r.unpricedModels, costPartial: r.costPartial };
+    fillRunManifest(dir, fields);
+  } catch (err) {
+    warnManifestFailure(err);
+  }
+}
+
+// A transcript-backed cost derive that writes no timing.json: -> { costRows, deadlineHit } (the kept
+// close's re-derive). Resolved through module.exports so a test can count its calls.
+async function deriveCloseCost(dir, base, own, { deadlineAt }) {
+  const d = await deriveTiming(dir, {
+    transcriptPaths: own.paths, wantTokens: own.paths.length > 0, cwd: dir, deadlineAt, base, clipToRunWindow: true, scopeDispatchesTo: own.taskCalls,
+  });
+  if (!d.ok) return { costRows: null, deadlineHit: false };
+  return { costRows: d.costRows, deadlineHit: d.deadlineHit };
+}
+
+// A close that found timing.json already carrying token totals (token path): the manifest's times are
+// filled fill-only-null; its cost group is re-derived only while the stored one is partial or null.
+async function fillKeptManifest(dir, { env, homeDir, deadlineAt }) {
+  try {
+    const base = derivePhaseTiming(dir);
+    if (!base.ok) return;
+    const stored = readManifestOrNull(dir);
+    const complete = isObj(stored) && stored.costPartial === false && typeof stored.costUsd === 'number';
+    if (complete) return fillManifestAtClose(dir, { base });
+    // Not deadline-gated: the driver lane's cost reads only the local driver-events.jsonl.
+    if (isObj(stored) && stored.lane === 'driver') return fillManifestAtClose(dir, { base, withCost: true });
+    const own = ownTranscripts(base.runState, { env, homeDir, runId: path.basename(dir), runRoot: runRootOf(dir) });
+    if (!own.paths.length) return fillManifestAtClose(dir, { base });
+    const costDeadlineAt = Math.min(deadlineAt, Date.now() + module.exports.KEPT_COST_BOUND_MS);
+    let c;
+    try {
+      c = await module.exports.deriveCloseCost(dir, base, own, { deadlineAt: costDeadlineAt });
+    } catch (err) {
+      // A throw in the cost re-derive must not cost the manifest its closedAt/minutes: fill the times alone.
+      warnManifestFailure(err);
+      return fillManifestAtClose(dir, { base });
+    }
+    const withCost = !c.deadlineHit && c.costRows !== null;
+    fillManifestAtClose(dir, { base, costRows: c.costRows, withCost });
+  } catch (err) {
+    warnManifestFailure(err);
+  }
+}
+
 const NO_YIELD = 'no step-yield.json written';
 const YIELD_GONE = `condition: run dir and its archive twin are gone → fallback: ${NO_YIELD}`;
 const isArchivedDir = (d) => path.basename(path.dirname(d)) === 'archive';
@@ -283,12 +397,21 @@ function writePhaseTimingSync(runDir) {
   const closeDeadlineAt = Date.now() + boundMs;
   let dir = runDir;
   let result;
+  let filled = null;
   try {
     const p = prepare(runDir);
     if (p.done) result = p.done;
-    else ({ dir, result } = write(runDir, p.base.timing, null, Date.now() + module.exports.PHASE_LOCK_WAIT_MS, p.base.runState !== null));
+    else {
+      filled = p.base;
+      ({ dir, result } = write(runDir, p.base.timing, null, Date.now() + module.exports.PHASE_LOCK_WAIT_MS, p.base.runState !== null));
+    }
   } catch (err) {
     result = { status: 'failed', tokens: false, skip: `condition: timing at close failed (${errText(err)}) → fallback: ${NOTHING_WRITTEN}` };
+  }
+  if (result.status === 'written' && filled) fillManifestAtClose(dir, { base: filled });
+  else if (result.status === 'kept') {
+    // A kept close reads no transcript: its times are filled from a fresh derive (fill-only-null).
+    try { const fresh = derivePhaseTiming(dir); if (fresh.ok) fillManifestAtClose(dir, { base: fresh }); } catch (err) { warnManifestFailure(err); }
   }
   finish(dir, result, { deadlineAt: closeDeadlineAt, boundMs });
   return { status: result.status, skip: result.skip };
@@ -306,6 +429,7 @@ async function writeTimingAtClose(runDir, { tokens = true, env = {}, homeDir = o
   let dir = runDir;
   let result;
   let base = null;
+  let fill = null;
   try {
     const p = prepare(runDir);
     if (p.done) {
@@ -326,6 +450,8 @@ async function writeTimingAtClose(runDir, { tokens = true, env = {}, homeDir = o
         else if (d.deadlineHit) skip = `condition: transcript read passed the ${bound} ms time bound → fallback: ${PHASE_ONLY}`;
         else if (!hasTokenTotals(d.timing)) skip = `condition: ${own.taskCalls.length ? 'own and Task-call transcripts' : 'own transcript'} yielded no token totals (${d.notes.length ? d.notes.join('; ') : 'no usage tokens'}) → fallback: ${PHASE_ONLY}`;
         ({ dir, result } = write(runDir, d.timing, skip, deadlineAt, p.base.runState !== null));
+        const stored = readManifestOrNull(dir);
+        fill = { base: p.base, costRows: d.costRows || null, withCost: hasTokenTotals(d.timing) || (isObj(stored) && stored.lane === 'driver') };
       }
     }
   } catch (err) {
@@ -336,9 +462,13 @@ async function writeTimingAtClose(runDir, { tokens = true, env = {}, homeDir = o
     if (base) {
       try {
         ({ dir, result } = write(runDir, base.timing, `${failed}${PHASE_ONLY}`, Date.now() + module.exports.PHASE_LOCK_WAIT_MS, base.runState !== null));
+        // The phase rows landed: the manifest's times (never its cost, nothing was priced) follow.
+        if (result.status === 'written') fill = { base };
       } catch { /* the failed result above stands */ }
     }
   }
+  if (result.status === 'written' && fill) fillManifestAtClose(dir, fill);
+  else if (result.status === 'kept') await fillKeptManifest(dir, { env, homeDir, deadlineAt: closeDeadlineAt });
   return finish(dir, result, { deadlineAt: closeDeadlineAt, boundMs: closeBoundMs });
 }
 
@@ -374,4 +504,4 @@ function spawnTokenPass(runDir, { env } = {}) {
   }
 }
 
-module.exports = { TIMING_BOUND_MS, PHASE_LOCK_WAIT_MS, ownTranscripts, isSpecChildDir, writeTimingAtClose, writeTimingAtCloseSafe, writePhaseTimingSync, writeStepYieldSafe, logTimingSkip, spawnTokenPass };
+module.exports = { TIMING_BOUND_MS, KEPT_COST_BOUND_MS, PHASE_LOCK_WAIT_MS, ownTranscripts, deriveCloseCost, isSpecChildDir, writeTimingAtClose, writeTimingAtCloseSafe, writePhaseTimingSync, writeStepYieldSafe, logTimingSkip, spawnTokenPass };

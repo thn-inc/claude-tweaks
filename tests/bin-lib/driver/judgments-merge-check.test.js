@@ -306,6 +306,14 @@ describe('merge-check path', () => {
     assert.strictEqual(opts.ceilings.wallClockMs, 30 * 60000);
   });
 
+  test('the merge-check line carries the envelope\'s usage object, the worker line\'s shape (#6009)', async () => {
+    const usage = { input_tokens: 9, output_tokens: 210, cache_read_input_tokens: 3000, cache_creation_input_tokens: 400 };
+    const h = harness({ envelope: { ...OK_ENVELOPE('needs-human'), usage } });
+    await judgeMergeCheck(h.env, h.ctx);
+    const ev = h.events.filter((e) => e.step === 'merge-check');
+    assert.deepStrictEqual(ev[0].extra, { verdict: 'needs-human', floor: 'none', model: M('standard'), effort: null, usage });
+  });
+
   test('the merge-check event: status by verdict, extra carries verdict and floor, detail bounded, rationale nowhere else', async () => {
     const h = harness({ envelope: OK_ENVELOPE('needs-human', 'x'.repeat(5000)) });
     await judgeMergeCheck(h.env, h.ctx);

@@ -213,7 +213,7 @@ test('#1929 AC2: readUsage streams rows, sums procedure bytes for skills Reads o
   assert.equal(rows.reduce((s, r) => s + r.procedureBytes, 0), 18);
   const assistants = rows.filter((r) => r.role === 'assistant');
   assert.deepEqual(assistants.map((r) => r.toolRoundTrip), [false, false, false, false, false]);
-  assert.deepEqual(assistants[0], { ts: '2026-09-05T13:50:00.000Z', role: 'assistant', inputTokens: 10, outputTokens: 20, cacheRead: 300, cacheCreate: 40, toolRoundTrip: false, procedureBytes: 0, model: null, turnClasses: {}, turnStart: true, contextTokens: 350, procedureFiles: { 'skills/review/SKILL.md': 1 } });
+  assert.deepEqual(assistants[0], { ts: '2026-09-05T13:50:00.000Z', role: 'assistant', inputTokens: 10, outputTokens: 20, cacheRead: 300, cacheCreate: 40, cacheWrite1h: 0, cacheWrite5m: 40, messageId: null, toolRoundTrip: false, procedureBytes: 0, model: null, turnClasses: {}, turnStart: true, contextTokens: 350, procedureFiles: { 'skills/review/SKILL.md': 1 } });
   assert.equal(assistants[3].inputTokens, 100);
   assert.equal(users[0].inputTokens, 0);
   // #1929 whole-branch review fix 1: a duplicate message.id (same turn,
@@ -882,9 +882,9 @@ test('AC1.2: the three workflow items carry the run id and their workflowPhase; 
     ['d1', null, null], ['d2', null, null],
     ['w1', 'wf-run-1', 'review'], ['w2', 'wf-run-1', 'review'], ['w3', 'wf-run-1', 'review'],
   ]);
-  // the two keys follow notFound
+  // the two keys follow notFound; the internal usageRows (stripped before timing.json) comes last
   const keys = Object.keys(r.items[0]);
-  assert.deepEqual(keys.slice(keys.indexOf('notFound')), ['notFound', 'workflowRunId', 'workflowPhase']);
+  assert.deepEqual(keys.slice(keys.indexOf('notFound')), ['notFound', 'workflowRunId', 'workflowPhase', 'usageRows']);
 });
 
 test('AC2.1: workflow items take their tier from the meta model alias', async () => {
@@ -1541,4 +1541,45 @@ test('readWorkerDispatches never throws: a directory in place of the file and a 
   const r = readWorkerDispatches(file, { fsImpl });
   assert.deepEqual(r.items, []);
   assert.match(r.notes[0], /not readable \(EACCES\)/);
+});
+
+test('readUsage rows carry messageId and the cache-write split', async () => {
+  const dir = tmpSubagents();
+  const f = path.join(dir, 'split.jsonl');
+  const line = (ts, id, usage) => JSON.stringify({ type: 'assistant', timestamp: ts, message: { ...(id ? { id } : {}), role: 'assistant', model: 'claude-sonnet-5-5', content: [], usage } });
+  fs.writeFileSync(f, [
+    line('2026-11-26T10:00:00.000Z', 'm1', { output_tokens: 5 }),
+    line('2026-11-26T10:00:01.000Z', 'm1', { output_tokens: 9, cache_creation_input_tokens: 300, cache_creation: { ephemeral_1h_input_tokens: 100 } }),
+    line('2026-11-26T10:00:02.000Z', null, { cache_creation_input_tokens: 70 }),
+    JSON.stringify({ type: 'user', timestamp: '2026-11-26T10:00:03.000Z', message: { role: 'user', content: [] } }),
+  ].join('\n') + '\n');
+  const rows = await readUsage(f, {});
+  assert.equal(rows[0].messageId, 'm1');
+  assert.equal(rows[0].cacheCreate, 300);
+  assert.equal(rows[0].cacheWrite1h, 100);
+  assert.equal(rows[0].cacheWrite5m, 200);
+  assert.equal(rows[1].messageId, 'm1');
+  assert.deepEqual([rows[1].cacheCreate, rows[1].cacheWrite1h, rows[1].cacheWrite5m], [0, 0, 0]);
+  assert.equal(rows[2].messageId, null);
+  assert.equal(rows[2].cacheCreate, 70);
+  assert.equal(rows[2].cacheWrite5m, rows[2].cacheCreate);
+  assert.equal(rows[2].cacheWrite1h, 0);
+  assert.equal(rows[3].messageId, null);
+  assert.deepEqual([rows[3].cacheWrite1h, rows[3].cacheWrite5m], [0, 0]);
+});
+
+test('readDispatches items keep their kept rows internally', async () => {
+  const dir = tmpSubagents();
+  fs.writeFileSync(path.join(dir, 'agent-k1.jsonl'), [
+    aLine('user', '2026-11-26T10:00:00.000Z', null, null, [0, 0, 0, 0]),
+    aLine('assistant', '2026-11-26T10:00:10.000Z', 'k-1', 'claude-sonnet-5-5', [1, 2, 3, 4]),
+    aLine('assistant', '2026-11-26T10:00:20.000Z', 'k-2', 'claude-sonnet-5-5', [1, 2, 3, 4]),
+    aLine('assistant', '2026-11-26T11:00:00.000Z', 'k-3', 'claude-sonnet-5-5', [1, 2, 3, 4]),
+  ].join('\n') + '\n');
+  const all = await readDispatches(dir);
+  assert.equal(all.items[0].usageRows.length, 4);
+  const w = { start: Date.parse('2026-11-26T09:59:00.000Z'), end: Date.parse('2026-11-26T10:30:00.000Z') };
+  const clipped = await readDispatches(dir, { window: w });
+  assert.equal(clipped.items[0].usageRows.length, 3);
+  assert.equal(clipped.items[0].usageRows.reduce((s, r) => s + r.inputTokens, 0), clipped.items[0].tokens.input);
 });

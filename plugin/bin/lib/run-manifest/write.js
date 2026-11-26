@@ -6,6 +6,9 @@
 //   initRunManifest — the mint writes the file once, with the gathered facts. Never overwrites.
 //   fillRunManifest — a later step sets a field that was still null. Fields are only ever added;
 //                     the one overwrite is `ceremonyProfile`, which tracks the latest verdict.
+//                     The close fills `closedAt` and `minutes` (fill-only-null) and the cost group
+//                     (#6009) as one unit: written while no cost is stored, upgraded once from a
+//                     partial or null-cost group to a complete one, never after a complete group.
 //
 // Nothing here throws and nothing changes a caller's outcome: a failed write is dropped with one
 // stderr line. manifest.json is not run initialization — it carries none of the files (decisions.md,
@@ -39,6 +42,37 @@ const FILL_VALID = Object.freeze({
     && MODEL_STANCES.includes(v.stance)
     && (v.ceiling === null || typeof v.ceiling === 'string'),
 });
+// The close-out times, filled only while still null.
+const CLOSE_FIELDS = Object.freeze(['closedAt', 'minutes']);
+const CLOSE_VALID = Object.freeze({
+  closedAt: (v) => typeof v === 'string' && v.length > 0 && !Number.isNaN(Date.parse(v)),
+  minutes: (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0,
+});
+// The cost fields, validated and written as one unit.
+const COST_GROUP = Object.freeze(['tokensByModel', 'costUsd', 'priceDate', 'unpricedModels', 'costPartial']);
+const TOKEN_KEYS = Object.freeze(['input', 'output', 'cacheRead', 'cacheWrite5m', 'cacheWrite1h']);
+const isCount = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const COST_VALID = Object.freeze({
+  tokensByModel: (v) => isObject(v)
+    && Object.values(v).every((t) => isObject(t) && TOKEN_KEYS.every((k) => isCount(t[k]))),
+  costUsd: isCount,
+  priceDate: (v) => typeof v === 'string',
+  unpricedModels: (v) => Array.isArray(v) && v.every((m) => typeof m === 'string'),
+  costPartial: (v) => typeof v === 'boolean',
+});
+// A group has exactly two valid shapes (the two deriveRunCost emits): unread, every field null, or
+// read, every field typed. A mixed shape could never be upgraded or compared, so it is ignored.
+const validCostGroup = (g) => isObject(g)
+  && (COST_GROUP.every((k) => g[k] === null) || COST_GROUP.every((k) => g[k] !== undefined && COST_VALID[k](g[k])));
+
+// Whether a valid new group may be stored over what the manifest holds: while no cost is stored
+// (an unread group yields to any read group), and once from a partial group to a complete one.
+function mayWriteCost(manifest, group) {
+  if (manifest.costUsd == null) return true;
+  return manifest.costPartial === true && group.costPartial === false;
+}
+
 // A multi-spec parent's per-spec child directory: one manifest lives at the top-level run dir.
 const SPEC_CHILD_DIR = /^spec-\d+$/;
 
@@ -161,6 +195,22 @@ function fillRunManifest(runDir, fields = {}, deps = {}) {
       changed.push('ceremonyProfile');
     }
 
+    for (const key of CLOSE_FIELDS) {
+      const value = input[key];
+      if (value === undefined || value === null || manifest[key] != null || !CLOSE_VALID[key](value)) continue;
+      manifest[key] = value;
+      changed.push(key);
+    }
+
+    const group = input.cost;
+    if (validCostGroup(group) && mayWriteCost(manifest, group)) {
+      for (const key of COST_GROUP) {
+        if (key in manifest && canonicalJson(group[key]) === canonicalJson(manifest[key])) continue;
+        manifest[key] = group[key];
+        changed.push(key);
+      }
+    }
+
     if (changed.length > 0) d.writeFileAtomic(file, serialize(manifest));
     return { changed };
   } catch (err) {
@@ -169,4 +219,4 @@ function fillRunManifest(runDir, fields = {}, deps = {}) {
   }
 }
 
-module.exports = { MANIFEST_FILE, MANIFEST_VERSION, LANES, CEREMONY_PROFILES, initRunManifest, fillRunManifest };
+module.exports = { MANIFEST_FILE, MANIFEST_VERSION, LANES, CEREMONY_PROFILES, CLOSE_FIELDS, COST_GROUP, initRunManifest, fillRunManifest };
