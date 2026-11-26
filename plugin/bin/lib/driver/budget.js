@@ -34,10 +34,9 @@
 // hold applies as it does in a dispatch drain. A list that cannot be trusted (a failed write, a
 // record that returned no final line or threw) makes every later record hold as
 // in-flight-unreadable. The list file is left in place when the run ends, beside the pull's own
-// session files in the same session directory. The
-// queue-pull module's own stdout (Warnings, AUTO lines) is routed to deps.stderr, so the
-// driver's stdout carries JSON event lines only. The event sink is never bound to a run
-// directory: these run-level lines go to stdout alone.
+// session files in the same session directory. The queue-pull module's own stdout (Warnings,
+// AUTO lines) is routed to deps.stderr, so the driver's stdout carries JSON event lines only.
+// The event sink is never bound to a run directory: these run-level lines go to stdout alone.
 const path = require('node:path');
 const { STEP, BUDGET_STEP, createEventSink, yieldToEventLoop, firstLine, errorText } = require('./events');
 const { STEPS, eligibilityOptions } = require('./steps');
