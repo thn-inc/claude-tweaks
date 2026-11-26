@@ -768,11 +768,11 @@ test('attemptLongPathRemoval: on win32, a LONG-path worktree git refused (locked
 
 test('#2566: reapMerged on win32 finishes a removal git abandoned mid-deletion under an ORDINARY-length root (the reported deep-node_modules case), and the worktree is reaped', { skip: STUB_SKIP || MID_DELETE_SKIP.skip }, () => {
   const { root, wtPath, runDir } = buildReapableFixture();
-  const wrapper = installGhWrapper([{ number: 55, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }]);
   const { release } = induceMidDeleteFailure(wtPath);
   const calls = [];
   const fsRmSync = (p, opts) => { calls.push(p); release(); fs.rmSync(wtPath, opts); };
   let result;
+  const wrapper = installGhWrapper([{ number: 55, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }]);
   try {
     result = reapMerged({ cwd: root, platform: 'win32', fsRmSync });
   } finally {
@@ -833,10 +833,10 @@ test('#2566: a locked worktree on win32 is never force-removed — the real fail
 
 test('#2566: when the fallback itself also fails on win32, the existing removal-failed escalation still fires with the fallback\'s own error', { skip: STUB_SKIP || MID_DELETE_SKIP.skip }, () => {
   const { root, wtPath } = buildReapableFixture();
-  const wrapper = installGhWrapper([{ number: 9, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }]);
   const { release } = induceMidDeleteFailure(wtPath);
   const fsRmSync = () => { throw new Error('EPERM: permission denied, unrelated to path length'); };
   let result;
+  const wrapper = installGhWrapper([{ number: 9, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }]);
   try {
     result = reapMerged({ cwd: root, platform: 'win32', fsRmSync });
   } finally {

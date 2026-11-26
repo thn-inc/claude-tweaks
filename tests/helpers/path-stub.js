@@ -60,9 +60,9 @@ function writeStubDir(name, script) {
 }
 
 function installStub(name, script) {
-  const { dir, remove } = writeStubDir(name, script);
+  const { dir, envPath, remove } = writeStubDir(name, script);
   const hadPath = process.env.PATH !== undefined;
-  process.env.PATH = hadPath ? dir + path.delimiter + process.env.PATH : dir;
+  process.env.PATH = envPath;
   let restored = false;
   return function restore() {
     if (restored) return;

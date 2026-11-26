@@ -31,7 +31,6 @@ test('AC4.1: STUB_SKIP_REASON is the spec text, and stubSkipFor gives the reason
   assert.strictEqual(stubSkipFor('linux'), false);
   assert.strictEqual(stubSkipFor('darwin'), false);
   assert.strictEqual(STUB_SKIP, stubSkipFor(process.platform));
-  assert.strictEqual(STUB_SKIP, process.platform === 'win32' && STUB_SKIP_REASON);
 });
 
 test('writeStubDir writes an executable stub and its envPath without touching PATH, and remove() deletes the dir', () => {
@@ -52,7 +51,7 @@ test('writeStubDir writes an executable stub and its envPath without touching PA
 
 test('writeStubDir envPath is the dir alone when PATH is unset', (t) => {
   const saved = process.env.PATH;
-  t.after(() => { process.env.PATH = saved; });
+  t.after(() => { if (saved === undefined) delete process.env.PATH; else process.env.PATH = saved; });
   delete process.env.PATH;
   const { dir, envPath, remove } = writeStubDir('ct-w', '#!/bin/sh\nexit 0\n');
   t.after(remove);

@@ -770,7 +770,7 @@ test('#4421: an over-budget return after archive ran persists ownerlessNonClean 
   assert.equal(cacheJson().lastRunAt ?? null, null, 'finalize still owns the freshness stamp');
 });
 
-// Runs on win32: the pass returns before archive under a module-stubbed budget, so the cache stays as seeded whatever gh answers.
+// Runs on win32: archive never runs (the budget trips first, or archive is not requested) under a module-stubbed budget, so the cache stays as seeded whatever gh answers.
 test('#4421: an over-budget return that never ran archive leaves a persisted ownerlessNonClean and its zero-since stamp untouched', async () => {
   for (const [label, nth, checks] of [
     ['budget exceeded before archive', 1, ['archive']],

@@ -654,7 +654,7 @@ test('#4029 M3: one context turn renders "over 1 turn", any other count "turns"'
   assert.ok(two.some((l) => l.includes(' tokens over 2 turns · ')), two.join('\n'));
 });
 
-// Runs on win32: without a launchable gh stub the open-record lookup fails open (the fixture's bare .git dir has no remote for a real gh to query), and the assertions read only the staged file, timing.json and the printed budget line.
+// Runs on win32: the open-record lookup fails open without the stub (see budgetTree); assertions read only the staged file, timing.json and the budget line.
 test('#4029 M1: a rewrite without --check-budgets carries the existing budget verdict forward unchanged', async () => {
   const { root, dir, envPath } = budgetTree();
   assert.equal((await runIn(root, envPath, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets'])).status, 0);
@@ -671,7 +671,9 @@ test('#4029 M1: a rewrite without --check-budgets carries the existing budget ve
 // A stub `gh` (a writeStubDir dir, handed through the injected PATH as `envPath`) answers the
 // open-record lookup (`[]` unless `ghAnswer` is given), so no test reaches real gh. On win32 a
 // bare executable stub is not launchable: the lookup then fails open, which every test here
-// tolerates except the two that skip win32.
+// tolerates except the two that skip win32. Why it tolerates it: the fixture's `.git` is an empty
+// directory, not a repository (and the `git: false` test has no `.git` at all), so a real gh finds
+// no remote to query and the lookup fails open, the same answer the stub gives for no open record.
 function budgetTree({ config = 'ceremony-profile: fast-lane\n', policy = 'fast-lane-run-round-trip-ceiling: 5\n', git = true, ghAnswer = '[]' } = {}) {
   const root = fs.realpathSync(scratchDir('ct-budget-cli-'));
   const { envPath } = writeStubDir('gh', `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(ghAnswer)});\n`); // removed at process exit, like root
@@ -690,7 +692,7 @@ const runIn = (cwd, envPath, args) => run(args, { cwd, env: { ...process.env, PA
 const TC_SESSION = path.join(TC_FIX, 'session.jsonl');
 const stagedFiles = (dir) => (fs.existsSync(path.join(dir, 'staged')) ? fs.readdirSync(path.join(dir, 'staged')) : []);
 
-// Runs on win32: without a launchable gh stub the open-record lookup fails open (the fixture's bare .git dir has no remote for a real gh to query), and the assertions read only the staged file, timing.json and the printed budget line.
+// Runs on win32: the open-record lookup fails open without the stub (see budgetTree); assertions read the staged file, timing.json and the budget line.
 test('#4029 AC2.1: a budget-breach fixture produces a staged item', async () => {
   const { root, dir, id, envPath } = budgetTree();
   const r = await runIn(root, envPath, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
@@ -755,7 +757,7 @@ test('AC9.1: the gh host probe reads the injected env and writes its one-time ho
   assert.match(r.stderr, /^claude-tweaks: .*acme\.ghe\.com.* — gh calls get GH_HOST=acme\.ghe\.com$/m);
 });
 
-// Runs on win32: without a launchable gh stub the open-record lookup fails open (the fixture's bare .git dir has no remote for a real gh to query), and the assertions read only the staged file, timing.json and the printed budget line.
+// Runs on win32: the open-record lookup fails open without the stub (see budgetTree); assertions read timing.json, the staged files, the budget line and decisions.md.
 test('#4029: no transcript leaves round-trip and procedure budgets unmeasured', async () => {
   const { root, dir, envPath } = budgetTree();
   const r = await runIn(root, envPath, ['--run', dir, '--check-budgets', '--markdown']);
@@ -768,7 +770,7 @@ test('#4029: no transcript leaves round-trip and procedure budgets unmeasured', 
   assert.match(fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8'), /^- SKIP \d{2}:\d{2}:\d{2} — efficiency budget \(degraded\): condition: round-trips, procedure-kb unmeasured \(no transcript rows\)/m);
 });
 
-// Runs on win32: without a launchable gh stub the open-record lookup fails open (the fixture's bare .git dir has no remote for a real gh to query), and the assertions read only the staged file, timing.json and the printed budget line.
+// Runs on win32: the open-record lookup fails open without the stub (see budgetTree); assertions read only the budget checks in the --json output.
 test('#4029: a transcript that cannot be read leaves the transcript-backed budgets unmeasured, not ok', async () => {
   const { root, dir, envPath } = budgetTree();
   const r = await runIn(root, envPath, ['--run', dir, '--transcript', path.join(root, 'missing.jsonl'), '--check-budgets', '--json']);
@@ -778,7 +780,7 @@ test('#4029: a transcript that cannot be read leaves the transcript-backed budge
   assert.equal(checks['procedure-kb'], 'unmeasured');
 });
 
-// Runs on win32: without a launchable gh stub the open-record lookup fails open (the fixture's bare .git dir has no remote for a real gh to query), and the assertions read only the staged file, timing.json and the printed budget line.
+// Runs on win32: the open-record lookup fails open without the stub (see budgetTree); assertions read stderr, timing.json and the staged file.
 test('#4029: a config.yml without ceremony-profile falls back to standard with a note', async () => {
   const { root, dir, envPath } = budgetTree({ config: 'mode: auto\n', policy: 'standard-run-round-trip-ceiling: 5\n' });
   const r = await runIn(root, envPath, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
@@ -792,7 +794,7 @@ test('#4029: a config.yml without ceremony-profile falls back to standard with a
   assert.ok(fs.readFileSync(path.join(dir, 'staged', `efficiency-budget-${path.basename(dir)}.md`), 'utf8').startsWith('Title: Efficiency budget: standard runs over'));
 });
 
-// Runs on win32: without a launchable gh stub the open-record lookup fails open (the fixture's bare .git dir has no remote for a real gh to query), and the assertions read only the staged file, timing.json and the printed budget line.
+// Runs on win32: the open-record lookup fails open without the stub (see budgetTree); assertions read only the staged file, timing.json and the budget line.
 test('#4029: a ceiling of 0 disables its budget and a disabled budget stages nothing', async () => {
   const { root, dir, envPath } = budgetTree({ policy: 'fast-lane-run-round-trip-ceiling: 0\n' });
   const r = await runIn(root, envPath, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets']);
@@ -802,7 +804,7 @@ test('#4029: a ceiling of 0 disables its budget and a disabled budget stages not
   assert.match(r.stdout, /^Budget \(fast-lane\): round-trips 10\/0 disabled/m);
 });
 
-// Runs on win32: without a launchable gh stub the open-record lookup fails open (the fixture's bare .git dir has no remote for a real gh to query), and the assertions read only the staged file, timing.json and the printed budget line.
+// Runs on win32: the open-record lookup fails open without the stub (see budgetTree); assertions read only the staged file, timing.json and the budget line.
 test('#4029: --check-budgets --json keeps stdout a single JSON document carrying the budget key', async () => {
   const { root, dir, envPath } = budgetTree();
   const r = await runIn(root, envPath, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--json']);
@@ -810,7 +812,7 @@ test('#4029: --check-budgets --json keeps stdout a single JSON document carrying
   assert.equal(JSON.parse(r.stdout).budget.staged !== null, true);
 });
 
-// Runs on win32: without a launchable gh stub the open-record lookup fails open (the fixture's bare .git dir has no remote for a real gh to query), and the assertions read only the staged file, timing.json and the printed budget line.
+// Runs on win32: the open-record lookup fails open without the stub (see budgetTree); assertions read only the staged file, timing.json and the budget line.
 test('#4029: without --check-budgets timing.json has no budget key and is otherwise unchanged', async () => {
   const { root, dir, envPath } = budgetTree();
   const strip = (t) => { const { generatedAt, budget, ...rest } = t; return rest; };
@@ -822,7 +824,7 @@ test('#4029: without --check-budgets timing.json has no budget key and is otherw
   assert.deepEqual(strip(readTiming(dir)), strip(plain));
 });
 
-// Runs on win32: without a launchable gh stub the open-record lookup fails open (the fixture's bare .git dir has no remote for a real gh to query), and the assertions read only the staged file, timing.json and the printed budget line.
+// Runs on win32: with no .git the lookup fails open, so the stub is not needed (see budgetTree); assertions read stderr, timing.json and the staged dir.
 test('#4029: a staging failure (run dir not anchored under a checkout) is reported, never fatal', async () => {
   const { root, dir, envPath } = budgetTree({ git: false });
   const r = await runIn(root, envPath, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
