@@ -56,9 +56,10 @@
 // example `oversized` owns the grouping block that writes dispatch-groups.json and the `blocked`
 // appends, and `target-missing` owns the integration-branch and run-dir resolution). Omitting a
 // setup pass, or naming an unknown reason or id, throws TypeError. Omit is a test-only contract
-// (no shipped caller passes it); because an omitted pass leaves groups the cache blob would then
-// misdescribe, the write-back pass writes nothing (no writeOrder call) whenever the omit set is
-// non-empty.
+// (no shipped caller passes it, but `runBudget`'s `omit: ['driver-lane']` (#6119)); because an omitted pass before `write-back`
+// leaves groups the cache blob would then misdescribe, the write-back pass writes nothing (no
+// writeOrder call) whenever the omit set holds a pass positioned before it in PASSES (today `blocked`,
+// `oversized`); a pass after it cannot change the blob, so omitting only that one still writes it.
 //
 // failOpen is taken across both transports, so a gh-only reader sees `stop` for a pass whose
 // gh fetch fails open (neighbour-in-flight): on `files`, a missing or malformed in-flight or
@@ -95,6 +96,7 @@ const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { sessionTmpPath, envTmpdir } = require('../session-tmp');
 const { resolveBuildAuthority, formatAuthorityLine } = require('../issues/build-authority');
 const { ghOptions } = require('../repo-resolve');
+const { driverLaneExclusions, spawnCommentReader, readDriverRunner } = require('./driver-lane');
 const { GH_TIMEOUT_MS, GH_BATCH_TIMEOUT_MS, GIT_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('../shared-primitives');
 
 const BIN_DIR = path.join(__dirname, '..', '..');
@@ -120,6 +122,7 @@ const PASSES = deepFreeze([
   row('shipped', 'exclusion', 'shipped', true, false, true, 'open', 'skipped-empty'),
   row('blocker-landing', 'exclusion', 'malformed-blocker', true, false, true, 'open', 'same'),
   row('blocker-landing', 'exclusion', 'unlanded-blocker', true, false, true, 'open', 'fails-open'),
+  row('driver-lane', 'exclusion', 'driver-lane', false, true, true, 'open', 'fails-open'),
   row('neighbour-in-flight', 'exclusion', 'neighbour-in-flight', false, true, true, 'stop', 'agent-fetched'),
   row('cross-pr-overlap', 'informational', null, false, false, true, 'open', 'skipped-empty'),
   row('near-dup-pairs', 'informational', null, false, false, true, 'n/a', 'same'),
@@ -871,7 +874,7 @@ function runWriteBack(ctx) {
   }
   aliasFile(ctx, 'alias-dep-freshness', depFile);
 
-  if (ctx.omit.size > 0) return; // an omitted pass leaves groups the blob would misdescribe
+  if ([...ctx.omit].some((id) => PASSES.findIndex((p) => p.id === id) < PASSES.findIndex((p) => p.id === 'write-back'))) return; // an omitted pass before this one leaves groups the blob would misdescribe
   if (state.nativeUnreadable) return; // #5309: a failed native read is never persisted as a verdict
   if (state.depUnreadable) return; // #5311: nor is a fail-closed dependency verdict
   if (state.depFreshFailed) return; // #5310: nor a freshness signal missing its dependencies
@@ -1280,6 +1283,32 @@ function runBlockerLanding(ctx) {
   throw stop;
 }
 
+// #6119: under `express-driver-runner: script` a script job drains driver-routable singletons, so
+// the session drain leaves them: one `driver-lane` entry each (driver-lane.js). Fails open: an
+// unreadable runner or comment read excludes none; only a refused appendExclusion stops the pull.
+// Why here: queue-pull-notes.md.
+function runDriverLane(ctx) {
+  if (ctx.omit.has('driver-lane')) return;
+  const { deps, paths } = ctx;
+  const stream = { write: (s) => deps.stderr(s) };
+  const computed = step(ctx, 'driver-lane', () => {
+    const runner = deps.readDriverRunner({ stderr: stream });
+    if (runner !== 'script') return [];
+    const groups = readJson(paths['dispatch-groups.json']);
+    const policy = deps.expressQueuePolicy({ stderr: deps.stderr });
+    const readComments = ctx.options.transport === 'files'
+      ? () => ({ ok: false, cause: 'comment read unavailable on the files transport' })
+      : spawnCommentReader({ spawnCli: (name, args) => deps.spawnCli(name, args, cliOpts(ctx)) });
+    return driverLaneExclusions({ groups, policy, runner, readComments, stderr: stream });
+  });
+  if (!computed.ok) return;
+  try {
+    for (const e of computed.value) appendExclusion(paths['dispatch-exclusions.json'], e);
+  } catch (err) {
+    throw new QueuePullStopped(`dispatch: queue-pull stopped -- driver-lane exclusion pass hit a corrupt exclusions file: ${errText(err)}`);
+  }
+}
+
 const IN_FLIGHT_ARGV = ['issue', 'list', '--label', 'bot:in-progress', '--state', 'open', '--json', 'number,title,body,labels', '--limit', '200'];
 const IN_FLIGHT_POOL_AUTO = 'AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull';
 // fence 587, byte for byte
@@ -1387,7 +1416,7 @@ function runNearDupPairs(ctx) {
 const RUNNERS = {
   truncate: runTruncate, fetch: runFetch, blocked: runBlocked, oversized: runOversized, 'write-back': runWriteBack,
   'not-spec-shaped': runNotSpecShaped, 'open-pr': runOpenPr, 'target-missing': runTargetMissing, shipped: runShipped,
-  'blocker-landing': runBlockerLanding, 'neighbour-in-flight': runNeighbourInFlight,
+  'blocker-landing': runBlockerLanding, 'driver-lane': runDriverLane, 'neighbour-in-flight': runNeighbourInFlight,
   'cross-pr-overlap': runCrossPrOverlap, 'near-dup-pairs': runNearDupPairs,
 };
 
@@ -1477,6 +1506,7 @@ function defaultDeps(seams = {}) {
     },
     createClaimReader: (...a) => require('../issues/claim-store').createClaimReader(...a),
     expressQueuePolicy: (...a) => require('../express/queue').expressQueuePolicy(...a),
+    readDriverRunner,
     // #5584, the named path (admitNamed). A failed or unparseable fetch reads as null.
     fetchRecord(ctx, number) {
       const r = ghRun(ctx, ['issue', 'view', String(number), '--json', NAMED_FIELDS], { quiet: true });
@@ -1516,7 +1546,7 @@ const bandOf = (r) => (r.facets.priority ? RANK[r.facets.priority] : 3);
 // from the groups. drive.js --budget's pre-screen (driver/budget.js) leaves these groups alone.
 const STAYING_EXCLUSION_REASONS = Object.freeze([...new Set(PASSES.filter((p) => p.kind === 'exclusion' && !p.removes).map((p) => p.reason))]);
 // What the ranking skips: the staying reasons plus `firing`, which the Loop appends between pulls
-// and no pass writes. next-ranking.md's fence spells the same three as a literal;
+// and no pass writes. next-ranking.md's fence spells the same four as a literal;
 // queue-pull.test.js pins this list to exactly that set.
 const RANK_SKIP_REASONS = Object.freeze([...STAYING_EXCLUSION_REASONS, 'firing']);
 

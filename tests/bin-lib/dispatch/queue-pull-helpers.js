@@ -169,7 +169,8 @@ function cannedLanding(seen) {
 
 const POOL = Math.max(1, Math.min(4, (os.availableParallelism ? os.availableParallelism() : os.cpus().length) - 1));
 const PARITY_S1 = () => S1({ parity: true });
-const ALL_REASONS = [...new Set(PASSES.map((p) => p.reason).filter(Boolean))].sort();
+// driver-lane (#6119) writes only under express-driver-runner: script, which no parity fixture sets (queue-pull.test.js covers it).
+const ALL_REASONS = [...new Set(PASSES.map((p) => p.reason).filter((r) => r && r !== 'driver-lane'))].sort();
 const FILES_S1_REASONS = ['blocked', 'malformed-blocker', 'neighbour-in-flight', 'not-spec-shaped', 'oversized', 'target-missing'];
 // `reasons`: the exclusion reasons the config's oracle run writes. On files the three gh-backed
 // probes (open-pr, shipped, unlanded-blocker) fail open as mcp-transport.md documents.
@@ -410,7 +411,9 @@ function assertFailOpenPostures(pool, family, t) {
   const observed = strictest('oracle');
   assert.deepEqual(strictest('module'), observed, 'the module\'s exits give the same postures');
   for (const id of Object.keys(observed)) assert.ok(PASSES.some((p) => p.id === id), `fault rows name a registry id: ${id}`);
-  for (const p of PASSES) assert.equal(p.failOpen, observed[p.id] || 'n/a', `${p.id} (${p.reason || p.kind})`);
+  // driver-lane (#6119) is a no-op under the fixtures' default runner (session), so no fault row reaches it; queue-pull.test.js's AC3.2 and files-transport tests pin its open posture.
+  const UNOBSERVED = { 'driver-lane': 'open' };
+  for (const p of PASSES) assert.equal(p.failOpen, observed[p.id] || UNOBSERVED[p.id] || 'n/a', `${p.id} (${p.reason || p.kind})`);
   // PF6: neighbour-in-flight is open on gh and stop on files; the stricter value wins.
   assert.equal(posture(R['F-inflight'].oracle), 'open');
   assert.equal(posture(R['files-inFlightRaw-missing'].oracle), 'stop');
@@ -610,6 +613,7 @@ function pull(scenario, o = {}) {
       stderr: (s) => errs.push(s),
       now: () => NOW,
       expressQueuePolicy: EXPRESS_OFF,
+      readDriverRunner: () => 'session',
       // Production lets the library spawn resolve-foreign-blockers.js; tests inject through the seam.
       foreignDeps: { spawn: o.foreignSpawn || ((argv) => spawnCli(path.basename(argv[0]), argv.slice(1))) },
       queueOrder: {

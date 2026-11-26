@@ -49,7 +49,7 @@ degrades it to `[]`, so no `firing` entry survives and the stuck group is re-sel
 same stop every append site in the queue pull (`bin/lib/dispatch/queue-pull.js`) takes.
 
 `queue-pull.js --rank` (the ranking, `bin/lib/dispatch/queue-pull.js`'s `rankNext`) reads this same file (absent or unreadable treated as `[]`, per
-`readExclusions`'s own contract) and, via one `groupIsExcluded(g, entries, ['oversized', 'firing', 'neighbour-in-flight'])`
+`readExclusions`'s own contract) and, via one `groupIsExcluded(g, entries, ['oversized', 'firing', 'driver-lane', 'neighbour-in-flight'])`
 call, excludes any matching group from the candidate pool — the same derivation that already
 excludes an oversized group, not a separate one. `next`'s single-iteration alias never appends
 `firing`-reason entries — there is no second iteration in the same firing for it to protect.

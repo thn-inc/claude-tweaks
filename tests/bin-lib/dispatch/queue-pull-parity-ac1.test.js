@@ -73,7 +73,7 @@ describe('#5227 parity (AC1)', { skip: oracleSkip(), timeout: 600_000 }, () => {
   test('AC2.3: removing reasons are absent from dispatch-groups.json while oversized and neighbour-in-flight are present, both sides', () => {
     const removing = PASSES.filter((p) => p.kind === 'exclusion' && p.removes).map((p) => p.reason);
     const staying = [...new Set(PASSES.filter((p) => p.kind === 'exclusion' && !p.removes).map((p) => p.reason))].sort();
-    assert.deepEqual(staying, ['neighbour-in-flight', 'oversized']);
+    assert.deepEqual(staying, ['driver-lane', 'neighbour-in-flight', 'oversized']);
     for (const cfg of MATRIX.filter((c) => c.name.startsWith('S1-'))) {
       for (const [side, r] of sides(R[cfg.name])) {
         const grouped = groupedIn(r);
@@ -81,7 +81,8 @@ describe('#5227 parity (AC1)', { skip: oracleSkip(), timeout: 600_000 }, () => {
         for (const e of entries.filter((x) => removing.includes(x.reason))) {
           for (const n of e.records) assert.ok(!grouped.includes(n), `${cfg.name} ${side}: ${e.reason} #${n} left the groups`);
         }
-        for (const reason of staying) {
+        // driver-lane (#6119) writes only under express-driver-runner: script; these runs leave it unset (queue-pull.test.js covers the pass).
+        for (const reason of staying.filter((x) => x !== 'driver-lane')) {
           const named = entries.filter((e) => e.reason === reason).flatMap((e) => e.records);
           assert.ok(named.length > 0, `${cfg.name} ${side}: a ${reason} entry`);
           for (const n of named) assert.ok(grouped.includes(n), `${cfg.name} ${side}: ${reason} #${n} stays in the groups`);

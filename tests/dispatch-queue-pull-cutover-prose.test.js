@@ -204,7 +204,7 @@ function assertContinuationRanks(t) {
 function assertRankingNamed(t) {
   const p = paragraph(t, '`queue-pull.js --rank`');
   assert.match(p, /`rankNext`/, 'the ranking paragraph must name the module function');
-  assert.match(p, /groupIsExcluded\(g, entries, \['oversized', 'firing', 'neighbour-in-flight'\]\)/);
+  assert.match(p, /groupIsExcluded\(g, entries, \['oversized', 'firing', 'driver-lane', 'neighbour-in-flight'\]\)/);
 }
 function assertNoNextRankingScript(t) {
   assert.ok(!t.includes('next-ranking.md'), 'firing-exclusion.md still points at next-ranking.md');

@@ -567,7 +567,7 @@ test('#5227 queuePull runs every registry pass in order and returns the final gr
   };
   const result = queuePull({ sessionId: 'qp-pull', cwd: own }, deps);
   assert.deepEqual(seen, ['truncate', 'fetch', 'blocked', 'oversized', 'write-back', 'not-spec-shaped', 'open-pr', 'target-missing', 'shipped',
-    'blocker-landing', 'neighbour-in-flight', 'cross-pr-overlap', 'near-dup-pairs'], 'every distinct registry id has a runner and runs once, in registry order');
+    'blocker-landing', 'driver-lane', 'neighbour-in-flight', 'cross-pr-overlap', 'near-dup-pairs'], 'every distinct registry id has a runner and runs once, in registry order');
   assert.deepEqual(result.groups.flat().map((c) => c.number), [9001]);
   assert.deepEqual(result.exclusions, [], 'the pre-seeded non-firing entry is truncated by the first pass');
   assert.equal(fs.readFileSync(paths['dispatch-exclusions.json'], 'utf8'), '[]');
@@ -2244,7 +2244,7 @@ test('#5227 omit: each Task 4 runner is called under omit and its omission remov
     const omitted = pull4(FULL(), { omit: [reason] });
     assert.ok(omitted.cap.order.includes(reason), `${reason}'s runner still runs`);
     assert.deepEqual(entriesOf(omitted, reason), [], reason);
-    assert.equal(omitted.store.written.length, 0, 'omit never persists a cache blob');
+    assert.equal(omitted.store.written.length, 1, 'all four passes sit after write-back, so omitting one cannot change the blob it still writes (#6119)');
     const keepsOthers = reasons.filter((x) => x !== reason && x !== 'shipped' && !(reason === 'not-spec-shaped' && x === 'open-pr') && !(reason === 'open-pr' && x === 'shipped'));
     for (const other of keepsOthers) assert.deepEqual(entriesOf(omitted, other), entriesOf(base, other), `${reason} omitted, ${other}`);
   }
@@ -2630,12 +2630,13 @@ const SWEPT = PASSES.filter((p) => p.kind !== 'setup');
 const informationalFile = { 'cross-pr-overlap': 'dispatch-crosspr-overlap.json', 'near-dup-pairs': 'dispatch-near-dup-pairs.json' };
 
 test('AC2.1: every registry entry that writes a reason, and each informational pass, goes red when omitted', () => {
-  assert.equal(SWEPT.length, 11, 'the sweep covers 11 entries: 9 reasons and 2 informational passes');
+  assert.equal(SWEPT.length, 12, 'the sweep covers 12 entries: 10 reasons and 2 informational passes');
   for (const p of SWEPT) {
     const name = p.reason || p.id;
     const scenario = () => (p.id === 'oversized' ? SFast() : PIPE());
-    const full = pull5(scenario());
-    const omitted = pull5(scenario(), { omit: [name] });
+    const lane = p.id === 'driver-lane' ? { deps: { readDriverRunner: () => 'script', expressQueuePolicy: routablePolicy([], { driverRoutable: () => true }) }, spawn: { 'resolve-record-comments.js': cannedComments({}) } } : {};
+    const full = pull5(scenario(), lane);
+    const omitted = pull5(scenario(), { ...lane, omit: [name] });
     assert.ok(omitted.cap.order.includes(p.id), `${name}: the runner is called under omit`);
     if (p.kind === 'exclusion') {
       assert.ok(entriesOf(full, p.reason).length > 0, `${name}: the full run writes a ${p.reason} entry (a real positive control)`);
@@ -4110,4 +4111,93 @@ test('#5310 control: a cold pull with the search answered prints no dep-freshnes
   const r = pull(S1());
   assert.deepEqual(depWarnings(r), []);
   assert.equal(r.store.written.length, 1);
+});
+
+// ---- #6119: the driver-lane pass (session drain leaves driver-routable singletons to the script job) ----
+
+const LANE_PASS_IDS = ['truncate', 'fetch', 'blocked', 'oversized', 'write-back', 'driver-lane'];
+const LANE_PASSES = PASSES.filter((p, i) => LANE_PASS_IDS.includes(p.id) && PASSES.findIndex((q) => q.id === p.id) === i);
+const routablePolicy = (numbers, over = {}) => () => ({
+  ...EXPRESS_OFF(), driverOn: true, routing: 'on', driverRoutable: (i) => numbers.includes(i.number), ...over,
+});
+const { DRIVER_ESCALATION_MARKER } = require('../../../plugin/bin/lib/driver/settle');
+const TRUSTED_MARKER = { body: `escalated\n${DRIVER_ESCALATION_MARKER}`, authorAssociation: 'OWNER', url: 'u', author: 'a' };
+const cannedComments = (byNumber, seen = []) => (args) => {
+  seen.push(args);
+  return { status: 0, stdout: JSON.stringify(Object.fromEntries(args[0].split(',').map((n) => [n, byNumber[n] || { comments: [], complete: true }]))), stderr: '' };
+};
+const lanePull = (o = {}) => pull(S1(), { passes: LANE_PASSES, ...o, deps: { readDriverRunner: () => 'script', expressQueuePolicy: routablePolicy([9003]), ...(o.deps || {}) } });
+const commentCalls = (r) => r.cliCalls.filter(([n]) => n === 'resolve-record-comments.js');
+
+test('AC1.1 script: one driver-routable singleton and one standard record — only the standard record is selectable', () => {
+  const seen = [];
+  const r = lanePull({ spawn: { 'resolve-record-comments.js': cannedComments({}, seen) } });
+  assert.deepEqual(entriesOf(r, 'driver-lane'), [{ reason: 'driver-lane', records: [9003], detail: { runner: 'script' } }]);
+  assert.deepEqual(groupNumbers(r), [[9001], [9003]], 'the routable record stays in dispatch-groups.json');
+  assert.deepEqual(rankNext(r.json('dispatch-groups.json'), r.json('dispatch-exclusions.json')).map((c) => c.number), [9001]);
+  assert.deepEqual(seen, [['9003']], 'one batched comment read over the routable candidates only');
+});
+
+test('AC1.2 / AC2.1 / AC2.2 session and unset produce byte-identical groups, exclusions and stderr (no comment read)', () => {
+  const run = (deps) => pull(S1(), { passes: LANE_PASSES, deps: { expressQueuePolicy: routablePolicy([9003]), ...deps } });
+  const session = run({ readDriverRunner: () => 'session' });
+  const unset = pull(S1(), { passes: LANE_PASSES, deps: { expressQueuePolicy: routablePolicy([9003]) } });
+  const baseline = pull(S1(), { passes: LANE_PASSES });
+  for (const r of [session, unset]) {
+    assert.deepEqual(commentCalls(r), []);
+    assert.equal(r.text['dispatch-groups.json'], baseline.text['dispatch-groups.json']);
+    assert.equal(r.text['dispatch-exclusions.json'], baseline.text['dispatch-exclusions.json']);
+    assert.equal(r.stderr, baseline.stderr);
+    assert.deepEqual(entriesOf(r, 'driver-lane'), []);
+  }
+});
+
+test('AC5.2 express-driver off with script: nothing excluded, the one ignored line', () => {
+  const r = lanePull({ deps: { expressQueuePolicy: routablePolicy([9003], { driverOn: false, routing: 'off' }) } });
+  assert.deepEqual(entriesOf(r, 'driver-lane'), []);
+  assert.deepEqual(commentCalls(r), []);
+  assert.equal(r.errs.filter((l) => l.startsWith('express-driver-runner: script ignored while express-driver is off')).length, 1);
+});
+
+test('AC9.2 the left-to-the-script-job line on stderr names the excluded record', () => {
+  const r = lanePull({ spawn: { 'resolve-record-comments.js': cannedComments({}) } });
+  assert.ok(r.errs.includes('driver-lane: left to the script job: #9003\n'), r.stderr);
+});
+
+test('AC3.1 through the module: a trusted escalation marker keeps the record selectable', () => {
+  const r = lanePull({ spawn: { 'resolve-record-comments.js': cannedComments({ 9003: { comments: [TRUSTED_MARKER], complete: true } }) } });
+  assert.deepEqual(entriesOf(r, 'driver-lane'), []);
+});
+
+test('AC3.2 through the module: a failed comment spawn keeps the record with one Warning', () => {
+  const r = lanePull({ spawn: { 'resolve-record-comments.js': { status: 1, stdout: '', stderr: 'boom\n' } } });
+  assert.deepEqual(entriesOf(r, 'driver-lane'), []);
+  assert.equal(r.errs.filter((l) => l.startsWith('Warning: driver-lane comment read failed')).length, 1);
+});
+
+test('driver-lane files transport fails open: no spawn, one Warning', () => {
+  const r = lanePull({ transport: 'files', run: noGhOnFiles, prepare: nativeFiles });
+  assert.deepEqual(commentCalls(r), []);
+  assert.deepEqual(entriesOf(r, 'driver-lane'), []);
+  assert.equal(r.errs.filter((l) => l.startsWith('Warning: driver-lane comment read failed')).length, 1);
+});
+
+test('driver-lane: omitting it keeps the records unexcluded, reads nothing, and still writes the queue-order blob', () => {
+  const r = lanePull({ omit: ['driver-lane'], spawn: {} });
+  assert.deepEqual(entriesOf(r, 'driver-lane'), []);
+  assert.deepEqual(commentCalls(r), []);
+  assert.equal(r.store.written.length, 1, 'a pass after write-back cannot change the blob');
+  assert.equal(pull(S1(), { passes: LANE_PASSES, omit: ['oversized'] }).store.written.length, 0, 'a pass before write-back still suppresses it');
+});
+
+test('driver-lane: a corrupt exclusions file stops the pull with the pass-named line; an unrelated throw is a step error', () => {
+  const stop = lanePull({
+    allowThrow: true, spawn: { 'resolve-record-comments.js': cannedComments({}) },
+    deps: { onPass: (id) => { if (id === 'driver-lane') fs.writeFileSync(sessionPaths('qp-t3')['dispatch-exclusions.json'], '{corrupt'); } },
+  });
+  assert.ok(stop.thrown instanceof QueuePullStopped, String(stop.thrown));
+  assert.match(stop.thrown.line, /^dispatch: queue-pull stopped -- driver-lane exclusion pass hit a corrupt exclusions file: /);
+  const soft = lanePull({ deps: { readDriverRunner: () => { throw new Error('runner exploded'); } } });
+  assert.deepEqual(entriesOf(soft, 'driver-lane'), []);
+  assert.ok(soft.errs.some((l) => l.startsWith('queue-pull: driver-lane: runner exploded')), soft.stderr);
 });
