@@ -4,7 +4,7 @@
 
 **Goal:** Document how to run `drive.js --budget` as a Dispatch script job (a launch line that needs no Claude session) and opt this repository into `express-driver-runner: script`.
 
-**Architecture:** Docs plus committed config only. The launch line finds the installed plugin root by reading `installed_plugins.json` and calling the installed build's own `selectEntry` (`plugin/bin/lib/installed-plugins.js`), so the selection rule stays single-sourced and no version path is pinned. The Dispatch job, smoke firing and 20-record trial are post-merge operational steps (the record's own order: policy merge, then enable the job) and are carried in the open-items ledger, not in this plan.
+**Architecture:** Docs plus committed config only. The launch line finds the installed plugin root by reading `installed_plugins.json` and calling the installed build's own `selectEntry` (`plugin/bin/lib/installed-plugins.js`), so the selection rule stays single-sourced and no version path is pinned. The Dispatch job, smoke firing and 20-record trial are post-merge operational steps (the record's own order: policy merge, then enable the job) and are carried in the open-items ledger, not in this plan: the controller writes them as `build`-phase `open` rows at Common Step 4 (`Defer-reason: blocked-dependency`, unblocked by this PR's merge and the release carrying it), one row each — confirm the job host's `installed_plugins.json` version carries `express-driver-runner`; create the Dispatch job (`list_repos`, `create_job`, confirming whether its `command` runs through a shell); the `--budget 1` smoke firing (AC5); the 20-record / 14-day trial and its report (AC2, AC3, AC4.1 guard 1); the abort/revert rule; the closing comment (AC1.2, the job's name, schedule and budget); the guard-3 addendum 14 days after the last merge (AC4).
 
 **Tech Stack:** Markdown, YAML, POSIX `sh`, Node 18+.
 
@@ -32,9 +32,10 @@
 ### Task 1: Script-job section in `docs/driver.md`
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
-- Modify: `docs/driver.md` (new `## Running it as a script job` section right after `## Running it`'s typed-command paragraphs, before `## Picking records: \`--budget\``)
+- Modify: `docs/driver.md` (new `## Running it as a script job` section after `## Build authority`, immediately before `## Picking records: \`--budget\``)
 - Waived `plugin/bin/lib/installed-plugins.js`: read only, Step 1 calls its `selectEntry`
 - Waived `tools/pipeline-cost-report.js`: read only, the trial's measures run after merge (ledger row), not in this build
 
@@ -42,7 +43,7 @@
 - Consumes: `selectEntry(entries, projectPath, { realpath, readFile })` from `{installPath}/bin/lib/installed-plugins.js`.
 - Produces: the launch line the Dispatch job's `command` uses.
 
-- [ ] **Step 1: Write the section.** It states why a script job needs its own launch line (no session, so no `CLAUDE_PLUGIN_ROOT`), gives the launch command below verbatim with `{main checkout}` and `{n}` as the two placeholders, says each part's reason (cwd is the main checkout; `CC_HUB_RUN=1` and the `true |` pipe keep a job runner from reading as a person, citing the typed-command paragraph above; the root comes from the installed build's `selectEntry`, the rule Claude Code applies), and lists the environment needs from Global Constraints, naming #5259 for the `ENV_ALLOW` limit on worker authentication. Launch command (verified by the prototype run recorded below):
+- [ ] **Step 1: Write the section.** It states why a script job needs its own launch line (no session, so no `CLAUDE_PLUGIN_ROOT`), gives the launch command below verbatim with `{main checkout}` and `{n}` as the two placeholders, says each part's reason (cwd is the main checkout; `CC_HUB_RUN=1` and the `true |` pipe keep a job runner from reading as a person, citing "Build authority"'s launcher paragraph by name; the root comes from the installed build's `selectEntry`, the rule Claude Code applies), states that the line needs a POSIX shell (`&&`, `$(…)`, a pipe, nested quotes) — when the job runner passes its `command` to a shell, the line is the command; when it does not, save the line to a file on the job host and make the command `sh {file}` — and lists the environment needs from Global Constraints, naming #5259 for the `ENV_ALLOW` limit on worker authentication. Launch command (verified by the prototype run recorded below):
 
 ```sh
 cd "{main checkout}" && ROOT="$(node -e '
@@ -59,7 +60,7 @@ process.stdout.write(entry.installPath);
 
   Prototype run (Verbatim-command run-once check), with `--help` in place of `--budget {n}`, `{main checkout}` = this repo's main checkout, from `env -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_PLUGIN_ROOT -u CLAUDE_CODE_SESSION_ATTENDED sh launch.sh`: printed `Usage: drive.js #N [#M…]` and the full usage, exit 0.
 
-- [ ] **Step 2: Verify AC1.1** — run the section's command, copied out of the edited `docs/driver.md`, with `--budget {n}` replaced by `--help` and `{main checkout}` by this repo's main checkout, under the same `env -u …` prefix. Expected: the usage text, exit 0. Write the output to `$PIPELINE_RUN_DIR/evidence/ac1-launch-help.txt` (`mkdir -p` first, Bash redirect) and log one `AC evidence` `decisions.md` entry via `log-decision.js --text-file` naming AC1.1, the command shape and the exit code.
+- [ ] **Step 2: Verify AC1.1** — run the section's command, copied out of the edited `docs/driver.md`, with `--budget {n}` replaced by `--help` and `{main checkout}` by this repo's main checkout, under `env -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_SESSION_ATTENDED -u CLAUDE_CODE_REMOTE -u CC_HUB_RUN -u CC_POSTURE -u CC_LAUNCHED_BY -u CLAUDE_PLUGIN_ROOT sh {file}` (every session and launcher variable `docs/driver.md`'s Build authority names, `CLAUDE_CONFIG_DIR` kept). Expected: the usage text, exit 0. Write the output to `$PIPELINE_RUN_DIR/evidence/ac1-launch-help.txt` (`mkdir -p` first, Bash redirect) and log one `AC evidence` `decisions.md` entry via `log-decision.js --text-file` naming AC1.1, the command shape and the exit code.
 - Waived AC1.2: pasting the output into the closing comment happens when the trial window ends (ledger row); the evidence file from Step 2 is its source.
 - [ ] **Step 3: Commit** `docs/driver.md` only: `Document the drive.js script-job launch line — refs #6120`.
 
