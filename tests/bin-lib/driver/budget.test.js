@@ -4,6 +4,8 @@
 // `rankNext` is the module's real ranking, so the expected order is never re-derived here.
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const {
@@ -12,6 +14,8 @@ const {
 const { BUDGET_STEP, STEP } = require(path.join(LIB, 'driver', 'events'));
 const { defineStep, eligibilityOptions } = require(path.join(LIB, 'driver', 'steps'));
 const { newShared } = require(path.join(LIB, 'driver', 'run'));
+const { merge } = require(path.join(LIB, 'driver', 'merge'));
+const { sessionTmpRoot } = require(path.join(LIB, 'session-tmp'));
 const { rankNext, PASSES, STAYING_EXCLUSION_REASONS } = require(path.join(LIB, 'dispatch', 'queue-pull'));
 
 const POLICY_RESOLVED = Object.freeze({
@@ -47,8 +51,11 @@ const MAX_PULLS = 100;
 
 // pulls: returned in turn, the last one forever; an Error entry is thrown. Calls are recorded
 // inside the fakes and asserted after the run returns.
-function fake({ pulls = [EMPTY_PULL], eligibility = () => ({ eligible: true, reasons: [] }), facts = () => undefined, queuePull = null, steps = null } = {}) {
-  const calls = { queuePull: [], rankNext: [], eligibility: [], driveOne: [], appendFile: [] };
+// writeFile: an optional hook (callIndex, path) -> true makes that write throw. The in-memory
+// `files` Map stands in for the session directory the loop writes its drain-PR list into.
+function fake({ pulls = [EMPTY_PULL], eligibility = () => ({ eligible: true, reasons: [] }), facts = () => undefined, queuePull = null, steps = null, writeFile = null } = {}) {
+  const calls = { queuePull: [], rankNext: [], eligibility: [], driveOne: [], appendFile: [], writeFile: [], mkdirSync: [] };
+  const files = new Map();
   const out = [];
   const errs = [];
   let pullIndex = 0;
@@ -58,6 +65,17 @@ function fake({ pulls = [EMPTY_PULL], eligibility = () => ({ eligible: true, rea
     stdout: (s) => { out.push(s); },
     stderr: (s) => { errs.push(s); },
     appendFile: (p, s) => { calls.appendFile.push([p, s]); },
+    writeFile: (p, s) => {
+      calls.writeFile.push([p, s]);
+      if (writeFile && writeFile(calls.writeFile.length, p)) throw new Error('disk full');
+      files.set(p, s);
+    },
+    readFile: (p) => {
+      if (!files.has(p)) throw Object.assign(new Error(`ENOENT: no such file ${p}`), { code: 'ENOENT' });
+      return files.get(p);
+    },
+    mkdirSync: (p, opts) => { calls.mkdirSync.push([p, opts]); },
+    lstatType: (p) => ({ type: files.has(p) ? 'file' : 'missing', code: null }),
     pid: 4242,
     env: { FAKE_ENV: '1' },
     queuePull: (options, moduleDeps) => {
@@ -83,7 +101,7 @@ function fake({ pulls = [EMPTY_PULL], eligibility = () => ({ eligible: true, rea
     return facts(n) || DEFAULT_FACTS;
   };
   return {
-    deps, calls, driveOne,
+    deps, calls, driveOne, files,
     steps: steps || [policyStepWith(POLICY_RESOLVED)],
     driven: () => calls.driveOne.slice(),
     lines: () => out.join('').split('\n').filter(Boolean).map((l) => JSON.parse(l)),
@@ -91,6 +109,11 @@ function fake({ pulls = [EMPTY_PULL], eligibility = () => ({ eligible: true, rea
     get err() { return errs.join(''); },
   };
 }
+
+const SESSION_ROOT = sessionTmpRoot('drive-2026-11-13T090807-4242');
+const LIST_PATH = path.join(SESSION_ROOT, 'dispatch-drain-prs.json');
+const MISSING_PATH = path.join(SESSION_ROOT, 'dispatch-drain-prs.missing.json');
+const PAIRS_PATH = path.join(SESSION_ROOT, 'dispatch-near-dup-pairs.json');
 
 const run = (f, budget = 'all') => runBudget(budget, newShared(), f.deps, { driveOne: f.driveOne, steps: f.steps });
 
@@ -187,6 +210,8 @@ test('AC6.3: an empty queue ends with zero driven', async () => {
   const { options } = f.calls.queuePull[0];
   assert.deepEqual(options, { transport: 'gh', sessionId: 'drive-2026-11-13T090807-4242', cwd: '/main', env: f.deps.env, inputs: {}, omit: [] });
   assert.deepEqual(f.calls.appendFile, [], 'no file write');
+  // The drain-PR list is written empty before the loop, so an empty queue still writes it.
+  assert.deepEqual(f.calls.writeFile, [[LIST_PATH, '[]']]);
 });
 
 test('AC6.4: a top record the pre-screen rules out is skipped once and the run reaches the records below it', async () => {
@@ -437,7 +462,7 @@ test('policy: an unreadable policy exits 1 with no pull and no summary line', as
   assert.deepEqual(f.lines().map((l) => [l.step, l.status, l.run, l.record, l.detail]),
     [[STEP.policy, 'fail', null, null, 'policy unreadable: express-driver (unknown-key)']]);
   assert.match(f.err, /^drive\.js: policy unreadable: express-driver \(unknown-key\)/);
-  assert.deepEqual([f.calls.queuePull.length, f.calls.rankNext.length, f.calls.eligibility.length, f.driven().length, f.calls.appendFile.length], [0, 0, 0, 0, 0]);
+  assert.deepEqual([f.calls.queuePull.length, f.calls.rankNext.length, f.calls.eligibility.length, f.driven().length, f.calls.appendFile.length, f.calls.writeFile.length], [0, 0, 0, 0, 0, 0]);
 });
 
 test('policy: express-driver off drives nothing and ends policy-refused', async () => {
@@ -450,7 +475,7 @@ test('policy: express-driver off drives nothing and ends policy-refused', async 
   const summary = summaryOf(f);
   assert.deepEqual([summary.ended, summary.status, summary.budget], ['policy-refused', 'ok', 2]);
   for (const c of COUNTERS) assert.equal(summary[c], 0, c);
-  assert.deepEqual([f.calls.queuePull.length, f.calls.rankNext.length, f.calls.eligibility.length, f.driven().length, f.calls.appendFile.length], [0, 0, 0, 0, 0]);
+  assert.deepEqual([f.calls.queuePull.length, f.calls.rankNext.length, f.calls.eligibility.length, f.driven().length, f.calls.appendFile.length, f.calls.writeFile.length], [0, 0, 0, 0, 0, 0]);
 });
 
 test('policy: a signal queued during the policy read ends the run with no line, even under express-driver off', async () => {
@@ -490,4 +515,226 @@ test('budget: a signal queued during a record\'s last call ends the loop with no
   assert.deepEqual(f.driven(), [1]);
   assert.equal(f.calls.queuePull.length, 1);
   assert.equal(f.lines().filter((l) => l.step === BUDGET_STEP).length, 0, 'no summary line');
+});
+
+// ---- #6117: the loop's own drain-PR list, handed to the real merge step's drain-overlap hold ----
+
+const scratch = [];
+test.after(() => { for (const d of scratch) fs.rmSync(d, { recursive: true, force: true }); });
+
+// A driveOne that runs the real merge step for record n (merge.js is unchanged) against the loop's
+// own `shared` fields, the way run.js's driveRecord hands them to it. The judgment supplier is
+// reached after the hold and stops `verdict-not-confirmed`, so no later merge path is needed.
+// prs: record -> PR number; prViews: PR number -> the `gh pr view` reply object. `before(n)` runs
+// first; `override(n)` may return facts instead of running merge; `results[n]` collects merge's result.
+function mergeDriveOne(f, shared, { prs, prViews, supplierCalls, before = () => {}, override = () => undefined, results = {}, viewed = [] }) {
+  const main = fs.mkdtempSync(path.join(os.tmpdir(), 'budget-drain-test-'));
+  scratch.push(main);
+  const runDir = path.join(main, '.claude-tweaks', 'pipelines', '2026-11-13T000000-drive');
+  fs.mkdirSync(runDir, { recursive: true });
+  const reply = (value) => ({ code: 0, result: value, invalidRaw: new Map(), degrades: new Map() });
+  return async (n) => {
+    f.calls.driveOne.push(n);
+    before(n);
+    const over = override(n);
+    if (over) return over;
+    const ctx = {
+      record: n, pr: prs[n], repo: 'o/r', branch: `drive-${n}`, base: 'main', head: 'a'.repeat(40),
+      runDir, runRoot: main, mainCheckout: main, worktree: path.join(main, 'wt'), summaryLogged: true, widenedBy: [],
+      inFlightPrsFile: shared.inFlightPrsFile, nearDupPairsFile: shared.nearDupPairsFile,
+    };
+    const mergeDeps = {
+      ghAvailable: () => true,
+      gh: (args) => {
+        if (args[0] === 'issue' && args[1] === 'view') return JSON.stringify({ labels: [{ name: 'auto:build' }, { name: 'auto:merge' }] });
+        throw new Error(`unexpected gh ${args.join(' ')}`);
+      },
+      resolvePolicyCore: (opts) => (opts.keys.includes('integration-model')
+        ? reply({ 'integration-model': { value: 'pr-first', source: 'run-config' } })
+        : reply({ 'merge-verification': { value: 'merge-when-green', source: 'run-config' } })),
+      readFile: (p) => (path.basename(p) === 'run-state.json' ? JSON.stringify({ pr: { number: prs[n] } }) : f.deps.readFile(p)),
+      ghBatch: (args) => {
+        viewed.push([n, Number(args[2])]);
+        const view = prViews[Number(args[2])];
+        if (!view) throw new Error(`unexpected pr view ${args[2]}`);
+        return JSON.stringify(view);
+      },
+      node: () => ({ code: 0, stdout: '', stderr: '' }),
+      writeFile: () => {},
+      emit: () => {},
+      judgments: async () => {
+        supplierCalls.push(n);
+        return { mergeCheck: { verdict: 'needs-human' }, acceptance: { completed: true } };
+      },
+      now: () => 1000,
+      interrupted: () => null,
+      env: {},
+    };
+    const r = await merge(ctx, mergeDeps);
+    results[n] = r;
+    return { final: { pr: prs[n], outcome: r.outcome, merge: { reason: r.reason, detail: r.detail } }, outcome: r.outcome, claimed: true, claimExit: 0 };
+  };
+}
+
+const openView = (...paths) => ({ state: 'OPEN', files: paths.map((p) => ({ path: p })), closingIssuesReferences: [] });
+
+async function runShared(f, driveOne, shared = newShared()) {
+  const code = await runBudget('all', shared, f.deps, { driveOne, steps: f.steps });
+  return { code, shared };
+}
+
+test('AC1.1, AC1.2, AC5.1, AC5.2: the second record\'s merge holds drain-overlap on the first record\'s open PR; the first runs with [] and reaches the supplier', async () => {
+  const f = fake({ pulls: [{ groups: singletons(1, 2), exclusions: [] }] });
+  const shared = newShared();
+  const supplierCalls = [];
+  const results = {};
+  let listSeenByFirst;
+  const driveOne = mergeDriveOne(f, shared, {
+    prs: { 1: 101, 2: 102 }, prViews: { 101: openView('a.js'), 102: openView('a.js') }, supplierCalls, results,
+    before: (n) => { if (n === 1) listSeenByFirst = JSON.parse(f.files.get(LIST_PATH)); },
+  });
+  assert.equal((await runShared(f, driveOne, shared)).code, 0);
+  assert.deepEqual(listSeenByFirst, []);
+  assert.equal(results[1].reason, 'verdict-not-confirmed');
+  assert.deepEqual(supplierCalls, [1], 'the first record reached the supplier; the held second did not');
+  assert.equal(results[2].reason, 'drain-overlap');
+  assert.match(results[2].detail, /in-flight PR 101/);
+  assert.equal(f.files.get(LIST_PATH), '[{"number":101},{"number":102}]');
+});
+
+test('AC2.1, AC2.2: a first PR no longer OPEN does not hold the second record', async () => {
+  const f = fake({ pulls: [{ groups: singletons(1, 2), exclusions: [] }] });
+  const shared = newShared();
+  const supplierCalls = [];
+  const results = {};
+  const viewed = [];
+  const driveOne = mergeDriveOne(f, shared, {
+    prs: { 1: 101, 2: 102 }, prViews: { 101: { ...openView('a.js'), state: 'MERGED' }, 102: openView('a.js') }, supplierCalls, results, viewed,
+  });
+  assert.equal((await runShared(f, driveOne, shared)).code, 0);
+  assert.ok(viewed.some(([n, pr]) => n === 2 && pr === 101), 'the second record\'s hold read the first PR\'s state from the list');
+  assert.equal(results[2].reason, 'verdict-not-confirmed');
+  assert.deepEqual(supplierCalls, [1, 2]);
+});
+
+test('AC3.1, AC3.2: a strong pair in the pull\'s dispatch-near-dup-pairs.json holds the second record near-duplicate', async () => {
+  const f = fake({
+    queuePull: () => {
+      f.files.set(PAIRS_PATH, JSON.stringify([{ records: [1, 2] }]));
+      return { groups: singletons(1, 2), exclusions: [] };
+    },
+  });
+  const shared = newShared();
+  const supplierCalls = [];
+  const results = {};
+  const seen = [];
+  const driveOne = mergeDriveOne(f, shared, {
+    prs: { 1: 101, 2: 102 },
+    prViews: { 101: { ...openView('a.js'), closingIssuesReferences: [{ number: 1 }] }, 102: openView('b.js') },
+    supplierCalls, results,
+    before: () => { seen.push(shared.nearDupPairsFile); },
+  });
+  assert.equal((await runShared(f, driveOne, shared)).code, 0);
+  assert.deepEqual(seen, [PAIRS_PATH, PAIRS_PATH]);
+  assert.equal(results[2].reason, 'near-duplicate');
+  assert.deepEqual(supplierCalls, [1]);
+});
+
+test('pairs file absent: shared.nearDupPairsFile is null, and goes back to null when a later pull leaves no file', async () => {
+  let pulls = 0;
+  const f = fake({
+    queuePull: () => {
+      pulls += 1;
+      if (pulls === 1) {
+        f.files.set(PAIRS_PATH, '[]');
+        return { groups: singletons(1), exclusions: [] };
+      }
+      f.files.delete(PAIRS_PATH);
+      return { groups: singletons(1, 2), exclusions: [] };
+    },
+  });
+  const shared = newShared();
+  const seen = {};
+  const driveOne = async (n) => {
+    seen[n] = [shared.nearDupPairsFile, shared.inFlightPrsFile];
+    return { final: { pr: null }, outcome: 'pending-review', claimed: true, claimExit: 0 };
+  };
+  assert.equal((await runShared(f, driveOne, shared)).code, 0);
+  assert.deepEqual(seen, { 1: [PAIRS_PATH, LIST_PATH], 2: [null, LIST_PATH] });
+});
+
+test('AC4.1, AC4.2: a failed append makes every later driven record hold in-flight-unreadable', async () => {
+  const f = fake({ pulls: [{ groups: singletons(1, 2, 3), exclusions: [] }], writeFile: (i) => i === 2 });
+  const shared = newShared();
+  const supplierCalls = [];
+  const results = {};
+  const driveOne = mergeDriveOne(f, shared, {
+    prs: { 1: 101, 2: 102, 3: 103 }, prViews: { 101: openView('a.js'), 102: openView('b.js'), 103: openView('c.js') }, supplierCalls, results,
+  });
+  assert.equal((await runShared(f, driveOne, shared)).code, 0);
+  assert.equal(results[1].reason, 'verdict-not-confirmed', 'the first record ran with the healthy [] list');
+  assert.equal(results[2].reason, 'in-flight-unreadable');
+  assert.equal(results[3].reason, 'in-flight-unreadable');
+  assert.deepEqual(supplierCalls, [1]);
+  assert.equal(shared.inFlightPrsFile, MISSING_PATH);
+  const lines = f.err.split('\n').filter((l) => /drive\.js: drain-PR list .*failed/.test(l));
+  assert.equal(lines.length, 1);
+  assert.ok(lines[0].includes(LIST_PATH));
+});
+
+test('AC4.1, AC4.2: a failed first write makes the first record hold in-flight-unreadable too', async () => {
+  const f = fake({ pulls: [{ groups: singletons(1, 2), exclusions: [] }], writeFile: (i) => i === 1 });
+  const shared = newShared();
+  const supplierCalls = [];
+  const results = {};
+  const driveOne = mergeDriveOne(f, shared, {
+    prs: { 1: 101, 2: 102 }, prViews: { 101: openView('a.js'), 102: openView('b.js') }, supplierCalls, results,
+  });
+  assert.equal((await runShared(f, driveOne, shared)).code, 0);
+  assert.equal(results[1].reason, 'in-flight-unreadable');
+  assert.equal(results[2].reason, 'in-flight-unreadable');
+  assert.deepEqual(supplierCalls, []);
+  assert.equal(f.calls.writeFile.length, 1, 'no further write once the list is broken');
+  assert.equal(f.err.split('\n').filter((l) => /drive\.js: drain-PR list .*failed/.test(l)).length, 1);
+});
+
+test('AC8.1, AC8.2: a driven record returning no final line makes every later record hold in-flight-unreadable', async () => {
+  const f = fake({ pulls: [{ groups: singletons(1, 2, 3), exclusions: [] }] });
+  const shared = newShared();
+  const supplierCalls = [];
+  const results = {};
+  const driveOne = mergeDriveOne(f, shared, {
+    prs: { 2: 102, 3: 103 }, prViews: { 102: openView('b.js'), 103: openView('c.js') }, supplierCalls, results,
+    override: (n) => (n === 1 ? { final: null, outcome: null, claimed: true, claimExit: 0 } : undefined),
+  });
+  assert.equal((await runShared(f, driveOne, shared)).code, 0);
+  assert.equal(results[2].reason, 'in-flight-unreadable');
+  assert.equal(results[3].reason, 'in-flight-unreadable');
+  assert.deepEqual(supplierCalls, []);
+  assert.equal(shared.inFlightPrsFile, MISSING_PATH);
+  assert.equal(f.err.split('\n').filter((l) => /#1 .*no final line/.test(l)).length, 1);
+});
+
+test('a final line with no pr appends nothing and keeps the list healthy', async () => {
+  const f = fake({ pulls: [{ groups: singletons(1, 2), exclusions: [] }] });
+  const shared = newShared();
+  const supplierCalls = [];
+  const results = {};
+  const driveOne = mergeDriveOne(f, shared, {
+    prs: { 2: 102 }, prViews: { 102: openView('b.js') }, supplierCalls, results,
+    override: (n) => (n === 1 ? { final: { pr: null }, outcome: 'pending-review', claimed: true, claimExit: 0 } : undefined),
+  });
+  assert.equal((await runShared(f, driveOne, shared)).code, 0);
+  assert.equal(results[2].reason, 'verdict-not-confirmed', 'not held');
+  assert.equal(f.files.get(LIST_PATH), '[{"number":102}]');
+  assert.doesNotMatch(f.err, /drain-PR list/);
+});
+
+test('driveOne throwing marks the list broken before the throw propagates', async () => {
+  const f = fake({ pulls: [{ groups: singletons(1, 2), exclusions: [] }] });
+  const boom = new Error('boom');
+  const driveOne = async (n) => { f.calls.driveOne.push(n); throw boom; };
+  await assert.rejects(runShared(f, driveOne), boom);
+  assert.deepEqual(f.driven(), [1], 'the run ends: no later record is driven');
+  assert.equal(f.err.split('\n').filter((l) => /#1 threw before returning its final line/.test(l)).length, 1);
 });
