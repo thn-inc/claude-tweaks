@@ -276,9 +276,9 @@ function fillManifestAtClose(dir, { base, costRows = null, withCost = false } = 
     }
     const r = deriveRunCost(input);
     const fields = { closedAt: r.closedAt, minutes: r.minutes };
-    if (withCost) fields.cost = { tokensByModel: r.tokensByModel, costUsd: r.costUsd, priceDate: r.priceDate, unpricedModels: r.unpricedModels, costPartial: r.costPartial };
-    // Derived from the raw costRows (not input.rows, which costRowsFrom already extended with every item's rows).
     if (withCost) {
+      fields.cost = { tokensByModel: r.tokensByModel, costUsd: r.costUsd, priceDate: r.priceDate, unpricedModels: r.unpricedModels, costPartial: r.costPartial };
+      // Derived from the raw costRows (not input.rows, which costRowsFrom already extended with every item's rows).
       try {
         const roles = driver
           ? rolesLib.deriveRoles({ manifest, events: input.events })

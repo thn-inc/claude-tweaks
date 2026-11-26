@@ -215,8 +215,9 @@ function fillRunManifest(runDir, fields = {}, deps = {}) {
     const group = input.cost;
     // The fill that upgrades a partial cost group to a complete one also refreshes roles: the partial
     // close derived them from an incomplete read (agents under model unknown).
-    const upgrading = validCostGroup(group) && manifest.costUsd != null && mayWriteCost(manifest, group);
-    if (validCostGroup(group) && mayWriteCost(manifest, group)) {
+    const costWritable = validCostGroup(group) && mayWriteCost(manifest, group);
+    const upgrading = costWritable && manifest.costUsd != null;
+    if (costWritable) {
       for (const key of COST_GROUP) {
         if (key in manifest && canonicalJson(group[key]) === canonicalJson(manifest[key])) continue;
         manifest[key] = group[key];
