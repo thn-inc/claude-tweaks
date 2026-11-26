@@ -472,7 +472,7 @@ function emptyRollupBullet() {
 test('#3607: the Step 2.5 state read fetches mergeable alongside mergeStateStatus', () => {
   const section = step25Section();
   assert.ok(section.includes('--json state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup'));
-  assert.ok(section.includes('those five fields'), 'the parse-failure bullet must count the widened field list');
+  assert.ok(section.includes('the five fields other than `createdAt`'), 'the parse-failure bullet must count the widened field list');
 });
 
 test('#3607 AC1: an empty rollup reporting DIRTY or CONFLICTING routes to the Conflict path before any pending read', () => {

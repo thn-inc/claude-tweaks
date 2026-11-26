@@ -23,10 +23,7 @@ Never force-push to, `git reset`, `commit-tree`-and-push, or otherwise rewrite t
 ## Step 1: Acceptance labeling — before the merge, unconditionally
 
 Run `wrap-up/verification-brief.md` starting from its **Routing** section, exactly as the
-citing file's own two-layer gate already directs (unchanged from today — this procedure does not
-touch layers 1-2, only execution). **Order is load-bearing**: the merge closes the record(s) via
-its `Fixes` lines, so labeling must land while every record is still open. A caller that merges
-before labeling silently drops acceptance sign-off.
+citing file's own two-layer gate already directs. **Order is load-bearing**: labeling lands before the merge (why: appendix "Rationale notes").
 Labeling has not landed when `{run-dir}/verify.json` (each `spec-{N}/` copy, multi-spec) is missing
 or its `acceptance-labeling` row's `result` is anything but `pass`/`skip` — the full predicate, live-state tier included, is `_shared/acceptance-labeling-landed.md` — whichever caller reached this merge.
 
@@ -51,8 +48,7 @@ First, run `_shared/pr-checklist-refresh.md`'s "Pre-merge title/description refr
 an unconditional `AUTO` step, never a stop — so the title and phase checklist are current before
 the merge attempt below.
 
-The PR was opened as a draft at run start (`_shared/pr-early-run-lifecycle.md`), but a re-entry
-onto an already-undrafted PR must not re-issue the undraft call blind. Read state first:
+A re-entry onto an already-undrafted PR must not re-issue the undraft call blind. Read state first:
 
 ```bash
 gh pr view {pr-number} --repo {owner}/{repo} --json isDraft -q .isDraft
@@ -140,7 +136,7 @@ A non-zero exit or output with no `state` is the `state-read-failed` report.
 
 Classify from the three reads, in this order:
 
-- The command failed, or its output is not parseable JSON with those five fields besides `createdAt` → report
+- The command failed, or its output is not parseable JSON with the five fields other than `createdAt` → report
   (`pending-review`, reason `state-read-failed`) and stop — never merge on a state this gate could
   not read. A read
   failure is not "no CI".
@@ -161,7 +157,7 @@ Classify from the three reads, in this order:
 - Any entry with `status` not `COMPLETED` (or `conclusion` null while `status: IN_PROGRESS`/`QUEUED`/`PENDING`), or any head run whose `status` is not `completed`
   → **pending**.
 - A check whose newest entry (rollup entries and head runs by name; newest by start time, then id; an unbreakable tie holds) completed with `conclusion` in `CANCELLED`, `ACTION_REQUIRED`, or `STALE` → **pending** (held; code twin `HELD_CONCLUSIONS`).
-- PR CI and no head run whose `event` is `pull_request` or `pull_request_target` → **pending** until 60 seconds after the later of `{pr-created-at}` and the earliest head run's `createdAt` (no head run: `{head-committed-at}`; any needed time unreadable: pending); after that the other rules decide (code twin `classify.js`'s `prEventSettle`; why: appendix "PR-event settle window").
+- PR CI (`merge-when-green`/`wait`; the watch always) and no head run whose `event` is `pull_request` or `pull_request_target` → `DIRTY`/`CONFLICTING` takes the **Conflict path** first; else **pending** until 60 seconds after the later of `{pr-created-at}` and the earliest head run's `createdAt` (no head run: `{head-committed-at}`; any needed time unreadable: pending); after that the other rules decide (code twin `classify.js`'s `prEventSettle`; why: appendix "PR-event settle window").
 - An **empty rollup** → read the merge state first: `mergeStateStatus: DIRTY` (or `mergeable: CONFLICTING`)
   → **conflict** — take the **Conflict path** below now, under every lever value, with no bounded
   watch — waiting only parks it as `checks-pending-timeout` (#3607; why: appendix "Rationale notes"). Any other merge state
@@ -236,7 +232,7 @@ Head runs are counted from the saved file, never a `--jq` program (`_shared/scra
   the `{pr-checks-json-path}` rows whose state is in `FAILING_CONCLUSIONS`; gh's `fail` bucket also holds `ACTION_REQUIRED`).
 - `RC=3` (ready-run `red` or `draft-skip-without-ready-trigger`) → **Red path**, reason from `{pr-ready-path}`: `check-failed:{names}` or `draft-skip-without-ready-trigger:{files}`.
 - `RC=124` (still pending at the bound) → **Red path** with reason `checks-pending-timeout` —
-  reserved for checks, head runs or an awaited ready run still pending at the bound.
+  reserved for checks, head runs or an awaited ready run still pending at the bound (an open or unreadable settle window included).
 - `RC=2` (unknown `gh` exit) → report `pending-review`, reason `checks-read-failed`; never merge on
   a state this gate could not read.
 
@@ -273,7 +269,7 @@ accounts for every merge this gate influenced, not only the stopped ones:
 
 `AUTO {HH:MM:SS} — Step 2.5 (merge-verification gate): armed — forge holds the merge (mergeStateStatus BLOCKED, checks pending) on PR #{n}; reconciler completes cleanup on merged evidence. Reversibility: high (gh pr merge --disable-auto). [lever: merge-verification={value} ({source})]`
 
-**Forge-cooperation path.** `mergeStateStatus: BLOCKED` with every rollup entry green → report it, arm `--auto` (Step 3's own call) and stop; the full rule is `pr-first-merge-appendix.md`'s "Forge-cooperation path".
+**Forge-cooperation path** (cited from Step 3 item 2). A merge attempt rejected by org-owned required checks, the state read showing `mergeStateStatus: BLOCKED` with every rollup entry green → report it, arm `--auto` (Step 3's own call) and stop; never suggest bypassing protection (detail: appendix "Forge-cooperation path").
 
 **Signatures:** `pr-first-merge-appendix.md`'s Signatures section holds the literal captured outputs.
 

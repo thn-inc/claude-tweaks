@@ -147,7 +147,8 @@ test('#3468: Step 2.5 states the settle window and its code twin', () => {
   const at = lines.findIndex((l) => l.startsWith('- ') && l.includes('prEventSettle'));
   assert.ok(at !== -1, 'Step 2.5 carries a classification bullet naming prEventSettle');
   const bullet = lines.slice(at, lines.findIndex((l, i) => i > at && l.startsWith('- '))).join('\n');
-  for (const needle of ['`pull_request_target`', 'prEventSettle', `${PR_EVENT_SETTLE_MS / 1000} seconds`, '{pr-created-at}', '{head-committed-at}']) {
+  // A DIRTY/CONFLICTING PR takes the Conflict path before the window (#3607; driver merge.js isConflicting before classify).
+  for (const needle of ['`pull_request_target`', 'prEventSettle', `${PR_EVENT_SETTLE_MS / 1000} seconds`, '{pr-created-at}', '{head-committed-at}', '`DIRTY`/`CONFLICTING` takes the **Conflict path** first', '`merge-when-green`/`wait`']) {
     assert.ok(bullet.includes(needle), `settle bullet missing "${needle}"`);
   }
   const heldAt = lines.findIndex((l) => l.includes('(held; code twin `HELD_CONCLUSIONS`)'));
@@ -156,6 +157,11 @@ test('#3468: Step 2.5 states the settle window and its code twin', () => {
   // A settle-only pending never arms --auto (Task 3's driver rule): the merge-when-green row says so.
   const mwg = lines.find((l) => l.startsWith('| `merge-when-green` |'));
   assert.ok(mwg && mwg.includes('settle window'), 'the merge-when-green pending column names the settle window');
+  // The Forge-cooperation line keeps its trigger (a rejected merge attempt), so it never reads as a state rule that arms while settling.
+  const forge = lines.find((l) => l.startsWith('**Forge-cooperation path**'));
+  assert.ok(forge && forge.includes('A merge attempt rejected by org-owned required checks') && forge.includes('never suggest bypassing protection'), 'the Forge-cooperation line names its rejected-merge trigger');
+  // RC=124 names the settle window as a cause of the timeout park.
+  assert.ok(section.includes('still pending at the bound (an open or unreadable settle window included)'), 'the RC=124 bullet names the settle window');
   const appendix = read('_shared', 'pr-first-merge-appendix.md');
   const why = sectionOf(appendix, '## PR-event settle window (#3468)');
   for (const needle of ['path filter', 'clock', 'skew']) assert.ok(why.includes(needle), `appendix settle section missing "${needle}"`);
