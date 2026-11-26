@@ -299,3 +299,33 @@ test('#3813 Q2 go-red: the old row-2 push wording, or a dropped phase-exit push,
   assert.notStrictEqual(dropped, text);
   assert.throws(() => assertItem2RowPush(dropped), /phase-exit push/);
 });
+
+// #5833: a stored `merge` is not final until the merge site re-reads the merge-check verdict.
+const RECHECK = 'console-resolve.js" --run "$PIPELINE_RUN_DIR" --recheck-merge';
+
+function assertRecheckBeforeMerge(execText) {
+  const finish = paragraph(execText, FINISH_H);
+  const recheckAt = finish.indexOf(RECHECK);
+  assert.ok(recheckAt !== -1, 'Branch finish must run --recheck-merge');
+  assert.ok(recheckAt < finish.indexOf(MERGE), '--recheck-merge must precede the pr-first merge');
+  assert.ok(finish.includes('prints `recheck-merge merge`'), 'Branch finish must merge only on `recheck-merge merge`');
+  assert.ok(finish.includes('Any other exit skips the merge too'), 'Branch finish must skip the merge on a failed re-check');
+  assert.ok(finish.includes('rewritten a stored `merge` to `leave-open`'), 'Branch finish must say what a leave-open hit rewrote');
+  assert.ok(finish.includes('An attended "Approve all + merge" runs the merge procedure below without the re-check'), 'Branch finish must route the attended merge past the re-check');
+  assert.ok(finish.includes('Before merging on a stored `merge`, run'), 'the re-check applies to a stored `merge` only');
+}
+
+test('AC1.1: Branch finish re-checks the merge half with --recheck-merge before running pr-first-merge', () => {
+  assertRecheckBeforeMerge(read('wrap-up/execution-and-verification.md'));
+});
+
+test('go-red: a Branch finish without the --recheck-merge sentence fails the pin', () => {
+  const exec = read('wrap-up/execution-and-verification.md');
+  const finish = paragraph(exec, FINISH_H);
+  const start = finish.indexOf('Before merging on a stored `merge`, run');
+  const end = finish.indexOf(MERGE);
+  assert.ok(start !== -1 && end > start, 'the recheck sentence must sit before the merge');
+  const mutated = exec.replace(finish, finish.slice(0, start) + finish.slice(end));
+  assert.notStrictEqual(mutated, exec);
+  assert.throws(() => assertRecheckBeforeMerge(mutated), /--recheck-merge/);
+});

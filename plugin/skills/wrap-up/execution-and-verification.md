@@ -80,8 +80,13 @@ line via `log-decision.js` naming the state or the `commit.dirty` paths and its 
 merge a remote head that lacks this step's commit. Otherwise route on the Review Console's merge half: "Approve all +
 merge", or `console.json`'s `merge.resolution` `merge` (an attended "Approve all + merge" writes no `merge`
 object — once the session no longer holds the choice, `decisions.md`'s `Review Console: terminal
-decision approve-all-merge` line is the record), runs `_shared/pr-first-merge.md`'s
-procedure — read as one composed bundle: `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --step merge "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-first-merge.md" "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-checklist-refresh.md"`,
+decision approve-all-merge` line is the record). An attended "Approve all + merge" runs the merge procedure below without the re-check, so a human's choice is never re-judged; a stored `merge` is re-checked first. Before merging on a stored `merge`, run `node "${CLAUDE_PLUGIN_ROOT}/bin/console-resolve.js" --run "$PIPELINE_RUN_DIR" --recheck-merge`
+(#5833): it re-reads `decisions.md` for a needs-human, malformed or, when the console stored `merge`, still-missing `merge-check`
+verdict. Merge only when it exits 0 and prints `recheck-merge merge`. When it prints
+`recheck-merge leave-open`, the CLI has already logged the verdict and rewritten a stored `merge` to `leave-open`,
+so the run skips the merge and lands on `pending-review` as leave-open does. Any other exit skips
+the merge too, with one `SKIP` line via `log-decision.js` naming the exit. An attended merge, or a stored `merge` the re-check
+confirms, runs `_shared/pr-first-merge.md`'s procedure — read as one composed bundle: `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --step merge "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-first-merge.md" "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-checklist-refresh.md"`,
 then read `$PIPELINE_RUN_DIR/context/merge.md` (source files directly if compose is unavailable).
 "Approve all, leave PR open", Override, and a console the empty-console fast path skipped carry
 no merge decision: they skip the merge, landing on `pending-review`. Then run cleanup items 4, 6,

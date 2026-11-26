@@ -5,8 +5,9 @@
 // "This session" or "This agent", and a worktree whose working directory is gone
 // ends "Refusing to run there" instead (the agent-noun and worktree-gone templates
 // were measured 2026-10-28 against Claude Code 2.1.302). This is the one place a
-// wording update lands: both post-tool-use-failure.js (the regex, via
-// classifyRefusal) and bash-prefilter.js (the signatures) derive from it.
+// wording update lands: post-tool-use-failure.js (the regex, via
+// classifyRefusal), bash-prefilter.js (the signatures) and timing/turn-class.js
+// (the nouns and clause, for its guard-refusal class, #4521) derive from it.
 // tools/upstream-drift/manifest.yml's `claude-code` entry asserts each fragment
 // against the installed binary, and tests/harness-refusal-drift-pin.test.js keeps
 // that manifest and this module in lockstep.
@@ -50,5 +51,5 @@ function classifyRefusal(text) {
 
 module.exports = {
   SESSION_NOUN, AGENT_NOUN, ISOLATION_CLAUSE, REFUSAL_SIGNATURE, WORKTREE_GONE_SIGNATURE,
-  REFUSAL_SIGNATURES, REFUSAL_FRAGMENTS, HARNESS_ISOLATION_REFUSAL_RE, classifyRefusal,
+  REFUSAL_SIGNATURES, REFUSAL_FRAGMENTS, HARNESS_ISOLATION_REFUSAL_RE, classifyRefusal, escapeRegex,
 };
