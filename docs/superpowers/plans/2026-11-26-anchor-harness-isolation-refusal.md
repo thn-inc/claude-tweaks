@@ -99,11 +99,13 @@ git commit -m "Anchor HARNESS_ISOLATION_REFUSAL_RE at the start of error — quo
 **Files:**
 - Modify: `plugin/bin/lib/hooks/bash-prefilter.js` (the `require('./harness-refusal')` line, the comment above `failureCarriesRefusal`, `failureCarriesRefusal`, and its one call in `earlyGate`)
 - Modify: `docs/hooks.md:25` (the **Bash prefilter (#3074)** bullet's `post-tool-use-failure` sentence; spec Decision 3)
-- Test: `tests/hooks-harness-refusal.test.js`
+- Modify: `plugin/bin/lib/hooks/harness-refusal.js:25` (the `REFUSAL_SIGNATURES` comment only, "Signature tails, for a raw-substring prefilter.")
+- Modify: `docs/journeys/run-shell-loops-without-a-hook-storm-3074.md:30` (the prefilter's `post-tool-use-failure` sentence)
+- Test: `tests/hooks-harness-refusal.test.js`, `tests/hooks-bash-prefilter.test.js` (run only; its `'not json'` → `{ skip: true }` pin must stay green)
 
 **Interfaces:**
 - Consumes: `SESSION_NOUN`, `AGENT_NOUN`, `REFUSAL_SIGNATURES` from `./harness-refusal` (all exported already).
-- Produces: `failureCarriesRefusal(input) -> boolean`, internal and not exported. It returns true only when `input.error` is a string that `startsWith(SESSION_NOUN)` or `startsWith(AGENT_NOUN)` and `includes` one of `REFUSAL_SIGNATURES`. Otherwise it returns false. The raw-payload substring branch is removed: a parse failure leaves the handler with nothing to act on, so it skips, and a JSON-escaped spelling is decoded in `input.error`. `earlyGate` calls `failureCarriesRefusal(input)` and keeps its `try { … } catch { carries = true; }` fail-open.
+- Produces: `failureCarriesRefusal(input) -> boolean`, internal and not exported. A `null` or non-object `input` (`earlyGate` sets `input = null` on a parse failure) returns false without throwing, so unparseable stdin still skips rather than reaching the `catch` fail-open. It returns true only when `input.error` is a string that `startsWith(SESSION_NOUN)` or `startsWith(AGENT_NOUN)` and `includes` one of `REFUSAL_SIGNATURES`. Otherwise it returns false. The raw-payload substring branch is removed: a parse failure leaves the handler with nothing to act on, so it skips, and a JSON-escaped spelling is decoded in `input.error`. `earlyGate` calls `failureCarriesRefusal(input)` and keeps its `try { … } catch { carries = true; }` fail-open.
 
 - [ ] **Step 1: Write the failing test** in `tests/hooks-harness-refusal.test.js`
   - Add `test('AC1.1: bash-prefilter earlyGate skips a failure whose error quotes a refusal mid-text', …)`. Reuse the existing test's `gate` helper shape (`earlyGate('post-tool-use-failure', () => JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'x' }, error }))`). For each `[name, text]` of `FIXTURES`, assert `gate(quoteMidText(text)).skip === true` (with `name` as the message).
@@ -117,16 +119,18 @@ Expected: FAIL. The new test fails (`skip` is `false`, because the raw payload c
 
 - [ ] **Step 3: Implement `failureCarriesRefusal(input)`** as the Interfaces block states. Widen the destructure to `const { SESSION_NOUN, AGENT_NOUN, REFUSAL_SIGNATURES } = require('./harness-refusal');`. Rewrite the comment above the function so it says the gate mirrors the matcher's start anchor (#4523): `error` must begin with a noun and carry a signature. Drop the "raw payload OR the parsed `error`" sentence, and keep "Unparseable input skips: the handler does nothing with it either."
   - In `docs/hooks.md:25`, replace "it skips unless the payload (raw, or its parsed `error`) carries `Refusing to run it` or `Refusing to run there` (`REFUSAL_SIGNATURES`), one of the phrases every harness worktree-isolation refusal it logs contains." with "it skips unless the parsed `error` begins with a noun (`SESSION_NOUN` / `AGENT_NOUN`) and carries `Refusing to run it` or `Refusing to run there` (`REFUSAL_SIGNATURES`), the same start-of-`error` rule the anchored matcher applies (#4523); unparseable input skips, since the handler does nothing with it either."
+  - In `harness-refusal.js:25`, reword the `REFUSAL_SIGNATURES` comment to "Signature tails, for the prefilter's noun-first check on the parsed `error` (#4523)." — comment only.
+  - In `docs/journeys/run-shell-loops-without-a-hook-storm-3074.md:30`, replace "the prefilter skips that event unless its payload carries `Refusing to run it` or `Refusing to run there`" with "the prefilter skips that event unless its parsed `error` begins with `This session` or `This agent` and carries `Refusing to run it` or `Refusing to run there`", and append "; command output that merely quotes a refusal is skipped, #4523" inside the existing parenthetical after "#3819 added the worktree-gone one".
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node --test tests/hooks-harness-refusal.test.js`
-Expected: PASS, all tests.
+Run: `node --test tests/hooks-harness-refusal.test.js tests/hooks-bash-prefilter.test.js`
+Expected: PASS, all tests (including `tests/hooks-bash-prefilter.test.js`'s `'not json'` → `{ skip: true }` pin).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/bin/lib/hooks/bash-prefilter.js docs/hooks.md tests/hooks-harness-refusal.test.js
+git add plugin/bin/lib/hooks/bash-prefilter.js plugin/bin/lib/hooks/harness-refusal.js docs/hooks.md docs/journeys/run-shell-loops-without-a-hook-storm-3074.md tests/hooks-harness-refusal.test.js
 git commit -m "Gate the failure prefilter on a noun-first error — keeps bash-prefilter consistent with the anchored matcher" -m "refs #4523"
 ```
 
