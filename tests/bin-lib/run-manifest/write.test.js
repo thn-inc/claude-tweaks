@@ -526,3 +526,55 @@ test('an invalid cost group is ignored', () => {
     assert.equal(fs.existsSync(path.join(dir, MANIFEST_FILE)), false);
   }
 });
+
+const ROLES_A = { implementer: { agents: 1, models: { sonnet: 1 }, efforts: { medium: 1 } } };
+const ROLES_B = { reviewer: { agents: 2, models: { opus: 2 }, efforts: { high: 3 } } };
+
+test('#6010: fillRunManifest stores roles fill-only-null', () => {
+  const dir = runDir();
+  initRunManifest(dir, { cwd: dir, lane: 'standard' }, { gatherFacts: gather() });
+  assert.deepEqual(fillRunManifest(dir, { roles: ROLES_A }).changed, ['roles']);
+  assert.deepEqual(readManifest(dir).roles, ROLES_A);
+  const bytes = manifestBytes(dir);
+  assert.ok(!fillRunManifest(dir, { roles: ROLES_B }).changed.includes('roles'));
+  assert.equal(manifestBytes(dir), bytes);
+});
+
+test('#6010: an invalid roles leaves the existing manifest untouched with one stderr line', () => {
+  const dir = runDir();
+  initRunManifest(dir, { cwd: dir, lane: 'standard' }, { gatherFacts: gather() });
+  const before = manifestBytes(dir);
+  const c = collector();
+  const r = fillRunManifest(dir, { closedAt: '2026-11-26T12:00:00.000Z', roles: { x: { agents: -1, models: {}, efforts: {} } } }, { stderr: c.stderr });
+  assert.deepEqual(r.changed, []);
+  assert.equal(manifestBytes(dir), before);
+  assert.equal(c.lines.length, 1);
+  assert.match(c.lines[0], /roles failed the shape check/);
+});
+
+test('#6010 F2: roles from a partial close is replaced when the cost group upgrades to complete, then frozen', () => {
+  const ROLES_C = { merge: { agents: 1, models: { x: 1 }, efforts: { low: 1 } } };
+  const tok = { input: 1, output: 1, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 };
+  const grp = (partial) => ({ tokensByModel: { m: tok }, costUsd: 1, priceDate: '2026-11-03', unpricedModels: [], costPartial: partial });
+  const dir = runDir();
+  initRunManifest(dir, { cwd: dir, lane: 'standard' }, { gatherFacts: gather() });
+  assert.ok(fillRunManifest(dir, { cost: grp(true), roles: ROLES_A }).changed.includes('roles'));
+  assert.ok(fillRunManifest(dir, { cost: grp(false), roles: ROLES_B }).changed.includes('roles'));
+  assert.deepEqual(readManifest(dir).roles, ROLES_B);
+  const bytes = manifestBytes(dir);
+  assert.deepEqual(fillRunManifest(dir, { cost: grp(false), roles: ROLES_C }).changed, []);
+  assert.equal(manifestBytes(dir), bytes);
+});
+
+test('#6010: roles stored beside an unread (all-null) cost group is not replaced when a read group arrives', () => {
+  const tok = { input: 1, output: 1, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 };
+  const unread = { tokensByModel: null, costUsd: null, priceDate: null, unpricedModels: null, costPartial: null };
+  const read = { tokensByModel: { m: tok }, costUsd: 1, priceDate: '2026-11-03', unpricedModels: [], costPartial: false };
+  const dir = runDir();
+  initRunManifest(dir, { cwd: dir, lane: 'standard' }, { gatherFacts: gather() });
+  fillRunManifest(dir, { cost: unread, roles: ROLES_A });
+  const r = fillRunManifest(dir, { cost: read, roles: ROLES_B });
+  assert.ok(!r.changed.includes('roles'));
+  assert.ok(r.changed.includes('costUsd'));
+  assert.deepEqual(readManifest(dir).roles, ROLES_A);
+});

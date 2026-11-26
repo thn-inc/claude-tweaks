@@ -382,8 +382,22 @@ function latestReleaseTag(cwd, env = GIT_ENV) {
   }
 }
 
+// Whether {tag}:{rel} names an object. `git cat-file -e` exits non-zero for a path the tag lacks; a git that
+// never ran (no exit status) is a broken call, not an absence.
+function existsAtTag(tag, rel, cwd) {
+  try {
+    execFileSync('git', ['cat-file', '-e', `${tag}:${rel}`], { cwd, env: GIT_ENV, stdio: 'ignore', windowsHide: true });
+    return true;
+  } catch (err) {
+    if (typeof err.status !== 'number') throw err;
+    return false;
+  }
+}
+
 // Materialize {tag}'s declaration.js and every relative require it reaches, transitively, at their
 // repo-relative paths under `dir`, then load the materialized copy. A release that adds a require is followed.
+// An extensionless target resolves as Node does: {target}.js when the tag has it, else {target}/index.js
+// (#6332: v6.180.0's reader requires the `../path-guard` directory).
 function loadReleaseReader(tag, dir, cwd = REPO_ROOT) {
   const seen = new Set();
   const queue = [READER_PATH];
@@ -399,7 +413,8 @@ function loadReleaseReader(tag, dir, cwd = REPO_ROOT) {
     fs.writeFileSync(dest, src);
     for (const m of src.matchAll(/require\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*\)/g)) {
       const target = path.posix.join(path.posix.dirname(rel), m[1]);
-      queue.push(/\.(js|json)$/.test(target) ? target : `${target}.js`);
+      if (/\.(js|json)$/.test(target)) queue.push(target);
+      else queue.push(existsAtTag(tag, `${target}.js`, cwd) ? `${target}.js` : `${target}/index.js`);
     }
   }
   return require(path.join(dir, ...READER_PATH.split('/'))).readDeclaration;
@@ -461,5 +476,35 @@ test('AC3.1: a clone with no reachable release tag skips with its reason (#4135)
     assert.match(found.skip, /no release tag reachable/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('#6332: the release reader loader follows a directory require to its index.js and prefers {target}.js when the tag has both', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-scope-dirreq-'));
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-scope-reader-'));
+  try {
+    const files = {
+      [READER_PATH]: "const d = require('../dirmod');\nconst f = require('../filemod');\nmodule.exports = { readDeclaration: () => ({ dir: d.name, file: f.name }) };\n",
+      'plugin/bin/lib/dirmod/index.js': "module.exports = { name: require('./part').name };\n",
+      'plugin/bin/lib/dirmod/part.js': "module.exports = { name: 'dirmod/part.js' };\n",
+      'plugin/bin/lib/filemod.js': "module.exports = { name: 'filemod.js' };\n",
+      'plugin/bin/lib/filemod/index.js': "module.exports = { name: 'filemod/index.js' };\n",
+    };
+    for (const [rel, src] of Object.entries(files)) {
+      const dest = path.join(repo, ...rel.split('/'));
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.writeFileSync(dest, src);
+    }
+    const git = (...args) => execFileSync('git', args, { cwd: repo, env: TEMP_REPO_ENV, windowsHide: true });
+    git('init', '-q');
+    git('add', '-A');
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'x');
+    git('tag', 'v0.0.1');
+    const reader = loadReleaseReader('v0.0.1', out, repo);
+    assert.deepStrictEqual(reader(), { dir: 'dirmod/part.js', file: 'filemod.js' });
+    assert.ok(!fs.existsSync(path.join(out, 'plugin', 'bin', 'lib', 'filemod', 'index.js')), 'filemod.js exists at the tag, so its index.js sibling is never materialized');
+  } finally {
+    removeReaderDir(out);
+    fs.rmSync(repo, { recursive: true, force: true });
   }
 });
