@@ -281,7 +281,8 @@ async function runBudget(budget, shared, deps, { driveOne, steps = STEPS }) {
       }
       // Appended only after the record's own merge step has run.
       if (!facts || !facts.final) {
-        breakList(`#${n} returned no final line`);
+        // An interrupt before the record's first step also yields no final line; the loop returns just below.
+        if (!shared.interrupted) breakList(`#${n} returned no final line`);
       } else if (Number.isSafeInteger(facts.final.pr) && facts.final.pr > 0) {
         drainPrs.push({ number: facts.final.pr });
         writeList(`append for #${n}`);

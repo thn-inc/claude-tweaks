@@ -716,6 +716,17 @@ test('AC8.1, AC8.2: a driven record returning no final line makes every later re
   assert.equal(f.err.split('\n').filter((l) => /#1 .*no final line/.test(l)).length, 1);
 });
 
+test('an interrupted record with no final line prints no "no final line" stderr line', async () => {
+  const f = fake({ pulls: [{ groups: singletons(1, 2), exclusions: [] }] });
+  const shared = newShared();
+  const driveOne = async () => {
+    shared.interrupted = 'SIGINT';
+    return { final: null, outcome: null, claimed: true, claimExit: 0 };
+  };
+  assert.equal(await runBudget(2, shared, f.deps, { driveOne, steps: f.steps }), 0);
+  assert.equal(f.err.split('\n').filter((l) => /no final line/.test(l)).length, 0);
+});
+
 test('a final line with no pr appends nothing and keeps the list healthy', async () => {
   const f = fake({ pulls: [{ groups: singletons(1, 2), exclusions: [] }] });
   const shared = newShared();
