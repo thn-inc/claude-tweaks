@@ -6,6 +6,7 @@ const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { run } = require('../../../plugin/bin/compose-record');
+const { chmodDenialSkip } = require('../../helpers/root');
 
 function tmpDir() {
   return scratchDir('compose-record-');
@@ -254,10 +255,7 @@ test('--check --record: the marker check runs before the shape check', () => {
   assert.equal(run(['--check', f, '--record', '2'], deps([])), 6);
 });
 
-const CANNOT_DENY_WRITE = (process.platform === 'win32' || (process.getuid && process.getuid() === 0))
-  && 'a read-only file is still writable here (win32 or root)';
-
-test('--check --record: a failed in-place rewrite exits 5', { skip: CANNOT_DENY_WRITE }, () => {
+test('--check --record: a failed in-place rewrite exits 5', chmodDenialSkip('root ignores the read-only mode'), () => {
   const f = bodyFileWith(marker(9) + SHAPED);
   fs.chmodSync(f, 0o444);
   const out = [];
