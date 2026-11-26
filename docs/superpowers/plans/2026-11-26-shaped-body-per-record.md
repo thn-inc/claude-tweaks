@@ -39,7 +39,7 @@ Scope keywords: specify-shaped-body, SPECIFY_SHAPED_BODY
 **Interfaces:**
 - Produces: CLI `compose-record.js --check <body-file> [--record <n>]`. Exit 6 when the body file's basename does not end in `-{n}.md`. Stderr is one line: `compose-record.js: body file {path} was composed for #{m}, not #{n} — refusing to write it` when the basename ends in `-{digits}.md`, else `compose-record.js: body file {path} names no record id — refusing to write it to #{n}`. `parseArgs` returns a `record` field (string or null).
 
-- [ ] **Step 1: Write the failing tests** in `tests/bin-lib/compose-record/cli.test.js`, following that file's existing `run(argv, deps)` style and temp-dir setup:
+- [ ] **Step 1: Write the failing tests** (covers AC3.1) in `tests/bin-lib/compose-record/cli.test.js`, following that file's existing `run(argv, deps)` style and temp-dir setup:
   - `--check --record matches the body file's trailing id → exit 0`: write a shaped body to `{dir}/specify-shaped-body-4746.md` and run `['--check', file, '--record', '4746']`. Expect 0.
   - `--check --record refuses a body file composed for another record`: `specify-shaped-body-4549.md` with `--record 4550`. Expect 6, and stderr includes both `#4549` and `#4550`.
   - `--check --record refuses the fixed session-wide filename`: `specify-shaped-body.md` with `--record 4550`. Expect 6, and stderr matches `/names no record id/` and includes `#4550`.
@@ -76,12 +76,14 @@ git commit -m "Add compose-record --check --record guard — refuses another rec
 - Modify: `plugin/skills/specify/shaping-mode.md:79` (born-ready paragraph's temp-file name and `--check` call)
 - Modify: `tests/specify-shaping-noop-check.test.js` (`CHECK_CALL` constant)
 - Modify: `tests/specify-shaping-template-required-sections.test.js` (the `--check ... || exit` line regex)
+- Test: `tests/skill-fence-guard-shapes.test.js` (verify unchanged: its `SPECIFY_SHAPED_BODY=$(node -e "` ratchet must still match)
+- Test: `tests/specify-planning-conformance.test.js` (verify unchanged: it pins the `$SPECIFY_SHAPED_BODY` plan-at-specify sentence, which this task does not edit)
 - Create: `tests/specify-shaped-body-per-record.test.js`
 
 **Interfaces:**
 - Consumes: Task 1's `--check <file> --record <n>` and exit 6.
 
-- [ ] **Step 1: Write the failing test** `tests/specify-shaped-body-per-record.test.js`, reading the skill files through `tests/helpers/read-skill`'s `readText`:
+- [ ] **Step 1: Write the failing test** (covers AC1.1, AC1.2, AC2.1, AC3.1) `tests/specify-shaped-body-per-record.test.js`, reading the skill files through `tests/helpers/read-skill`'s `readText`:
   - `both resolve sites name the record id in the shaped-body filename`: in `shaping-mode-stamping.md`, the Compose-then-write-once fence (the fenced block containing `SPECIFY_SHAPED_BODY=$(node -e "`) contains `'specify-shaped-body-{n}.md'` twice and no `'specify-shaped-body.md'`. The Risk flags paragraph contains `BODY=specify-shaped-body-{n}.md`. `shaping-mode.md`'s born-ready paragraph contains `specify-shaped-body-{n}.md`. Neither file contains the bare token `specify-shaped-body.md` anywhere (`assert.ok(!src.includes('specify-shaped-body.md'))`).
   - `both --check calls pass --record {n}`: the stamping fence's `--check` line matches `/--check "\$SPECIFY_SHAPED_BODY" --record \{n\} \|\| exit\s*$/`, and shaping-mode.md contains `--check "$SPECIFY_SHAPED_BODY" --record {n}`.
   - `shaping two records back to back in one session writes each its own body` (the regression test): extract the filename literal from the stamping fence's `sessionTmpPath(...)` call with `/sessionTmpPath\(process\.env\.CLAUDE_CODE_SESSION_ID, '([^']+)'\)/`. For records `4549` and `4550`, replace `{n}`, resolve each through `plugin/bin/session-tmp-resolve.js`'s exported `run(['--value', name], { env: { CLAUDE_CODE_SESSION_ID: 'same-session', TMPDIR: tmp }, stdout, stderr })` with one shared session id. Write body A to record 4549's path and then body B to record 4550's path. Assert that reading 4549's path returns body A and that the two paths differ. On today's fixed filename both resolve to one path and this goes red. Then run `compose-record.js`'s `run(['--check', path4549, '--record', '4550'])` and assert exit 6, so a cross-wired body is refused before the write.
