@@ -54,6 +54,7 @@ reap-merged's "stub install before a throwing call, outside the try" (the record
 ### Task 1: path-stub helper — `stubSkipFor`, `writeStubDir`, pin gaps
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `tests/helpers/path-stub.js`
@@ -69,7 +70,7 @@ reap-merged's "stub install before a throwing call, outside the try" (the record
   - `test('writeStubDir writes an executable stub and its envPath without touching PATH, and remove() deletes the dir', …)`: `process.env.PATH` before === after; `fs.existsSync(path.join(dir, name))`; off win32 `(fs.statSync(file).mode & 0o111) !== 0`; `envPath === dir + path.delimiter + process.env.PATH`; after `remove()` the dir is gone; a second `remove()` does not throw.
   - `test('writeStubDir envPath is the dir alone when PATH is unset', …)`: save and `delete process.env.PATH` (restore in `t.after`), call, assert `envPath === dir`.
   - Retitle `pathWithOnly finds a PATHEXT extension on win32` to `pathWithOnly on win32 resolves only libuv's spawnable names (.com, .exe, bare), case-insensitively, not PATHEXT` (body unchanged — the lookup never consults PATHEXT).
-  - `test('AC4.1: on win32 an excluded gh.CMD in the binary dir makes pathWithOnly leave that dir out', { skip: process.platform === 'win32' && 'win32: symlink creation needs privilege' }, …)`: dir `shared` holds `git.EXE` and `gh.CMD`; `pathWithOnly(['git'], { exclude: ['gh'], env: { Path: shared, PATHEXT: '.COM;.EXE;.BAT;.CMD' }, platform: 'win32' })` returns a path `!== shared` whose `readdirSync` is `['git.EXE']`; clean the returned dir in `t.after`. Control in the same test: the same call with `gh.CMD` absent returns `shared`.
+  - `test('AC4.1: on win32 an excluded gh.CMD in the binary dir makes pathWithOnly leave that dir out', …)` with **no `skip` option** (spec Plan Review Clarifications: AC1.2 covers new tests too, so this test must not newly skip on win32): dir `shared` holds `git.EXE`. Control, on every platform: `pathWithOnly(['git'], { exclude: ['gh'], env: { Path: shared, PATHEXT: '.COM;.EXE;.BAT;.CMD' }, platform: 'win32' })` returns `shared`. Then add `gh.CMD` to `shared` and, guarded by `if (process.platform !== 'win32')` with a comment that the fallback's symlink needs a privilege on a real win32 host, assert the same call returns a path `!== shared` whose `readdirSync` is `['git.EXE']`; clean the returned dir in `t.after`.
 - [ ] **Step 2: Run** `node --test tests/path-stub-helper.test.js` — Expected: FAIL (`stubSkipFor`/`writeStubDir` not exported).
 - [ ] **Step 3: Implement** `stubSkipFor` and `writeStubDir` in `tests/helpers/path-stub.js`, rebuild `installStub` on `writeStubDir` (its `restore()` calls `remove()`), export both, and extend the header comment by one sentence each (writeStubDir: for a test that hands the stub to the code under test through an injected `env.PATH`).
 - [ ] **Step 4: Run** `node --test tests/path-stub-helper.test.js` — Expected: PASS, the three existing installStub tests unchanged and green. Then make `excluded(dir)` return false locally and confirm the gh.CMD test goes red; restore.
@@ -103,6 +104,7 @@ For each listed test, decide by the Global Constraints rule:
 ### Task 3: prune-remote and reap-merged stub tests, reap-merged try placement
 
 **Role:** judgment
+**Review risk:** high
 
 **Files:**
 - Modify: `tests/bin-lib/reconcile/prune-remote.test.js` (:320)
@@ -113,7 +115,7 @@ For each listed test, decide by the Global Constraints rule:
 
 - [ ] **Step 1: Judge** prune-remote :320 and reap-merged :187/:269/:589 per Task 2's rule. reap-merged :269/:589 assert `own-cwd`: read `plugin/bin/lib/reconcile/reap-merged.js`'s `decideReap` order to see whether `own-cwd` is decided before the PR lookup; if it is, the test holds on win32 → comment; else skip. :187 asserts a locked worktree is skipped with no event: same check for the lock verdict's position. prune-remote :320 is the batch-fail fallback test (its `installPushWrapper` git shim fails the batch push) → skip unless its assertions hold without the stub.
 - [ ] **Step 2: Move the install directly before `try`** at :306, :343, :409, :815 and :854: install the gh wrapper after the `git worktree lock` / `fs.writeFileSync` / spy setup lines, so a throwing setup call leaves no stub on PATH.
-- [ ] **Step 3: :766 and :831** — change the options to `{ skip: STUB_SKIP || MID_DELETE_SKIP.skip }` (the stub fails first on win32; root still skips on the chmod reason off win32). Read `chmodDenialSkip`'s return shape first and keep whatever other option it carries.
+- [ ] **Step 3: :766 and :831** — first decide which win32 dependency fails first (spec: "skip with the stub reason when the stub is what fails there"): read both tests and `chmodDenialSkip`, find which the first assertion each test reaches needs on a win32 host — the gh stub answering, or the chmod denial — and record that in the commit body (`{file}:{line} first win32 dependency — {stub | chmod}: {why}`). Only where it is the stub, change the options to `{ skip: STUB_SKIP || MID_DELETE_SKIP.skip }` (root still skips on the chmod reason off win32), keeping whatever other option `chmodDenialSkip` returns; otherwise leave the chmod reason in place.
 - [ ] **Step 4: Run** `node --test tests/bin-lib/reconcile/prune-remote.test.js tests/bin-lib/reconcile/reap-merged.test.js` — Expected: PASS.
 - [ ] **Step 5: Commit** both files; message `Judge the prune-remote and reap-merged stub tests for win32 and install reap stubs after throwing setup, refs #4433`.
 
