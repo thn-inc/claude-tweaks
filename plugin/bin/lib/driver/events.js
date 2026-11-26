@@ -6,9 +6,11 @@
 // line (budget.js). Fields may be added to an event, never renamed. The worker, review,
 // merge-check and merge-acceptance lines carry `model`, the requested alias, once a launch
 // resolved one (#5917), and `effort`, the `--effort` level that launch was given or null when no flag
-// was passed (#5942); older lines lack both. The review fix round's implementer relaunch writes its
-// own `worker` line with `fix: true` and its own launch's `model` and `effort` (#5942); the `review`
-// line carries only the reviewer's.
+// was passed (#5942); older lines lack both. The merge-check and merge-acceptance lines also carry
+// `usage`, the judge envelope's usage object in the worker line's shape, when it returned one
+// (#6009). The review fix round's implementer relaunch writes its own `worker` line with
+// `fix: true` and its own launch's `model` and `effort` (#5942); the `review` line carries only
+// the reviewer's.
 //
 // This module holds no step logic. It holds:
 //   - the step, outcome and stop-class constants,
