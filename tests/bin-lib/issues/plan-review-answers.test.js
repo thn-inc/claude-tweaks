@@ -1,0 +1,172 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+const {
+  QUESTION_MARKER, findQuestion, findAnswerReplies, answerText, answeredState, appendAnswers, questionExcerpt,
+} = require('../../../plugin/bin/lib/issues/plan-review-answers');
+const { originalRequestOffset, shapeGate } = require('../../../plugin/bin/lib/issues/materialize-format');
+
+const QUESTION_BODY = `${QUESTION_MARKER}
+**Plan review needs a decision before the build can continue.**
+
+**Question 1. What happens when the reply is empty?**
+
+Reading A: ignore. Reading B: stop.`;
+
+let seq = 0;
+function comment(opts = {}) {
+  const { body, createdAt, login = 'maintainer', url } = opts;
+  const association = 'association' in opts ? opts.association : 'OWNER';
+  seq += 1;
+  const c = {
+    body,
+    createdAt,
+    url: url || `https://github.com/o/r/issues/1#issuecomment-${seq}`,
+    author: { login },
+  };
+  if (association !== undefined) c.authorAssociation = association;
+  return c;
+}
+const question = (over = {}) => comment({ body: QUESTION_BODY, createdAt: '2026-11-26T10:00:00Z', ...over });
+const reply = (text, over = {}) => comment({ body: text, createdAt: '2026-11-26T11:00:00Z', ...over });
+
+const RECORD = `## Current State
+
+Something.
+
+## Acceptance Criteria
+
+- one
+
+## Original request
+
+Original text.
+`;
+
+test('AC1.1: a trusted question plus a trusted /answer comment after it reads answered', () => {
+  const q = question();
+  const r = reply('/answer Reading B');
+  const s = answeredState({ comments: [q, r], body: RECORD });
+  assert.equal(s.state, 'answered');
+  assert.equal(s.replies.length, 1);
+  assert.equal(s.pending.length, 1);
+  assert.equal(s.question, q);
+});
+
+test('AC1.2: no trusted question reads no-question', () => {
+  assert.equal(answeredState({ comments: [], body: RECORD }).state, 'no-question');
+  assert.equal(answeredState({ comments: [reply('/answer x')], body: RECORD }).state, 'no-question');
+  assert.equal(answeredState({ comments: [question({ association: 'CONTRIBUTOR' })], body: RECORD }).state, 'no-question');
+});
+
+test('AC1.3: an /answer created before the newest question (after an older one) reads unanswered', () => {
+  const old = question({ createdAt: '2026-11-25T10:00:00Z' });
+  const between = reply('/answer old', { createdAt: '2026-11-25T12:00:00Z' });
+  const newest = question({ createdAt: '2026-11-26T10:00:00Z' });
+  const s = answeredState({ comments: [old, between, newest], body: RECORD });
+  assert.equal(s.state, 'unanswered');
+  assert.equal(s.question, newest);
+});
+
+test('AC1.4: untrusted authors read unanswered', () => {
+  const q = question();
+  for (const association of ['CONTRIBUTOR', 'NONE', undefined]) {
+    const s = answeredState({ comments: [q, reply('/answer x', { association })], body: RECORD });
+    assert.equal(s.state, 'unanswered', String(association));
+  }
+});
+
+test('AC1.5: first non-blank line must start with /answer plus text', () => {
+  const q = question();
+  for (const text of ['/answers x', 'see /answer x', '/answer:', '/answer', '/answer   ']) {
+    assert.equal(answeredState({ comments: [q, reply(text)], body: RECORD }).state, 'unanswered', text);
+  }
+  const upper = answeredState({ comments: [q, reply('/ANSWER Reading A')], body: RECORD });
+  assert.equal(upper.state, 'answered');
+  assert.equal(answerText(upper.replies[0]), 'Reading A');
+  const lead = answeredState({ comments: [q, reply('\n\n/answer Reading B')], body: RECORD });
+  assert.equal(lead.state, 'answered');
+  assert.equal(answerText(lead.replies[0]), 'Reading B');
+});
+
+test('answerText keeps later lines and findAnswerReplies orders oldest first', () => {
+  const q = question();
+  const late = reply('/answer second', { createdAt: '2026-11-26T13:00:00Z' });
+  const early = reply('/answer first\nmore detail', { createdAt: '2026-11-26T12:00:00Z' });
+  const out = findAnswerReplies([q, late, early], q);
+  assert.deepEqual(out, [early, late]);
+  assert.equal(answerText(early), 'first\nmore detail');
+  assert.equal(findAnswerReplies([q, reply('/answer x', { createdAt: q.createdAt })], q).length, 0);
+});
+
+test('AC1.6: an untrusted question comment reads no-question', () => {
+  assert.equal(findQuestion([question({ association: 'NONE' })]), null);
+});
+
+test('AC2.1: the section goes immediately before ## Original request', () => {
+  const q = question();
+  const out = appendAnswers(RECORD, q, [reply('/answer Reading B')]);
+  const at = out.indexOf('## Plan-review answers (2026-11-26)');
+  assert.ok(at >= 0);
+  const orig = originalRequestOffset(out);
+  assert.ok(at < orig);
+  assert.match(out.slice(at, orig), /\n\n$/);
+  assert.doesNotMatch(out.slice(at, orig), /\n\n\n$/);
+  assert.match(out, /Question: https:\/\/github\.com\/o\/r\/issues\/1#issuecomment-\d+/);
+  assert.match(out, /\*\*Decision\*\* \(answer by @maintainer, /);
+});
+
+test('AC2.2: with no Original request it is appended at the end', () => {
+  const body = '## Current State\n\nSomething.\n';
+  const out = appendAnswers(body, question(), [reply('/answer B')]);
+  assert.ok(out.startsWith(body));
+  assert.ok(out.indexOf('## Plan-review answers') > body.length - 1);
+  assert.ok(out.endsWith('B\n```\n'));
+  assert.equal(originalRequestOffset(out), -1);
+});
+
+test('AC2.3: a reply with backticks, an Original request line and TODO is fenced', () => {
+  const q = question();
+  const r = reply('/answer ```js\nx\n```\n## Original request\nTODO later');
+  const out = appendAnswers(RECORD, q, [r]);
+  assert.equal(originalRequestOffset(out), originalRequestOffset(RECORD) + (out.length - RECORD.length));
+  assert.ok(!shapeGate(out).missing.includes('unresolved-placeholder') || shapeGate(RECORD).missing.includes('unresolved-placeholder'));
+  assert.ok(out.includes('````text\n'));
+});
+
+test('AC2.4: a second call with the same replies is byte-identical', () => {
+  const q = question();
+  const rs = [reply('/answer B')];
+  const once = appendAnswers(RECORD, q, rs);
+  assert.equal(appendAnswers(once, q, rs), once);
+  assert.equal(appendAnswers(RECORD, q, []), RECORD);
+});
+
+test('a later reply to the same question adds a second Decision block to the same section', () => {
+  const q = question();
+  const r1 = reply('/answer first');
+  const r2 = reply('/answer second', { createdAt: '2026-11-26T12:00:00Z' });
+  const once = appendAnswers(RECORD, q, [r1]);
+  const twice = appendAnswers(once, q, [r1, r2]);
+  assert.equal(twice.match(/^## Plan-review answers/gm).length, 1);
+  assert.equal(twice.match(/^\*\*Decision\*\*/gm).length, 2);
+  assert.ok(originalRequestOffset(twice) > twice.indexOf('second'));
+  assert.ok(twice.indexOf('first') < twice.indexOf('second'));
+  // both in one call produce the same text
+  assert.equal(appendAnswers(RECORD, q, [r1, r2]), twice);
+});
+
+test('a CRLF body keeps the section before ## Original request', () => {
+  const crlf = RECORD.replace(/\n/g, '\r\n');
+  const out = appendAnswers(crlf, question(), [reply('/answer B')]);
+  assert.ok(out.indexOf('## Plan-review answers') < originalRequestOffset(out));
+  assert.ok(originalRequestOffset(out) > 0);
+});
+
+test('questionExcerpt reads Question 1 from the real comment shape', () => {
+  assert.equal(questionExcerpt(question()), 'Question 1. What happens when the reply is empty?');
+  const bare = comment({ body: `${QUESTION_MARKER}\n\nFirst line here\nsecond`, createdAt: '2026-11-26T10:00:00Z' });
+  assert.equal(questionExcerpt(bare), 'First line here');
+});
