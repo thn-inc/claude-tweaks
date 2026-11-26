@@ -312,6 +312,9 @@ function mergeUsage(prev, usage) {
 // An assistant row holding AskUserQuestion tool_use blocks also carries asks
 // ([{ id, ts, questions: string[] }]) and a user row holding a tool_result for
 // such an id carries answers ([{ id, ts }]); rows with neither have no such key (#5556).
+// An assistant row also carries effort (#6010) when the latest preceding
+// `type: "api-request"` line has params.output_config.effort as a non-empty
+// string; otherwise it has no effort key (sparse). User rows never do.
 // Rejects when the file cannot be opened, with the real stat failure's
 // code (ENOENT/EACCES/...; EUNKNOWN if the error carries none), with
 // EISDIR when the path resolves but names a directory, or — if `stat`
@@ -337,6 +340,7 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null, signal = null
   // every later line is zeroed (#1929 whole-branch review fix 1; #3375 C1).
   const firstRowById = new Map();
   const usageById = new Map(); // message.id -> mergeUsage's running UsageMax
+  let currentEffort = null; // effort of the latest api-request line (#6010)
   const stream = fsImpl.createReadStream(filePath, { encoding: 'utf8' });
   const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
   let onAbort = null;
@@ -352,12 +356,18 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null, signal = null
       if (!line.trim()) return;
       let entry;
       try { entry = JSON.parse(line); } catch { return; }
+      if (entry && entry.type === 'api-request') {
+        const eff = entry.params && entry.params.output_config && entry.params.output_config.effort;
+        currentEffort = typeof eff === 'string' && eff !== '' ? eff : null;
+        return;
+      }
       const msg = entry && entry.message;
       if (!entry || typeof entry.timestamp !== 'string' || !msg || typeof msg.role !== 'string') return;
       const content = Array.isArray(msg.content) ? msg.content : [];
       const row = { ts: entry.timestamp, role: msg.role, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, cacheWrite1h: 0, cacheWrite5m: 0, messageId: null, toolRoundTrip: false, procedureBytes: 0, model: null, turnClasses: {}, turnStart: false, contextTokens: 0, procedureFiles: {} };
       if (msg.role === 'assistant') {
         row.model = typeof msg.model === 'string' ? msg.model : null;
+        if (currentEffort !== null) row.effort = currentEffort;
         const u = msg.usage || {};
         row.inputTokens = Number(u.input_tokens) || 0;
         row.outputTokens = Number(u.output_tokens) || 0;

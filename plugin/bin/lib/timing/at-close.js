@@ -21,7 +21,8 @@
 // concurrent archive moved away is followed to its archive twin, never
 // recreated. The close also fills the run's manifest.json (#6009): closedAt and minutes on every
 // closing path, the list-price cost group on the token paths (a kept close upgrades a partial or
-// null-cost stored group, never rewrites timing.json). Nothing here throws: a failure is one SKIP line in the run's
+// null-cost stored group, never rewrites timing.json), and on those same paths `roles`, the model and effort
+// per role (#6010). Nothing here throws: a failure is one SKIP line in the run's
 // decisions.md (_shared/auto-decision-log.md's Degrade-trace rule).
 'use strict';
 const fs = require('fs');
@@ -31,6 +32,7 @@ const { lstatType } = require('../path-guard');
 const { derivePhaseTiming, deriveTiming, hasTokenTotals, writeTimingFile, readEvents } = require('./run-timing');
 const { fillRunManifest, MANIFEST_FILE } = require('../run-manifest/write');
 const { costRowsFrom, deriveRunCost } = require('../run-manifest/cost');
+const rolesLib = require('../run-manifest/roles'); // called as rolesLib.deriveRoles so a test can stub it
 const { priorWorktree } = require('../run-state-worktree');
 const { acquireLock, releaseLock } = require('../file-lock');
 const timingSkip = require('../log-decision/timing-skip');
@@ -274,7 +276,18 @@ function fillManifestAtClose(dir, { base, costRows = null, withCost = false } = 
     }
     const r = deriveRunCost(input);
     const fields = { closedAt: r.closedAt, minutes: r.minutes };
-    if (withCost) fields.cost = { tokensByModel: r.tokensByModel, costUsd: r.costUsd, priceDate: r.priceDate, unpricedModels: r.unpricedModels, costPartial: r.costPartial };
+    if (withCost) {
+      fields.cost = { tokensByModel: r.tokensByModel, costUsd: r.costUsd, priceDate: r.priceDate, unpricedModels: r.unpricedModels, costPartial: r.costPartial };
+      // Derived from the raw costRows (not input.rows, which costRowsFrom already extended with every item's rows).
+      try {
+        const roles = driver
+          ? rolesLib.deriveRoles({ manifest, events: input.events })
+          : rolesLib.deriveRoles({ manifest, rows: isObj(costRows) ? costRows.rows : [], items: isObj(costRows) ? costRows.items : [] });
+        if (roles !== null) fields.roles = roles;
+      } catch (err) {
+        warnManifestFailure(err);
+      }
+    }
     fillRunManifest(dir, fields);
   } catch (err) {
     warnManifestFailure(err);
