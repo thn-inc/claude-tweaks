@@ -47,7 +47,10 @@ Scope keywords: prEventSettle, classifyRollup, HEAD_RUN_FIELDS
 - Modify: `plugin/bin/lib/pr-checks/classify.js` (constants block near `PR_EVENTS`/`HEAD_RUN_FIELDS`; `classifyRollup` pending stage; `module.exports`)
 - Modify: `plugin/skills/_shared/pr-first-merge.md` (the two `gh run list … --json databaseId,name,workflowName,status,conclusion,url,startedAt` field lists: the Step 2.5 head-run read and the bounded watch's `0)` arm)
 - Modify: `plugin/skills/release/execute.md` (its `gh run list … --limit 100 --json …` line)
+- Modify: `docs/plugin-structure.md` (the `plugin/bin/lib/pr-checks/` row: name `prEventSettle`/`PR_EVENT_SETTLE_MS`, #3468; and the `pr-checks.js` command row: the `prEventSettle?` envelope field — Task 2 adds it)
 - Test: `tests/bin-lib/pr-checks/classify.test.js`
+- Test: `tests/pr-check-gate-conformance.test.js` (run only — its HEAD_RUN_FIELDS prose pin reads the lines this task updates)
+- Test: `tests/bin-lib/console/backfill.test.js` (run only, no edit — Check B hit: it names classifyRollup only inside a decisions.md string fixture)
 
 **Interfaces:**
 - Produces: `PR_EVENT_SETTLE_MS` (number, 60000); `prEventSettle({ hasPrCi, headRuns, headCommittedAt, now }) -> { settling: boolean, until: string|null }` (`until` an ISO string, null when no anchor parses); `classifyRollup` accepts `now` (epoch ms) and `headCommittedAt` (ISO string or null) and, when settling, returns `state: 'pending'` with `prEventSettle: { until }`; `HEAD_RUN_FIELDS === 'databaseId,name,workflowName,status,conclusion,url,startedAt,event,createdAt'`.
@@ -70,7 +73,7 @@ Scope keywords: prEventSettle, classifyRollup, HEAD_RUN_FIELDS
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node --test tests/bin-lib/pr-checks/classify.test.js`
-Expected: FAIL (`prEventSettle is not a function` / AC1.1 reads `green`).
+Expected: FAIL after Step 1 (`prEventSettle is not a function` / AC1.1 reads `green`).
 
 - [ ] **Step 3: Implement** `PR_EVENT_SETTLE_MS`, `prEventSettle`, the `classifyRollup` wiring and the `HEAD_RUN_FIELDS` extension in `classify.js`. Anchor = minimum parseable `createdAt ?? created_at` over object rows; when none parses (including an empty list), `Date.parse(headCommittedAt)`; NaN → `{ settling: true, until: null }`. `settling = now < anchor + PR_EVENT_SETTLE_MS`. In `classifyRollup`, compute it after the red return and before the `pending/awaiting/held` return; a settling verdict joins that pending branch (add `extra.prEventSettle = { until }`). Update the module's header comment with one bullet for #3468. Update the three prose field lists to `HEAD_RUN_FIELDS`' new value.
 
@@ -103,7 +106,7 @@ Expected: PASS.
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node --test tests/bin-lib/pr-checks/cli.test.js`
-Expected: FAIL on the new tests.
+Expected: FAIL after Step 1, on the new tests.
 
 - [ ] **Step 3: Implement** — `input.now = deps.now()`; when `Array.isArray(headRuns) && headRuns.length === 0` and `hasPrCi`, read the committer date with `deps.gh(['api', \`repos/{owner}/{repo}/commits/${headRefOid}\`, '--jq', '.commit.committer.date'])` (trimmed; a throw or empty output → `null`) into `input.headCommittedAt`. Extend `gateEntry`'s pending text as in Interfaces. Document `prEventSettle?` in the header comment's envelope list and in `USAGE`.
 
@@ -136,7 +139,7 @@ Expected: PASS.
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node --test tests/bin-lib/driver/merge.test.js tests/bin-lib/learned-skills/drain.test.js`
-Expected: FAIL on the new tests.
+Expected: FAIL after Step 1, on the new tests.
 
 - [ ] **Step 3: Implement** — merge.js reads the clock through its existing `deps.now`; the committer-date read uses `deps.gh(['api', \`repos/${ctx.repo}/commits/${read.headRefOid}\`, '--jq', '.commit.committer.date'])`, failure → `null`. Both `classify` call sites (the gate and the watch) pass the inputs. drain.js uses its `deps.now` and `deps.gh` with `repo` the same way.
 
@@ -155,6 +158,8 @@ Expected: PASS.
 - Modify: `plugin/skills/_shared/pr-first-merge.md` (Step 2.5: a classification bullet; the `{head-committed-at}` read after the head-run read; the bounded watch `0)` arm's `PENDING_RUNS` line; the `RC=0` bullet)
 - Modify: `plugin/skills/_shared/pr-first-merge-appendix.md` (a `## PR-event settle window (#3468)` section: the rule, the evidence and cost lines from the spec's Decision, the rejected path-filter design; plus whatever lazy passage is moved out of `pr-first-merge.md` for bytes)
 - Test: `tests/merge-verification-gate-conformance.test.js`
+- Modify: `plugin/skills/dispatch/settle-parked.md` (only if Step 5 finds a sentence the settle window makes false; it cites classifyRollup)
+- Modify: `plugin/skills/wrap-up/review-console-interactive.md` (same condition)
 
 **Interfaces:**
 - Consumes: Task 1's `prEventSettle` and `PR_EVENT_SETTLE_MS`.
@@ -168,7 +173,7 @@ Expected: PASS.
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node --test tests/merge-verification-gate-conformance.test.js`
-Expected: FAIL on the three new tests.
+Expected: FAIL after Step 1, on the three new tests.
 
 - [ ] **Step 3: Write the prose.** Classification bullet (short; detail lives in the appendix): with PR CI and no head run whose `event` is `pull_request`/`pull_request_target` → **pending** until 60 seconds after the earliest head run's `createdAt` (no head run: `{head-committed-at}`; neither readable: pending) — after that the other rules decide; code twin `classify.js`'s `prEventSettle`; why: appendix "PR-event settle window". Add `+c.prEventSettle({hasPrCi:true,headRuns:r,headCommittedAt:process.argv[3],now:Date.now()}).settling` to the `PENDING_RUNS` sum and `"{head-committed-at}"` as its third argument; extend the `RC=0` bullet's "not yet `completed` **or held**" clause with the open settle window. Then measure the composed bundle (Global Constraints command); if it exceeds 52,500, move an existing lazy passage to the appendix behind a one-line pointer until it fits, keeping every existing conformance pin green.
 
@@ -178,7 +183,7 @@ Run: `node --test tests/merge-verification-gate-conformance.test.js tests/pr-che
 Then: `git grep -ln "pr-first-merge" -- tests` and run each listed file with `node --test`.
 Expected: PASS, and the bundle-size command prints a value ≤ 52500.
 
-- [ ] **Step 5: Behavior-change prose sweep.** `git grep -n -i "push-triggered\|partial rollup\|hasPullRequestCi" -- plugin/skills docs` — any sentence claiming a push-only green head reads green at the gate gets the settle window named, or is left with a stated reason in the commit message.
+- [ ] **Step 5: Behavior-change prose sweep.** `git grep -n -i "push-triggered\|partial rollup\|hasPullRequestCi\|classifyRollup" -- plugin/skills docs` (plan-audit Check B surfaced `plugin/skills/dispatch/settle-parked.md` and `plugin/skills/wrap-up/review-console-interactive.md`, which cite `classifyRollup` — check each still reads true) — any sentence claiming a push-only green head reads green at the gate gets the settle window named, or is left with a stated reason in the commit message.
 
 - [ ] **Step 6: Commit** — `State the PR-event settle window in Step 2.5 and the bounded watch — refs #3468`
 
