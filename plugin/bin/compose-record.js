@@ -36,6 +36,17 @@ function readComposedFor(body) {
   return { status: first.startsWith('<!-- composed-for:') ? 'malformed' : 'missing', id: null, rest: body };
 }
 
+function markerRefusalMessage(marker, file, record) {
+  switch (marker.status) {
+    case 'ok':
+      return `compose-record.js: body file ${file} was composed for #${marker.id}, not #${record} — refusing to write it\n`;
+    case 'missing':
+      return `compose-record.js: body file ${file} carries no composed-for marker — refusing to write it to #${record}\n`;
+    default:
+      return `compose-record.js: body file ${file} has a malformed composed-for marker — refusing to write it to #${record}\n`;
+  }
+}
+
 function parseArgs(argv) {
   const o = { payloadFile: null, out: null, requireShaped: false, help: false, check: null, record: null };
   const positional = [];
@@ -84,11 +95,7 @@ function run(argv, deps = realDeps) {
     }
     const marker = readComposedFor(body);
     if (marker.status !== 'ok' || marker.id !== o.record) {
-      deps.stderr(marker.status === 'ok'
-        ? `compose-record.js: body file ${o.check} was composed for #${marker.id}, not #${o.record} — refusing to write it\n`
-        : marker.status === 'missing'
-          ? `compose-record.js: body file ${o.check} carries no composed-for marker — refusing to write it to #${o.record}\n`
-          : `compose-record.js: body file ${o.check} has a malformed composed-for marker — refusing to write it to #${o.record}\n`);
+      deps.stderr(markerRefusalMessage(marker, o.check, o.record));
       return 6;
     }
     const shaped = validateShaped(marker.rest);
