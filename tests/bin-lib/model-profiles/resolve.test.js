@@ -384,6 +384,10 @@ test('an unknown exception plus a bad stance throws the exception message first'
   assert.throws(() => resolve('frontier', { ...DR, stance: 'bogus' }), /unknown stance "bogus"/);
 });
 
+test('a bad model-effort throws on the exception path', () => {
+  assert.throws(() => resolve('frontier', { ...DR, policy: { 'model-effort': 'bogus' } }), /unknown model-effort "bogus"/);
+});
+
 test('the exception applies only to frontier', () => {
   assert.throws(() => resolve('capable', DR), /applies only to the frontier profile/);
 });

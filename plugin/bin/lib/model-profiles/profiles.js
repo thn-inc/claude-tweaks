@@ -76,6 +76,17 @@ const FRONTIER_EXCEPTIONS = Object.freeze({
 // resolve() runs); resolve() reports the other five.
 const STEP_DOWN_REASONS = Object.freeze(['tally', 'policy', 'stance', 'ceiling', 'limit', 'session-failure']);
 
+// Resolves and validates the stance and model-effort inputs — shared by
+// resolve() and its exception branch so the two cannot drift.
+function readStanceAndEffort(opts) {
+  const policy = opts.policy || {};
+  const stance = opts.stance || policy['model-stance'] || 'default';
+  if (!STANCES.includes(stance)) throw new Error(`unknown stance "${stance}"`);
+  const effortMode = policy['model-effort'] || 'inherit';
+  if (effortMode !== 'inherit' && effortMode !== 'profile') throw new Error(`unknown model-effort "${effortMode}"`);
+  return { stance, effortMode };
+}
+
 // The exception branch of resolve(): the top tier stays `fable`, or the call
 // reports the first gate that would have moved it off — never a silent lower
 // tier. Effort-only changes (policy effort, stance max-rigor/economy shift)
@@ -95,10 +106,7 @@ function resolveException(profile, opts) {
   }
 
   const policy = opts.policy || {};
-  const stance = opts.stance || policy['model-stance'] || 'default';
-  if (!STANCES.includes(stance)) throw new Error(`unknown stance "${stance}"`);
-  const effortMode = policy['model-effort'] || 'inherit';
-  if (effortMode !== 'inherit' && effortMode !== 'profile') throw new Error(`unknown model-effort "${effortMode}"`);
+  const { stance, effortMode } = readStanceAndEffort(opts);
 
   const top = PROFILES.frontier;
   let effort = top.effort;
@@ -146,10 +154,7 @@ function resolve(profile, opts = {}) {
   if (opts.exception !== undefined) return resolveException(profile, opts);
   if (!PROFILES[profile]) throw new Error(`unknown profile "${profile}"`);
   const policy = opts.policy || {};
-  const stance = opts.stance || policy['model-stance'] || 'default';
-  if (!STANCES.includes(stance)) throw new Error(`unknown stance "${stance}"`);
-  const effortMode = policy['model-effort'] || 'inherit';
-  if (effortMode !== 'inherit' && effortMode !== 'profile') throw new Error(`unknown model-effort "${effortMode}"`);
+  const { stance, effortMode } = readStanceAndEffort(opts);
 
   let model = PROFILES[profile].model;
   let effort = PROFILES[profile].effort;
