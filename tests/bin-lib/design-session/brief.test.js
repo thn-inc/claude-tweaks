@@ -269,13 +269,35 @@ test('fix3: the leaf is opened with O_NOFOLLOW, not trusted from an earlier lsta
   assert.strictEqual(r.reason, 'symlink');
 });
 
-test('fix3.1: a FIFO named design.md is refused, not waited on', { skip: process.platform === 'win32', timeout: 5000 }, (t) => {
+// The compose calls run in a child process: a blocking open on a FIFO is a synchronous
+// syscall no in-process test timeout can interrupt, so a regression would hang the run.
+// The child is killed on the bound instead, and the test fails rather than hangs.
+const FIFO_CHILD = `
+const [lib, briefsPath, folder] = process.argv.slice(1);
+const { composeBrief } = require(lib);
+const briefsText = require('fs').readFileSync(briefsPath, 'utf8');
+const out = [['user', 1], ['builder', undefined]].map(([reader, round]) => {
+  const r = composeBrief({ folder, reader, round, briefsText });
+  return { reader, ok: r.ok, reason: r.reason };
+});
+process.stdout.write(JSON.stringify(out));
+`;
+
+test('fix3.1: a FIFO named design.md is refused, not waited on', { skip: process.platform === 'win32' }, (t) => {
   const folder = folderWith(t, { 'design.md': null });
   require('child_process').execFileSync('mkfifo', [path.join(folder, 'design.md')]);
-  for (const [reader, round] of [['user', 1], ['builder', undefined]]) {
-    const r = compose(folder, reader, round);
-    assert.strictEqual(r.ok, false, reader);
-    assert.strictEqual(r.reason, 'no-frame', reader);
+  const lib = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'design-session', 'brief.js');
+  const r = require('child_process').spawnSync(process.execPath, ['-e', FIFO_CHILD, lib, BRIEFS_PATH, folder], {
+    timeout: 5000, killSignal: 'SIGKILL', encoding: 'utf8', windowsHide: true,
+  });
+  assert.strictEqual(r.error, undefined, `the compose child did not finish in time (blocked on the FIFO?): ${r.error && r.error.message}`);
+  assert.strictEqual(r.signal, null, `child killed by ${r.signal}`);
+  assert.strictEqual(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.strictEqual(out.length, 2);
+  for (const o of out) {
+    assert.strictEqual(o.ok, false, o.reader);
+    assert.strictEqual(o.reason, 'no-frame', o.reader);
   }
 });
 
