@@ -269,10 +269,11 @@ test('a resumed round resolves only unrecorded perspectives', () => {
 // ---------------------------------------------------------------------------------------------
 // the skill never creates a worktree; no write outside the folder
 
-const DESIGN_MD = Object.fromEntries(FILES.filter((f) => f !== 'reader-briefs.md' || true).map((f) => [f, TEXT[f]]));
+// Every markdown file of the design skill: the sweeps below cover SKILL.md, the seven steps and reader-briefs.md.
+const DESIGN_MD = Object.fromEntries(FILES.map((f) => [f, TEXT[f]]));
 
 test('the skill never creates a worktree', () => {
-  const banned = ['EnterWorktree', 'git worktree add', 'git branch'];
+  const banned = ['EnterWorktree', 'git worktree add', 'git branch', 'git checkout -b', 'git switch -c'];
   assertNoBannedInCode(DESIGN_MD, banned, 'no worktree creation');
   for (const b of banned) {
     assert.throws(() => assertNoBannedInCode({ ...DESIGN_MD, 'SKILL.md': withPlantedFence(SKILL, b) }, banned, 'no worktree creation'), { message: 'no worktree creation: banned literal in a code region' }, `fence ${b}`);
@@ -295,7 +296,8 @@ test('the skill never creates a worktree', () => {
 });
 
 test('AC8.1: no write outside the folder, no issue, no commit', () => {
-  const banned = ['gh issue create', 'git commit', '/claude-tweaks:capture'];
+  // The skill uses `gh issue list|view` only and no `gh api`, so any `gh api` or `mcp__github` tool in a code region could create an issue.
+  const banned = ['gh issue create', 'git commit', '/claude-tweaks:capture', 'gh api', 'mcp__github'];
   assertNoBannedInCode(DESIGN_MD, banned, 'no outside write');
   for (const b of banned) {
     assert.throws(() => assertNoBannedInCode({ ...DESIGN_MD, 'step-7-builder-check.md': withPlantedFence(STEP7, b) }, banned, 'no outside write'), { message: 'no outside write: banned literal in a code region' }, `fence ${b}`);
@@ -436,4 +438,24 @@ test('skill references in step bodies are fully qualified', () => {
   assert.deepEqual(bareRefsIn({ 'x.md': 'run `/claude-tweaks:specify` now' }), []);
   const mutated = { ...stepBodies, 'step-5-alternatives.md': `${stepBodies['step-5-alternatives.md']}\nNext: \`/specify\`\n` };
   assert.equal(bareRefsIn(mutated).length, 1);
+});
+
+test('AC2.1: the readers see only the frame and the storyboard, said where the round runs', () => {
+  const facts = [
+    [/Five fresh readers, each given only the frame and the storyboard, read the design/, 'step-4 lead: readers get only the frame and storyboard'],
+    [/the reader sees only the frame and storyboard by design/, 'step-4 NEEDS_CONTEXT: reader sees only the frame and storyboard'],
+  ];
+  assert.deepEqual(missingFactsOf(facts)(STEP4), []);
+  assertEachPatternGoesRed(STEP4, facts, missingFactsOf(facts));
+});
+
+test('AC5: the dispatch steps themselves say resolve first and dispatch only when all exited 0', () => {
+  const step4 = [[/resolve each perspective's tier and dispatch them per SKILL\.md's `## Model`: every resolution first, and the whole group in one message only when all exited 0/, 'step-4 resolve first, dispatch on all-zero']];
+  assert.deepEqual(missingFactsOf(step4)(STEP4), []);
+  assertEachPatternGoesRed(STEP4, step4, missingFactsOf(step4));
+  for (const [name, text] of [['step-6', STEP6], ['step-7', STEP7]]) {
+    const facts = [[/Resolve the reader's tier and dispatch it per SKILL\.md's `## Model` \(a group of one\)\./, `${name} dispatches per Model, a group of one`]];
+    assert.deepEqual(missingFactsOf(facts)(text), []);
+    assertEachPatternGoesRed(text, facts, missingFactsOf(facts));
+  }
 });
