@@ -29,23 +29,40 @@ const ANCHORS = [
   PHRASE,
   'in every mode',
   'DISPATCH_HEADLESS=1',
-  'bot:blocked',
+  // #5053 D3: the stop waits on `needs:answer` and keeps the grants, in any posture
+  'adds `needs:answer`, keeping every `auto:*` grant',
   'claim is released',
   'worktree and draft PR are left in place',
   // anchored on the report, not the bare word: the row's own name carries BLOCKED
   'reports `BLOCKED`',
-  '/claude-tweaks:backlog refine',
-  're-materializes',
+  // the two answer paths: a reply the bare drain folds in, or a body Decision and a typed resume
+  'a reply on the question comment',
+  '/claude-tweaks:dispatch resume #{n}',
   // Settle releases the dispatched claim; a parallel-wave
-  // member reports to its orchestrator; the re-grant is conditional on the headless block
+  // member reports to its orchestrator
   "Settle steps 1-2, never by the build",
   '`parallel`-wave member reports `hard-gate-failed`',
-  'when the headless block removed it',
+  'the grants were never removed',
 ];
 
 function rowProblems(row) {
   return ANCHORS.filter((a) => !row.includes(a));
 }
+
+// The plan-review clauses #5053 retired from the row, frozen from eaa89bea31's row.
+const RETIRED_ROW_CLAUSES = [
+  'the record goes `bot:blocked` with the question posted on it',
+  'every `auto:*` grant removed',
+  're-grants `auto:build` at `/claude-tweaks:backlog refine` when the headless block removed it',
+];
+const FROZEN_ROW_FRAGMENT = "when `DISPATCH_HEADLESS=1`, the record goes `bot:blocked` with the question posted on it (issue comment, `bot:blocked`, every `auto:*` grant removed — the transport `/claude-tweaks:dispatch` uses for blocked records, without the retry-ceiling count). Exit state (dispatched call): … resume: a human answers on the record, re-grants `auto:build` at `/claude-tweaks:backlog refine` when the headless block removed it, and the next dispatch re-materializes from the answered record.";
+const retiredClauses = (row) => RETIRED_ROW_CLAUSES.filter((c) => row.includes(c));
+
+test('#5053: the HARD-GATE row no longer blocks a headless plan-review stop or asks for a re-grant', () => {
+  assert.deepStrictEqual(retiredClauses(contractRow()), []);
+  // go-red: the frozen pre-change fragment carries every retired clause.
+  assert.deepStrictEqual(retiredClauses(FROZEN_ROW_FRAGMENT), RETIRED_ROW_CLAUSES);
+});
 
 function contractRow() {
   const rows = read(CONTRACT).split('\n').filter((l) => l.startsWith('| HARD-GATE / BLOCKED / STOP conditions'));

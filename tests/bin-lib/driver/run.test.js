@@ -8087,12 +8087,13 @@ const MERGE_RUN_ID = '2026-11-12T100000-drive-7';
 const MERGE_RUN = path.join(MAIN, '.claude-tweaks', 'pipelines', MERGE_RUN_ID);
 const MERGE_ARCHIVE = path.join(MAIN, '.claude-tweaks', 'pipelines', 'archive', MERGE_RUN_ID);
 const MERGE_SHA = 'f'.repeat(40);
-const GATE_FIELDS = 'state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup';
+const GATE_FIELDS = 'state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup,createdAt';
 const REREAD_FIELDS = 'state,mergeStateStatus,mergeable,headRefOid';
 const CONFIRM_FIELDS = 'state,mergedAt,autoMergeRequest,statusCheckRollup,mergeCommit';
 const GREEN_CHECK = { __typename: 'CheckRun', name: 'unit', status: 'COMPLETED', conclusion: 'SUCCESS', detailsUrl: 'u' };
 const PENDING_CHECK = { __typename: 'CheckRun', name: 'unit', status: 'IN_PROGRESS', conclusion: '', detailsUrl: 'u' };
-const GREEN_RUN = { name: 'CI', workflowName: 'CI', status: 'completed', conclusion: 'success', url: 'u' };
+// #3468: an ordinary green PR carries a pull_request run, so the settle window never applies to it.
+const GREEN_RUN = { name: 'CI', workflowName: 'CI', status: 'completed', conclusion: 'success', url: 'u', event: 'pull_request' };
 const realLstatType = (p) => {
   try {
     const st = fs.lstatSync(p);

@@ -39,7 +39,7 @@
 const path = require('path');
 const { realDeps: lsRealDeps, firstStderrLine } = require('./learned-skills');
 const { drainPath } = require('./layout');
-const { classifyRollup, normalizeEntry, normalizeHeadRun } = require('../pr-checks/classify');
+const { classifyRollup, normalizeEntry, normalizeHeadRun, HEAD_RUN_FIELDS, HELD_CONCLUSIONS, headCommittedAtArgs } = require('../pr-checks/classify');
 const { MERGE_GATE_WATCH_SECONDS } = require('../ci-health/constants');
 const { defaultDeps: readyRunDefaultDeps, resolveReadyRun } = require('../pr-checks/ready-run');
 const { rebuild: realRebuild } = require('./rebuild');
@@ -55,6 +55,7 @@ const LOG_SECTION = '/wrap-up';
 const STEP = 'Learned-skills drain';
 const LEVER = 'learned-skills-auto-merge=true';
 const CONFLICT_PREFIX = 'conflict needs a human: ';
+// A HELD_CONCLUSIONS check (cancelled, action_required, stale) is excluded from the red scan and read as pending by classifyRollup (#3467).
 const OK_CONCLUSIONS = ['SUCCESS', 'NEUTRAL', 'SKIPPED'];
 
 const LEFT_OPEN_REASONS = Object.freeze([
@@ -80,24 +81,30 @@ function scopeProblem({ isCrossRepository, headRefName } = {}, files) {
 }
 
 // 'green' | 'pending' | 'red' | 'conflicting' | 'closed'. `ready` is the ready-run read's envelope.
-function classifyPr(view, headRuns, ready) {
-  if (!view || view.state !== 'OPEN') return 'closed';
+// The last argument ({ now, committedAt }) switches on the PR-event settle window (#3468); without it the
+// window is inactive. `judgePr` is the same verdict plus `settling` (a pending that is the window).
+function judgePr(view, headRuns, ready, { now, committedAt = null } = {}) {
+  if (!view || view.state !== 'OPEN') return { verdict: 'closed', settling: false };
   const rollup = Array.isArray(view.statusCheckRollup) ? view.statusCheckRollup : null;
   const r = ready || {};
   const conflicting = view.mergeStateStatus === 'DIRTY' || view.mergeable === 'CONFLICTING';
   const verdict = classifyRollup({
     rollup, headRefOid: view.headRefOid, localHead: view.headRefOid, hasPrCi: true, headRuns,
     readySince: r.readySince, readyWorkflows: r.readyWorkflows,
+    now, headCommittedAt: committedAt, prCreatedAt: view.createdAt,
   });
-  if (verdict.state === 'red') return 'red';
+  const done = (v) => ({ verdict: v, settling: v === 'pending' && Boolean(verdict.prEventSettle) });
+  if (verdict.state === 'red') return done('red');
   const checks = [...(rollup || []).map(normalizeEntry), ...(Array.isArray(headRuns) ? headRuns : []).map(normalizeHeadRun)];
-  if (checks.some((c) => c.status === 'COMPLETED' && !OK_CONCLUSIONS.includes(c.conclusion || ''))) return 'red';
+  if (checks.some((c) => c.status === 'COMPLETED' && !OK_CONCLUSIONS.includes(c.conclusion || '') && !HELD_CONCLUSIONS.includes(c.conclusion || ''))) return done('red');
   // Step 2.5: only `awaiting` and `draft-skip-without-ready-trigger` yield to the Conflict path; a red ready-run stays red.
-  if (r.state === 'red' || (!conflicting && r.state === 'draft-skip-without-ready-trigger')) return 'red';
-  if (conflicting) return 'conflicting';
-  if (view.isDraft || verdict.state !== 'green' || r.state === 'awaiting' || r.state === 'read-failed') return 'pending';
-  return 'green';
+  if (r.state === 'red' || (!conflicting && r.state === 'draft-skip-without-ready-trigger')) return done('red');
+  if (conflicting) return done('conflicting');
+  if (view.isDraft || verdict.state !== 'green' || r.state === 'awaiting' || r.state === 'read-failed') return done('pending');
+  return done('green');
 }
+
+const classifyPr = (view, headRuns, ready, clockInputs) => judgePr(view, headRuns, ready, clockInputs).verdict;
 
 const parseJson = (text, what) => {
   try { return JSON.parse(text); } catch { throw new Error(`${what} returned unparseable JSON`); }
@@ -221,15 +228,21 @@ function drain(opts, overrides = {}) {
 
   // state + head runs + ready-run for one PR; throws on any failed read.
   const read = (n) => {
-    const view = parseJson(deps.gh(['pr', 'view', String(n), '--repo', repo, '--json', 'number,state,isDraft,mergeStateStatus,mergeable,headRefOid,statusCheckRollup,files,title,body']), 'gh pr view');
+    const view = parseJson(deps.gh(['pr', 'view', String(n), '--repo', repo, '--json', 'number,state,isDraft,mergeStateStatus,mergeable,headRefOid,statusCheckRollup,files,title,body,createdAt']), 'gh pr view');
     if (!view || typeof view !== 'object' || Array.isArray(view)) throw new Error('gh pr view returned no object');
     if (view.state !== 'OPEN') return { view, headRuns: [], ready: null, verdict: 'closed' };
     if (typeof view.headRefOid !== 'string' || !view.headRefOid || !Array.isArray(view.statusCheckRollup)) throw new Error('gh pr view returned no head commit or check rollup');
-    const headRuns = parseJson(deps.gh(['run', 'list', '--repo', repo, '--commit', view.headRefOid, '--limit', '100', '--json', 'name,workflowName,status,conclusion,url']), 'gh run list');
+    const headRuns = parseJson(deps.gh(['run', 'list', '--repo', repo, '--commit', view.headRefOid, '--limit', '100', '--json', HEAD_RUN_FIELDS]), 'gh run list');
     if (!Array.isArray(headRuns)) throw new Error('gh run list did not return an array');
     const ready = deps.readyRun({ pr: n, sha: view.headRefOid });
     if (!ready || ready.state === 'read-failed' || typeof ready.state !== 'string') throw new Error(`ready-run read failed: ${(ready && ready.reason) || 'no state'}`);
-    return { view, headRuns, ready, verdict: classifyPr(view, headRuns, ready) };
+    // #3468: with no workflow run for the head yet, the committer date starts the settle window; a
+    // failed read is null, which classify.js keeps pending (never a throw, never read-failed).
+    let committedAt = null;
+    if (headRuns.length === 0) {
+      try { committedAt = String(deps.gh(headCommittedAtArgs(repo, view.headRefOid))).trim() || null; } catch { committedAt = null; }
+    }
+    return { view, headRuns, ready, ...judgePr(view, headRuns, ready, { now: deps.now(), committedAt }) };
   };
 
   const mergeArgs = (n, sha, composed, arm) => [
@@ -351,7 +364,8 @@ function drain(opts, overrides = {}) {
       // pending
       if (n !== own) { open(n, 'pending'); continue; }
       if (opts.mergeVerification === 'off' && state.view.statusCheckRollup.length === 0 && state.headRuns.length === 0) { open(n, 'pending'); continue; }
-      if (LEVER_ACTIONS[lever].pending === 'arm-if-blocked-else-watch' && state.view.mergeStateStatus === 'BLOCKED') {
+      // A settling pending (#3468) watches: arming would let GitHub's required-check rule end the window.
+      if (LEVER_ACTIONS[lever].pending === 'arm-if-blocked-else-watch' && state.view.mergeStateStatus === 'BLOCKED' && !state.settling) {
         land(n, sha, true);
         continue;
       }

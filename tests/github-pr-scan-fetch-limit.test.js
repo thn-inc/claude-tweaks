@@ -476,9 +476,9 @@ const TRIAGE_ITEM1_LABEL = '1. **Pending authorization**';
 
 test('no gh list call in github-pr-scan-triage.md carries a fixed --limit', () => {
   assert.deepEqual(fixedLimitSites(TRIAGE), []);
-  // Items 1 (ready) and 2 (blocked) are the two sized fetches; item 3 is a commits-endpoint call with no --limit.
-  assert.deepEqual(limitSites(TRIAGE), ['{resolved-limit}', '{resolved-limit}']);
-  assert.equal(jsonListCalls(TRIAGE).length, 2, 'every gh list call in the triage scope must carry --limit {resolved-limit}');
+  // Items 1 (ready), 2 (blocked) and 4 (needs:answer) are the three sized fetches; item 3 is a commits-endpoint call with no --limit.
+  assert.deepEqual(limitSites(TRIAGE), ['{resolved-limit}', '{resolved-limit}', '{resolved-limit}']);
+  assert.equal(jsonListCalls(TRIAGE).length, 3, 'every gh list call in the triage scope must carry --limit {resolved-limit}');
 });
 
 test('triage-queue carries the Fetch limit rule and the floor render', () => {

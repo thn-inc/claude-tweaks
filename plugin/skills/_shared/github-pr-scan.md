@@ -63,17 +63,18 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
    PR_SCAN_OPEN="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-scan-open.json)"
    gh pr list --state open --json number,title,updatedAt,isDraft,reviewDecision,headRefName,url,statusCheckRollup --limit {resolved-limit} > "$PR_SCAN_OPEN"
    PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}" node -e "
-     // Only rollup-green PRs get a pr-checks.js call: the rollup lists registered checks, pr-checks.js adds the head-sha runs (#3469).
+     // Only OK-or-held rollups get a pr-checks.js call: the rollup lists registered checks, pr-checks.js adds the head-sha runs (#3469).
      const { execFileSync } = require('child_process');
      const PR_CHECKS = require('path').join(process.env.PLUGIN_ROOT, 'bin', 'pr-checks.js');
      const NON_BLOCKING = new Set(['SUCCESS', 'SKIPPED', 'NEUTRAL']);
-     const FAILURE = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE']);
+     const FAILURE = new Set(['FAILURE', 'TIMED_OUT', 'ERROR', 'STARTUP_FAILURE']);
+     const HELD = new Set(['CANCELLED', 'ACTION_REQUIRED', 'STALE']);
      const STATUS_BY_STATE = new Map([['green', 'passing'], ['no-ci', 'passing'], ['pending', 'pending'], ['red', 'failing'], ['inherited-red', 'failing']]);
      require('$PR_SCAN_OPEN').forEach((pr) => {
        const checks = pr.statusCheckRollup || [];
        const verdict = (c) => c.conclusion || c.state;
        let status;
-       if (checks.every((c) => NON_BLOCKING.has(verdict(c)))) {
+       if (checks.every((c) => NON_BLOCKING.has(verdict(c)) || HELD.has(verdict(c)))) { // held: pr-checks.js judges newest per check
          let state;
          try { state = JSON.parse(execFileSync('node', [PR_CHECKS, '--pr', String(pr.number)], { encoding: 'utf8' })).state; } catch (e) { state = 'read-failed'; }
          status = STATUS_BY_STATE.get(state) || 'unavailable';
@@ -144,7 +145,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
    ```
 
    - **Pending authorization** — `ready` ∧ no `auto:*` ∧ no `bot:*` (`bot:in-progress`, `bot:blocked`, or `bot:parked`). Origin-agnostic: any record any health skill, `/claude-tweaks:capture`, or a human filed counts, with or without a `by:*` label — matching `/claude-tweaks:backlog refine`'s own origin-agnostic `ready`-queue pull (`skills/backlog/refine-mode.md`), which no longer tiers any health-skill origin specially. This is a maintenance signal only — `/tidy` never grants authorization itself (`/claude-tweaks:backlog refine` owns that).
-   - **`bot:blocked`** — records that hit their retry ceiling, or whose plan-review question awaits an answer (`<!-- plan-review-question -->` comment, `build/plan-review.md`); needs a human's renewed judgment at `/claude-tweaks:backlog refine` before re-entering the autonomous queue (same definition as `tidy/step-1-records.md`'s Shape 5). A record `_shared/pr-first-merge.md`'s Step 2.5 (Merge-verification gate) parked on a red or timed-out PR check carries `bot:parked` instead — a distinct label, since that path leaves `auto:*` grants intact (`tidy/step-1-records.md`'s Shape 5-parked) — and is not counted here.
+   - **`bot:blocked`** — records that hit their retry ceiling (a plan-review question is `needs:answer`, not counted); needs a human's renewed judgment at `/claude-tweaks:backlog refine` before re-entering the autonomous queue (same definition as `tidy/step-1-records.md`'s Shape 5). A record `_shared/pr-first-merge.md`'s Step 2.5 (Merge-verification gate) parked on a red or timed-out PR check carries `bot:parked` instead — a distinct label, since that path leaves `auto:*` grants intact (`tidy/step-1-records.md`'s Shape 5-parked) — and is not counted here.
    - **Backlog-state** — open records carrying neither `ready` nor `parked` — the default, unasserted state per `_shared/work-record.md`'s lifecycle spine.
 
    Surface all three as the `[queue]` Output Contract row below — bare counts only, per the Output Contract's own documented shape. No per-record enumeration is produced or needed here.

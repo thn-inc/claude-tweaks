@@ -175,10 +175,14 @@ test('--resume-verdict renders a resume first call', () => {
   h = withVerdict(JSON.stringify(verdict));
   assert.strictEqual(run(['--call', 'first', ...base(runDir, ['--resume-verdict', vPath, '--next-steps', 'test'])], h.deps), 0);
 
+  h = withVerdict(JSON.stringify(verdict));
+  assert.strictEqual(run(['--call', 'first', ...base(runDir, ['--headless', '--resume-verdict', vPath])], h.deps), 0);
+  assert.ok(written(h.log, path.join(runDir, 'p.md')).includes('DISPATCH_HEADLESS=1 RESUME_PR="https://github.com/o/r/pull/9" /claude-tweaks:flow #4589'));
+
   const bad = [
+    ['second', base(runDir, ['--headless']), verdict],
     ['second', base(runDir), verdict],
     ['first', ['--run', runDir, '--issues', '4589,4590', '--out', path.join(runDir, 'p.md')], verdict],
-    ['first', base(runDir, ['--headless']), verdict],
     ['first', base(runDir), { ...verdict, issue: 4590 }],
     ['first', base(runDir), { ...verdict, eligible: false }],
   ];
