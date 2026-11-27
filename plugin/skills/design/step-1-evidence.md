@@ -72,11 +72,13 @@ Status: in-progress
 
 No area labels, headings or other lines go into the file. An area whose search found nothing, and a searcher that could not reach its area, are not written there — an absence has no source; they are said in the conversation when the file is shown.
 
-When no searcher found anything, the check needs one claim, so write exactly this one bullet, with `{sha}` the full `git -C "{repo root}" rev-parse HEAD` of the checkout searched:
+When no searcher found anything, the check needs one claim, so write exactly one bullet naming only the areas actually searched — those whose searcher returned `NOTHING FOUND` — with `{sha}` the full `git -C "{repo root}" rev-parse HEAD` of the checkout searched:
 
 ```
-- Nothing on this topic was found in issues, merges of the last six weeks, run data, the code, earlier designs, or the settings file and schema — source: {sha}
+- Nothing on this topic was found in {the searched areas, from: issues, merges of the last six weeks, run data, the code, earlier designs, the settings file and schema} — source: {sha}
 ```
+
+An area whose searcher was `BLOCKED` or could not reach it is never named in the bullet; it is said in the conversation as unreached. When no area was searched at all, step 1 cannot finish: stop and tell the maintainer which searchers failed and why. This bullet exists only while there is no other claim: when a later search or a resumed session's merge adds any real claim, drop it.
 
 Then run:
 
