@@ -5,11 +5,13 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { readText } = require('../../helpers/read-skill');
+const { chmodDenialSkip } = require('../../helpers/root');
 const { readBlocks, composeBrief } = require('../../../plugin/bin/lib/design-session/brief');
 const { PERSPECTIVES } = require('../../../plugin/bin/lib/design-session/notes');
 
 const BRIEFS_PATH = path.resolve(__dirname, '..', '..', '..', 'plugin', 'skills', 'design', 'reader-briefs.md');
-const BRIEFS = fs.readFileSync(BRIEFS_PATH, 'utf8');
+const BRIEFS = readText(BRIEFS_PATH);
 const BLOCKS = readBlocks(BRIEFS);
 
 const DECISIONS_SENTINEL = 'SENTINEL-DECISION-7731';
@@ -220,9 +222,7 @@ test('fix5: a non-text storyboard is checked, not read', (t) => {
   assert.ok(!reads.includes('board.png'));
 });
 
-const CAN_CHMOD = process.platform !== 'win32' && typeof process.getuid === 'function' && process.getuid() !== 0;
-
-test('fix2.1: an unreadable design.md, notes file or storyboard is an IO error, never "missing"', { skip: !CAN_CHMOD }, (t) => {
+test('fix2.1: an unreadable design.md, notes file or storyboard is an IO error, never "missing"', chmodDenialSkip('root: mode bits are ignored'), (t) => {
   const locked = (folder, name) => { const f = path.join(folder, name); fs.chmodSync(f, 0o000); t.after(() => { try { fs.chmodSync(f, 0o644); } catch { /* folder already removed */ } }); };
   const a = folderWith(t, {});
   locked(a, 'design.md');

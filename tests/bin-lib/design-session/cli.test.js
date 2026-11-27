@@ -5,6 +5,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { readText } = require('../../helpers/read-skill');
 const { runCliSync, spawnCli } = require('../../helpers/run-cli');
 const { readStatus } = require('../../../plugin/bin/lib/design-session/status');
 const { PERSPECTIVES } = require('../../../plugin/bin/lib/design-session/notes');
@@ -182,7 +183,7 @@ test('script entry: shebang, exit code and the real reader-briefs file', (t) => 
   assert.ok(r.stdout.includes('the smallest version that would do'));
   const bad = spawnCli(CLI, ['status'], { env: {} });
   assert.strictEqual(bad.code, 2);
-  assert.ok(fs.readFileSync(CLI, 'utf8').startsWith('#!/usr/bin/env node'));
+  assert.ok(readText(CLI).startsWith('#!/usr/bin/env node'));
 });
 
 test('fix6: --create on any verb but folder is a usage error', (t) => {
