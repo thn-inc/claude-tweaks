@@ -1,6 +1,6 @@
 # Dispatch — Accepted Design Positions
 
-Referenced by `skills/dispatch/SKILL.md`'s "When to Use" section, its Concurrency note, and its Repo-wide infra outage stop and Render-failure stop paragraphs, and by `skills/backlog/dependency-mismatch-detection.md`'s #418/#419 worked example. Each entry answers the same shape of question — "why doesn't dispatch do X?" — where X looks like a gap but is a deliberate, accepted position. None of them is procedure: nothing here changes what a firing does, so a normal run never needs to load this file. Kept out of `SKILL.md` to stay under its size ceiling.
+Referenced by `skills/dispatch/SKILL.md`'s "When to Use" section, its Concurrency note, and its Repo-wide infra outage stop and Render-failure stop paragraphs, by `answered-resumes.md`, and by `skills/backlog/dependency-mismatch-detection.md`'s #418/#419 worked example. Each entry answers the same shape of question — "why doesn't dispatch do X?" — where X looks like a gap but is a deliberate, accepted position. None of them is procedure: nothing here changes what a firing does, so a normal run never needs to load this file. Kept out of `SKILL.md` to stay under its size ceiling.
 
 Step and section references below (`Step 4`, `Step 5`, "Reporting") resolve against this skill's `SKILL.md`, not against this file.
 
@@ -55,3 +55,11 @@ A first call whose prompt never rendered is never dispatched, so Settle, which r
 Rejected alternative: count per-record retries for never-dispatched calls. It would need Settle logic in dispatch's main thread for a cause that is almost never the record's.
 
 Accepted gap: a render failure that really is per-record (a malformed resume PR URL, say) stops every firing at that record until a human acts, because the ranking picks it first each time. The relay and the headless notification make it visible at once, unlike the silent re-selection this replaced.
+
+## Why the plan-review stop keeps the draft PR
+
+A plan-review needs-human stop (`build/plan-review.md`) leaves the record's draft PR open (#5053). The resume, typed or run by `answered-resumes.md`, reuses what that PR already carries: its number, its body markers and session links, and the pushed plan commits, so `resume.md` rebinds the run to it rather than opening a second PR. The open PR also waits for the answer: Step 2's `open-pr` exclusion holds the unanswered record out of every drain, so no second exclusion is needed (no `bot:blocked`, no grant removed) to keep it from being rebuilt first. The resumed build re-reviews its plan from scratch by design, with the answers now in the body, and converges in its own round (#4958's converged round) rather than trusting the stalled run's review state.
+
+Rejected alternative: close the draft PR at the stop and open a fresh one on resume. It loses the markers and links, and the waiting record would need an exclusion of its own.
+
+Known gap: the `open-pr` exclusion is fail-open, so a failed or truncated open-PR fetch lets an unanswered `needs:answer` record into the pull the same way, and a human who closes the draft PR of an answered record lifts the `open-pr` exclusion, so Step 2's pull picks the record up as a normal group, while the sweep's verdict refuses it `no-pr`. The ingest runs only after an eligible verdict (#5053's D11), so the `/answer` reply never reaches the body and the fresh build's plan review may ask the same question again. To keep the answer across a closed PR, the human writes it into the body as a `**Decision**` paragraph instead.

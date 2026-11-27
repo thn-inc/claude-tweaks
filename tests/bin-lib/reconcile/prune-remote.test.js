@@ -318,6 +318,7 @@ test('pruneRemote: a failed batch push falls back to per-branch deletes, one bad
 // root's stale local tracking ref still makes b1 look like a normal
 // candidate, so only the fallback push itself exposes that it's gone.
 test('pruneRemote: batch fails; a branch already deleted before the fallback push is reported delete, not delete-failed', () => {
+  // Runs on win32: with the shim unspawned, real git's batch push fails anyway (build/b1 is already gone on origin), so the fallback still runs and both entries read delete.
   const root = pruneRemoteFixture('b1-deleted').dir;
   const integration = 'main';
   const wrapper = installPushWrapper(true); // batch push fails without touching origin; single-branch pushes hit real git

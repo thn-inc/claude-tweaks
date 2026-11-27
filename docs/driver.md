@@ -231,8 +231,10 @@ The route through the gate follows the `merge-verification` policy key, read onc
 |---|---|---|
 | green checks, on the gate's first read | a fresh read, then `gh pr merge --squash` | `gh pr merge --auto --squash` |
 | green checks, on a watch poll | a fresh read, then `gh pr merge --squash` | the same as `wait` |
-| pending checks, merge state `BLOCKED` | the bounded watch | `gh pr merge --auto --squash`, which arms auto-merge |
+| pending checks, merge state `BLOCKED` | the bounded watch | `gh pr merge --auto --squash`, which arms auto-merge; the bounded watch instead while the PR is pending only because of the settle window (below) |
 | pending checks, any other merge state | the bounded watch | the bounded watch |
+
+Checks also read pending during the PR-event settle window (#3468). The window applies when the head has no `pull_request`/`pull_request_target` run yet. It lasts until 60 seconds after the later of the PR's `createdAt` and the head's first workflow run, with the commit date standing in when there is no run. A missing time keeps it open. The gate never arms on that window, so GitHub's required-check rule cannot end it early. The rule is `classify.js`'s `prEventSettle`.
 
 A watch that reaches its 15-minute bound with checks still pending parks as `checks-pending-timeout`. An `--auto` call GitHub refuses as not allowed moves the rest of the run to the `wait` column: a green read takes the fresh read and the immediate merge, and a pending one goes to the bounded watch (a watch the arm interrupted keeps its deadline).
 

@@ -25,6 +25,7 @@ const {
 const { reconcile } = require('../plugin/bin/lib/reconcile');
 const { DEFER_REASONS } = require('../plugin/bin/lib/issues/record');
 const { writeIdentity } = require('./helpers/git-fixtures');
+const { installStub, writeStubDir, STUB_SKIP } = require('./helpers/path-stub');
 
 function git(args, cwd) {
   return execFileSync('git', args, { cwd, encoding: 'utf8' });
@@ -484,18 +485,13 @@ test('decideConsoleExecute: overflow comments — an item\'s ticks are read from
 // technique as tests/bin-lib/reconcile/pr-state.test.js).
 
 async function withFakeGh(json, fn) {
-  const wrapperDir = scratchDir('ct-ce-ghwrap-');
-  const wrapperPath = path.join(wrapperDir, 'gh');
-  fs.writeFileSync(wrapperPath, `#!/bin/sh\ncat <<'EOF'\n${JSON.stringify(json)}\nEOF\n`);
-  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
-  const originalPath = process.env.PATH;
-  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
-  try { return await fn(); } finally { process.env.PATH = originalPath; }
+  const restore = installStub('gh', `#!/bin/sh\ncat <<'EOF'\n${JSON.stringify(json)}\nEOF\n`);
+  try { return await fn(); } finally { restore(); }
 }
 
 const GRANT_MARKER = '<!-- grant-mode-audit: date=2020-01-01T00:00:00Z auto-merge=pending -->';
 
-test('fetchIssueGrant: a planted pending-grant marker authored NONE leaves pendingSince null and is named in skippedUntrusted', { skip: process.platform === 'win32' }, async () => {
+test('fetchIssueGrant: a planted pending-grant marker authored NONE leaves pendingSince null and is named in skippedUntrusted', { skip: STUB_SKIP }, async () => {
   const res = await withFakeGh({
     labels: [{ name: 'auto:build' }, { name: 'auto:merge-pending' }],
     comments: [{ body: GRANT_MARKER, url: 'https://x/issues/7#c1', author: { login: 'eve' }, authorAssociation: 'NONE' }],
@@ -506,7 +502,7 @@ test('fetchIssueGrant: a planted pending-grant marker authored NONE leaves pendi
   assert.deepStrictEqual(res.skippedUntrusted, ['skipped marker comment https://x/issues/7#c1 by eve (NONE) — not an owner, member, or collaborator']);
 });
 
-test('fetchIssueGrant: the same marker authored MEMBER is that date, with nothing skipped', { skip: process.platform === 'win32' }, async () => {
+test('fetchIssueGrant: the same marker authored MEMBER is that date, with nothing skipped', { skip: STUB_SKIP }, async () => {
   const res = await withFakeGh({
     labels: [{ name: 'auto:build' }, { name: 'auto:merge-pending' }],
     comments: [{ body: GRANT_MARKER, authorAssociation: 'MEMBER' }],
@@ -515,7 +511,7 @@ test('fetchIssueGrant: the same marker authored MEMBER is that date, with nothin
   assert.deepStrictEqual(res.skippedUntrusted, []);
 });
 
-test('fetchIssueGrant: a non-marker comment authored NONE is silent -- skippedUntrusted stays []', { skip: process.platform === 'win32' }, async () => {
+test('fetchIssueGrant: a non-marker comment authored NONE is silent -- skippedUntrusted stays []', { skip: STUB_SKIP }, async () => {
   const res = await withFakeGh({
     labels: [], comments: [{ body: 'hello', url: 'https://x/c', author: { login: 'eve' }, authorAssociation: 'NONE' }],
   }, () => fetchIssueGrant(process.cwd(), 7));
@@ -527,7 +523,7 @@ test('fetchIssueGrant: a non-marker comment authored NONE is silent -- skippedUn
 // grant whose only marker comment is untrusted stays withheld, and the ready entry's mergeGrantGap
 // reason names the passed-over comment. Real git repo + run dir; `gh` is a PATH wrapper that answers
 // `pr view` and `issue view` with fixed JSON.
-test('consoleExecuteDetect: a withheld merge grant names the untrusted pending-grant comment it passed over', { skip: process.platform === 'win32' }, async () => {
+test('consoleExecuteDetect: a withheld merge grant names the untrusted pending-grant comment it passed over', { skip: STUB_SKIP }, async () => {
   const dir = fs.realpathSync(scratchDir('ct-ce-grant-'));
   git(['init', '-q', '--initial-branch=main'], dir);
   writeIdentity(dir, { name: 'Test', email: 'test@example.com' });
@@ -544,13 +540,9 @@ test('consoleExecuteDetect: a withheld merge grant names the untrusted pending-g
     labels: [{ name: 'auto:build' }, { name: 'auto:merge-pending' }],
     comments: [{ body: GRANT_MARKER, url: 'https://x/issues/7#c1', author: { login: 'eve' }, authorAssociation: 'NONE' }],
   };
-  const wrapperDir = scratchDir('ct-ce-ghwrap-');
-  fs.writeFileSync(path.join(wrapperDir, 'gh'), `#!/bin/sh\ncase "$1" in\n  pr) cat <<'EOF'\n${JSON.stringify(pr)}\nEOF\n  ;;\n  issue) cat <<'EOF'\n${JSON.stringify(issue)}\nEOF\n  ;;\nesac\n`);
-  fs.chmodSync(path.join(wrapperDir, 'gh'), 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
-  const originalPath = process.env.PATH;
-  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
+  const restore = installStub('gh', `#!/bin/sh\ncase "$1" in\n  pr) cat <<'EOF'\n${JSON.stringify(pr)}\nEOF\n  ;;\n  issue) cat <<'EOF'\n${JSON.stringify(issue)}\nEOF\n  ;;\nesac\n`);
   let result;
-  try { result = await consoleExecuteDetect({ cwd: dir }); } finally { process.env.PATH = originalPath; }
+  try { result = await consoleExecuteDetect({ cwd: dir }); } finally { restore(); }
   assert.strictEqual(result.ready.length, 1, JSON.stringify(result));
   const gap = result.ready[0].mergeGrantGap;
   assert.strictEqual(gap.member, 7);
@@ -687,15 +679,11 @@ function makeRulingRepo(items, stagedFiles) {
 }
 
 async function detectWithFakePr(dir, pr) {
-  const wrapperDir = scratchDir('ct-ce-ghwrap-');
-  fs.writeFileSync(path.join(wrapperDir, 'gh'), `#!/bin/sh\ncat <<'EOF'\n${JSON.stringify(pr)}\nEOF\n`);
-  fs.chmodSync(path.join(wrapperDir, 'gh'), 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
-  const originalPath = process.env.PATH;
-  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
-  try { return await consoleExecuteDetect({ cwd: dir }); } finally { process.env.PATH = originalPath; }
+  const restore = installStub('gh', `#!/bin/sh\ncat <<'EOF'\n${JSON.stringify(pr)}\nEOF\n`);
+  try { return await consoleExecuteDetect({ cwd: dir }); } finally { restore(); }
 }
 
-test('AC3.1 AC3.3: consoleExecuteDetect reads each ruling row\'s staged file and returns rulingGateGaps on the ready entry', { skip: process.platform === 'win32' }, async () => {
+test('AC3.1 AC3.3: consoleExecuteDetect reads each ruling row\'s staged file and returns rulingGateGaps on the ready entry', { skip: STUB_SKIP }, async () => {
   const items = [
     { id: 'staged-1', kind: 'staged', summary: 'safe', isRulingRow: true, stagedPath: 'staged/sdd-ruling-1.md' },
     { id: 'staged-2', kind: 'staged', summary: 'unreasoned', isRulingRow: true, stagedPath: 'staged/sdd-ruling-2.md' },
@@ -718,7 +706,7 @@ test('AC3.1 AC3.3: consoleExecuteDetect reads each ruling row\'s staged file and
   ]);
 });
 
-test('AC1.1: consoleExecuteDetect reads a needs-human-decision ruling row\'s staged file and returns it as a sdd-ruling-needs-human-decision gap (#4587)', { skip: process.platform === 'win32' }, async () => {
+test('AC1.1: consoleExecuteDetect reads a needs-human-decision ruling row\'s staged file and returns it as a sdd-ruling-needs-human-decision gap (#4587)', { skip: STUB_SKIP }, async () => {
   const items = [{ id: 'staged-1', kind: 'staged', summary: 'needs a human', isRulingRow: true, stagedPath: 'staged/sdd-ruling-1.md' }];
   const { dir } = makeRulingRepo(items, { 'staged/sdd-ruling-1.md': RULING_TEXT_NEEDS_HUMAN });
   const result = await detectWithFakePr(dir, { comments: tickedComment(items.map((i) => i.id)), body: '' });
@@ -726,7 +714,7 @@ test('AC1.1: consoleExecuteDetect reads a needs-human-decision ruling row\'s sta
   assert.deepStrictEqual(result.ready[0].rulingGateGaps, [{ id: 'staged-1', reason: 'sdd-ruling-needs-human-decision' }]);
 });
 
-test('AC3.1 AC3.2: consoleExecuteDetect never reads a stagedPath that escapes the run dir (../, absolute, non-string) -> unreadable gap', { skip: process.platform === 'win32' }, async () => {
+test('AC3.1 AC3.2: consoleExecuteDetect never reads a stagedPath that escapes the run dir (../, absolute, non-string) -> unreadable gap', { skip: STUB_SKIP }, async () => {
   const outside = scratchDir('ct-ce-outside-');
   const absFile = path.join(outside, 'abs.md');
   fs.writeFileSync(absFile, RULING_TEXT_DEFERS_NO);
@@ -798,7 +786,7 @@ test('AC3.4: readRulingTexts: a leaf that exists but will not resolve is read-fa
   assert.deepStrictEqual(result, { texts: {}, errors: { one: 'read-failed' } });
 });
 
-test('AC3.2: consoleExecuteDetect never follows a stagedPath symlink (leaf or directory segment) pointing outside the run dir -> unreadable gap', { skip: process.platform === 'win32' }, async () => {
+test('AC3.2: consoleExecuteDetect never follows a stagedPath symlink (leaf or directory segment) pointing outside the run dir -> unreadable gap', { skip: STUB_SKIP }, async () => {
   const outside = fs.realpathSync(scratchDir('ct-ce-symout-'));
   fs.writeFileSync(path.join(outside, 'safe.md'), RULING_TEXT_DEFERS_NO);
   const items = [
@@ -819,7 +807,7 @@ test('AC3.2: consoleExecuteDetect never follows a stagedPath symlink (leaf or di
   ]);
 });
 
-test('AC3.3 AC3.4: a dangling symlink and a dir-symlinked missing file are not-found; a directory at the path is read-failed (#4049)', { skip: process.platform === 'win32' }, async () => {
+test('AC3.3 AC3.4: a dangling symlink and a dir-symlinked missing file are not-found; a directory at the path is read-failed (#4049)', { skip: STUB_SKIP }, async () => {
   const outside = fs.realpathSync(scratchDir('ct-ce-unread-'));
   const items = [
     { id: 'staged-1', kind: 'staged', summary: 'dangling', isRulingRow: true, stagedPath: 'staged/sdd-ruling-1.md' },
@@ -865,7 +853,7 @@ test('decideConsoleExecute: ctx.rulingReadErrors without ctx.rulingTexts still n
   assert.deepStrictEqual(result.rulingGateGaps, [{ id: 'staged-1', reason: 'sdd-ruling-unreadable', detail: 'not-found' }]);
 });
 
-test('consoleExecuteDetect: a console with no ruling row reports rulingGateGaps [] (a non-ruling item\'s stagedPath is not consulted)', { skip: process.platform === 'win32' }, async () => {
+test('consoleExecuteDetect: a console with no ruling row reports rulingGateGaps [] (a non-ruling item\'s stagedPath is not consulted)', { skip: STUB_SKIP }, async () => {
   const items = [{ id: 'staged-1', kind: 'staged', summary: 'plain', stagedPath: '../escape.md' }];
   const { dir } = makeRulingRepo(items, {});
   const result = await detectWithFakePr(dir, { comments: tickedComment(['staged-1']), body: '' });
@@ -1004,7 +992,7 @@ test('sdd-ruling leaf: resolve.js re-exports the same objects (#4060)', () => {
 // #6006: the veto window read reaches the factory layer through the injected env (a hook event's
 // context), never the live process env or HOME. The grant is pending for 2h: the 24h default
 // withholds it, a factory `grant-veto-window-hours: 1` (in the injected env only) matures it.
-test('consoleExecuteDetect: grant-veto-window-hours resolves from the injected env\'s factory layer (#6006)', { skip: process.platform === 'win32' }, async () => {
+test('consoleExecuteDetect: grant-veto-window-hours resolves from the injected env\'s factory layer (#6006)', { skip: STUB_SKIP }, async (t) => {
   const dir = fs.realpathSync(scratchDir('ct-ce-veto-'));
   git(['init', '-q', '--initial-branch=main'], dir);
   writeIdentity(dir, { name: 'Test', email: 'test@example.com' });
@@ -1021,10 +1009,9 @@ test('consoleExecuteDetect: grant-veto-window-hours resolves from the injected e
     labels: [{ name: 'auto:build' }, { name: 'auto:merge-pending' }],
     comments: [{ body: `<!-- grant-mode-audit: date=${since} auto-merge=pending -->`, url: 'https://x/issues/7#c1', author: { login: 'owner' }, authorAssociation: 'OWNER' }],
   };
-  const wrapperDir = scratchDir('ct-ce-ghwrap-');
-  fs.writeFileSync(path.join(wrapperDir, 'gh'), `#!/bin/sh\ncase "$1" in\n  pr) cat <<'EOF'\n${JSON.stringify(pr)}\nEOF\n  ;;\n  issue) cat <<'EOF'\n${JSON.stringify(issue)}\nEOF\n  ;;\nesac\n`);
-  fs.chmodSync(path.join(wrapperDir, 'gh'), 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
-  const base = { ...process.env, PATH: `${wrapperDir}${path.delimiter}${process.env.PATH}`, HOME: scratchDir('ct-ce-home-'), USERPROFILE: '' };
+  const stub = writeStubDir('gh', `#!/bin/sh\ncase "$1" in\n  pr) cat <<'EOF'\n${JSON.stringify(pr)}\nEOF\n  ;;\n  issue) cat <<'EOF'\n${JSON.stringify(issue)}\nEOF\n  ;;\nesac\n`);
+  t.after(stub.remove);
+  const base = { ...process.env, PATH: stub.envPath, HOME: scratchDir('ct-ce-home-'), USERPROFILE: '' };
   delete base.CLAUDE_TWEAKS_FACTORY_POLICY;
   const bare = await consoleExecuteDetect({ cwd: dir, env: base });
   assert.ok(bare.ready[0].mergeGrantGap, `default 24h window withholds a 2h-old grant: ${JSON.stringify(bare)}`);

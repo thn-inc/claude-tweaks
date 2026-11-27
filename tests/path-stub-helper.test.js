@@ -9,7 +9,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { STUB_SKIP_REASON, STUB_SKIP, installStub, pathWithOnly, findColonPathJoins } = require('./helpers/path-stub');
+const { STUB_SKIP_REASON, STUB_SKIP, stubSkipFor, installStub, writeStubDir, pathWithOnly, findColonPathJoins } = require('./helpers/path-stub');
 const { readText } = require('./helpers/read-skill');
 
 function tmpDir(t) {
@@ -25,9 +25,37 @@ function writeExecutable(dir, name) {
   return file;
 }
 
-test('STUB_SKIP_REASON is the spec text, and STUB_SKIP is the reason on win32 only', () => {
+test('AC4.1: STUB_SKIP_REASON is the spec text, and stubSkipFor gives the reason on win32 only', () => {
   assert.strictEqual(STUB_SKIP_REASON, 'win32: execFile resolves only .exe/.com on PATH, so a script stub is never spawned');
-  assert.strictEqual(STUB_SKIP, process.platform === 'win32' && STUB_SKIP_REASON);
+  assert.strictEqual(stubSkipFor('win32'), STUB_SKIP_REASON);
+  assert.strictEqual(stubSkipFor('linux'), false);
+  assert.strictEqual(stubSkipFor('darwin'), false);
+  assert.strictEqual(STUB_SKIP, stubSkipFor(process.platform));
+});
+
+test('writeStubDir writes an executable stub and its envPath without touching PATH, and remove() deletes the dir', () => {
+  const before = process.env.PATH;
+  const { dir, envPath, remove } = writeStubDir('ct-w', '#!/bin/sh\nexit 0\n');
+  try {
+    assert.strictEqual(process.env.PATH, before);
+    const file = path.join(dir, 'ct-w');
+    assert.ok(fs.existsSync(file));
+    if (process.platform !== 'win32') assert.ok((fs.statSync(file).mode & 0o111) !== 0);
+    assert.strictEqual(envPath, dir + path.delimiter + process.env.PATH);
+  } finally {
+    remove();
+  }
+  assert.strictEqual(fs.existsSync(dir), false);
+  assert.doesNotThrow(() => remove());
+});
+
+test('writeStubDir envPath is the dir alone when PATH is unset', (t) => {
+  const saved = process.env.PATH;
+  t.after(() => { if (saved === undefined) delete process.env.PATH; else process.env.PATH = saved; });
+  delete process.env.PATH;
+  const { dir, envPath, remove } = writeStubDir('ct-w', '#!/bin/sh\nexit 0\n');
+  t.after(remove);
+  assert.strictEqual(envPath, dir);
 });
 
 test('installStub prepends a dir holding the stub and restore puts PATH back', (t) => {
@@ -114,7 +142,7 @@ test('pathWithOnly uses the binary own dir when it holds no excluded name', (t) 
   assert.strictEqual(pathWithOnly(['tool'], { exclude: ['gh'], env: { PATH: [a, b].join(path.delimiter) }, platform: process.platform }), a);
 });
 
-test('pathWithOnly finds a PATHEXT extension on win32', (t) => {
+test("pathWithOnly on win32 resolves only libuv's spawnable names (.com, .exe, bare), case-insensitively, not PATHEXT", (t) => {
   const dir = tmpDir(t);
   fs.writeFileSync(path.join(dir, 'git.EXE'), '');
   assert.strictEqual(pathWithOnly(['git'], { env: { Path: dir, PATHEXT: '.COM;.EXE' }, platform: 'win32' }), dir);
@@ -125,6 +153,21 @@ test('pathWithOnly finds a PATHEXT extension on win32', (t) => {
   fs.writeFileSync(path.join(b, 'git.EXE'), '');
   const Path = `${a};${b}`;
   assert.strictEqual(pathWithOnly(['git'], { env: { Path, PATHEXT: '.COM;.EXE;.BAT;.CMD' }, platform: 'win32' }), b);
+});
+
+test('AC4.1: on win32 an excluded gh.CMD in the binary dir makes pathWithOnly leave that dir out', (t) => {
+  const shared = tmpDir(t);
+  fs.writeFileSync(path.join(shared, 'git.EXE'), '');
+  const opts = { exclude: ['gh'], env: { Path: shared, PATHEXT: '.COM;.EXE;.BAT;.CMD' }, platform: 'win32' };
+  assert.strictEqual(pathWithOnly(['git'], opts), shared);
+  fs.writeFileSync(path.join(shared, 'gh.CMD'), '');
+  // The fallback's symlink needs a privilege on a real win32 host.
+  if (process.platform !== 'win32') {
+    const p = pathWithOnly(['git'], opts);
+    t.after(() => fs.rmSync(p, { recursive: true, force: true }));
+    assert.notStrictEqual(p, shared);
+    assert.deepStrictEqual(fs.readdirSync(p), ['git.EXE']);
+  }
 });
 
 test('pathWithOnly throws naming a binary that is not on PATH', (t) => {

@@ -11,6 +11,7 @@ const { chmodDenialSkip } = require('../../helpers/root');
 const { readText } = require('../../helpers/read-skill');
 const { fixtureHomeEnv } = require('../../helpers/fixture-home');
 const { runCli, spawnCli } = require('../../helpers/run-cli');
+const { writeStubDir, STUB_SKIP } = require('../../helpers/path-stub');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'phase-timing.js');
 const FIX = path.join(__dirname, '..', '..', 'fixtures', 'timing', 'record-1535');
@@ -653,26 +654,29 @@ test('#4029 M3: one context turn renders "over 1 turn", any other count "turns"'
   assert.ok(two.some((l) => l.includes(' tokens over 2 turns · ')), two.join('\n'));
 });
 
+// Runs on win32: the open-record lookup fails open without the stub (see budgetTree); assertions read only timing.json and the --json budget.
 test('#4029 M1: a rewrite without --check-budgets carries the existing budget verdict forward unchanged', async () => {
-  const { root, dir } = budgetTree();
-  assert.equal((await runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets'])).status, 0);
+  const { root, dir, envPath } = budgetTree();
+  assert.equal((await runIn(root, envPath, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets'])).status, 0);
   const checked = readTiming(dir).budget;
   assert.ok(checked && checked.profile === 'fast-lane', JSON.stringify(checked));
-  assert.equal((await runIn(root, ['--run', dir, '--transcript', TC_SESSION])).status, 0);
+  assert.equal((await runIn(root, envPath, ['--run', dir, '--transcript', TC_SESSION])).status, 0);
   assert.deepEqual(readTiming(dir).budget, checked);
   // and --json shows the carried verdict too
-  assert.deepEqual(JSON.parse((await runIn(root, ['--run', dir, '--json'])).stdout).budget, checked);
+  assert.deepEqual(JSON.parse((await runIn(root, envPath, ['--run', dir, '--json'])).stdout).budget, checked);
 });
 
 // --check-budgets (#4029): a tmp checkout (.git dir) with a policy.yml and a run dir under
 // .claude-tweaks/pipelines/, run with cwd = the checkout so the staging anchor resolves to it.
-// A stub `gh` first on PATH answers the open-record lookup (`[]` unless `ghAnswer` is given),
-// so no test reaches real gh. On win32 a bare executable stub is not launchable: the lookup
-// then fails open, which every test here tolerates except the one that skips win32.
+// A stub `gh` (a writeStubDir dir, handed through the injected PATH as `envPath`) answers the
+// open-record lookup (`[]` unless `ghAnswer` is given), so no test reaches real gh. On win32 a
+// bare executable stub is not launchable: the lookup then fails open, which every test here
+// tolerates except the two that skip win32. Why it tolerates it: the fixture's `.git` is an empty
+// directory, not a repository (and the `git: false` test has no `.git` at all), so a real gh finds
+// no remote to query and the lookup fails open, the same answer the stub gives for no open record.
 function budgetTree({ config = 'ceremony-profile: fast-lane\n', policy = 'fast-lane-run-round-trip-ceiling: 5\n', git = true, ghAnswer = '[]' } = {}) {
   const root = fs.realpathSync(scratchDir('ct-budget-cli-'));
-  fs.mkdirSync(path.join(root, 'stub-bin'));
-  fs.writeFileSync(path.join(root, 'stub-bin', 'gh'), `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(ghAnswer)});\n`, { mode: 0o755 });
+  const { envPath } = writeStubDir('gh', `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(ghAnswer)});\n`); // removed at process exit, like root
   if (git) fs.mkdirSync(path.join(root, '.git'));
   fs.mkdirSync(path.join(root, '.claude-tweaks', 'pipelines'), { recursive: true });
   if (policy !== null) fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), policy);
@@ -681,16 +685,17 @@ function budgetTree({ config = 'ceremony-profile: fast-lane\n', policy = 'fast-l
   fs.mkdirSync(dir);
   fs.copyFileSync(path.join(TC_FIX, 'events.jsonl'), path.join(dir, 'events.jsonl'));
   if (config !== null) fs.writeFileSync(path.join(dir, 'config.yml'), config);
-  return { root, dir, id };
+  return { root, dir, id, envPath };
 }
 // The stub gh is found through the injected PATH, so the real gh seam runs (allowRealRunner).
-const runIn = (cwd, args) => run(args, { cwd, env: { ...process.env, PATH: `${path.join(cwd, 'stub-bin')}${path.delimiter}${process.env.PATH}` }, allowRealRunner: true });
+const runIn = (cwd, envPath, args) => run(args, { cwd, env: { ...process.env, PATH: envPath }, allowRealRunner: true });
 const TC_SESSION = path.join(TC_FIX, 'session.jsonl');
 const stagedFiles = (dir) => (fs.existsSync(path.join(dir, 'staged')) ? fs.readdirSync(path.join(dir, 'staged')) : []);
 
+// Runs on win32: the open-record lookup fails open without the stub (see budgetTree); assertions read the staged file, timing.json and the budget line.
 test('#4029 AC2.1: a budget-breach fixture produces a staged item', async () => {
-  const { root, dir, id } = budgetTree();
-  const r = await runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
+  const { root, dir, id, envPath } = budgetTree();
+  const r = await runIn(root, envPath, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
   assert.equal(r.status, 0, r.stderr);
   const staged = path.join(dir, 'staged', `efficiency-budget-${id}.md`);
   assert.ok(fs.existsSync(staged), r.stderr);
@@ -715,17 +720,17 @@ test('#4029 AC2.1: a budget-breach fixture produces a staged item', async () => 
   assert.match(out[out.length - 1], /^Budget \(fast-lane\): round-trips 10\/5 BREACH · procedure-kb 0\.1\/\d+ ok · verify-minutes 2\/\d+ ok$/);
 
   // a re-run overwrites the one staged item and does not log it twice
-  const again = await runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
+  const again = await runIn(root, envPath, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
   assert.equal(again.status, 0, again.stderr);
   assert.deepEqual(stagedFiles(dir).filter((f) => f.startsWith('efficiency-budget-')), [`efficiency-budget-${id}.md`]);
   assert.equal(fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8').split('\n').filter((l) => l.startsWith('- STAGED')).length, 1);
 });
 
-test('#4029 I3: through the real CLI, an open record carrying the fingerprint folds the breach (stub gh)', { skip: process.platform === 'win32' && 'win32: a bare executable stub is not a launchable gh' }, async () => {
+test('#4029 I3: through the real CLI, an open record carrying the fingerprint folds the breach (stub gh)', { skip: STUB_SKIP }, async () => {
   const { budgetFingerprint } = require('../../../plugin/bin/lib/timing/budget');
   const fp = budgetFingerprint('fast-lane');
-  const { root, dir } = budgetTree({ ghAnswer: JSON.stringify([{ number: 4242, body: `x\n\n<!-- work-fingerprint: ${fp} -->\nwork-fingerprint: ${fp}` }]) });
-  const r = await runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
+  const { root, dir, envPath } = budgetTree({ ghAnswer: JSON.stringify([{ number: 4242, body: `x\n\n<!-- work-fingerprint: ${fp} -->\nwork-fingerprint: ${fp}` }]) });
+  const r = await runIn(root, envPath, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(stagedFiles(dir), []);
   const t = readTiming(dir);
@@ -734,8 +739,8 @@ test('#4029 I3: through the real CLI, an open record carrying the fingerprint fo
   assert.match(fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8'), /^- AUTO [^\n]*already tracked by #4242 — not re-staged\./m);
 });
 
-test('AC9.1: the gh host probe reads the injected env and writes its one-time host note through the injected stderr', { skip: process.platform === 'win32' && 'win32: a bare executable stub is not a launchable gh' }, async () => {
-  const { root, dir } = budgetTree();
+test('AC9.1: the gh host probe reads the injected env and writes its one-time host note through the injected stderr', { skip: STUB_SKIP }, async () => {
+  const { root, dir, envPath } = budgetTree();
   fs.rmSync(path.join(root, '.git'), { recursive: true });
   // the fixture's own setup git calls must not inherit a repo-pointing variable from the test runner
   // GH_HOST is dropped too: an exported one makes the host probe return before it reads the remote.
@@ -746,15 +751,16 @@ test('AC9.1: the gh host probe reads the injected env and writes its one-time ho
     execFileSync('git', args, { cwd: root, env: gitEnv, windowsHide: true });
   }
   const r = await run(['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown'], {
-    cwd: root, env: { ...gitEnv, PATH: `${path.join(root, 'stub-bin')}${path.delimiter}${process.env.PATH}` }, allowRealRunner: true,
+    cwd: root, env: { ...gitEnv, PATH: envPath }, allowRealRunner: true,
   });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stderr, /^claude-tweaks: .*acme\.ghe\.com.* — gh calls get GH_HOST=acme\.ghe\.com$/m);
 });
 
+// Runs on win32: the open-record lookup fails open without the stub (see budgetTree); assertions read timing.json, the staged files, the budget line and decisions.md.
 test('#4029: no transcript leaves round-trip and procedure budgets unmeasured', async () => {
-  const { root, dir } = budgetTree();
-  const r = await runIn(root, ['--run', dir, '--check-budgets', '--markdown']);
+  const { root, dir, envPath } = budgetTree();
+  const r = await runIn(root, envPath, ['--run', dir, '--check-budgets', '--markdown']);
   assert.equal(r.status, 0, r.stderr);
   const checks = Object.fromEntries(readTiming(dir).budget.checks.map((c) => [c.metric, c.status]));
   assert.deepEqual(checks, { 'round-trips': 'unmeasured', 'procedure-kb': 'unmeasured', 'verify-minutes': 'ok' });
@@ -764,18 +770,20 @@ test('#4029: no transcript leaves round-trip and procedure budgets unmeasured', 
   assert.match(fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8'), /^- SKIP \d{2}:\d{2}:\d{2} — efficiency budget \(degraded\): condition: round-trips, procedure-kb unmeasured \(no transcript rows\)/m);
 });
 
+// Runs on win32: the open-record lookup fails open without the stub (see budgetTree); assertions read only the budget checks in the --json output.
 test('#4029: a transcript that cannot be read leaves the transcript-backed budgets unmeasured, not ok', async () => {
-  const { root, dir } = budgetTree();
-  const r = await runIn(root, ['--run', dir, '--transcript', path.join(root, 'missing.jsonl'), '--check-budgets', '--json']);
+  const { root, dir, envPath } = budgetTree();
+  const r = await runIn(root, envPath, ['--run', dir, '--transcript', path.join(root, 'missing.jsonl'), '--check-budgets', '--json']);
   assert.equal(r.status, 0, r.stderr);
   const checks = Object.fromEntries(JSON.parse(r.stdout).budget.checks.map((c) => [c.metric, c.status]));
   assert.equal(checks['round-trips'], 'unmeasured');
   assert.equal(checks['procedure-kb'], 'unmeasured');
 });
 
+// Runs on win32: the open-record lookup fails open without the stub (see budgetTree); assertions read stderr, timing.json and the staged file.
 test('#4029: a config.yml without ceremony-profile falls back to standard with a note', async () => {
-  const { root, dir } = budgetTree({ config: 'mode: auto\n', policy: 'standard-run-round-trip-ceiling: 5\n' });
-  const r = await runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
+  const { root, dir, envPath } = budgetTree({ config: 'mode: auto\n', policy: 'standard-run-round-trip-ceiling: 5\n' });
+  const r = await runIn(root, envPath, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stderr, /budget: ceremony-profile absent from config\.yml — checked against standard/);
   const t = readTiming(dir);
@@ -786,36 +794,40 @@ test('#4029: a config.yml without ceremony-profile falls back to standard with a
   assert.ok(fs.readFileSync(path.join(dir, 'staged', `efficiency-budget-${path.basename(dir)}.md`), 'utf8').startsWith('Title: Efficiency budget: standard runs over'));
 });
 
+// Runs on win32: the open-record lookup fails open without the stub (see budgetTree); assertions read only the staged file, timing.json and the budget line.
 test('#4029: a ceiling of 0 disables its budget and a disabled budget stages nothing', async () => {
-  const { root, dir } = budgetTree({ policy: 'fast-lane-run-round-trip-ceiling: 0\n' });
-  const r = await runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets']);
+  const { root, dir, envPath } = budgetTree({ policy: 'fast-lane-run-round-trip-ceiling: 0\n' });
+  const r = await runIn(root, envPath, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets']);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(readTiming(dir).budget.checks.find((c) => c.metric === 'round-trips').status, 'disabled');
   assert.deepEqual(stagedFiles(dir), []);
   assert.match(r.stdout, /^Budget \(fast-lane\): round-trips 10\/0 disabled/m);
 });
 
+// Runs on win32: the open-record lookup fails open without the stub (see budgetTree); assertions read only the --json stdout.
 test('#4029: --check-budgets --json keeps stdout a single JSON document carrying the budget key', async () => {
-  const { root, dir } = budgetTree();
-  const r = await runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--json']);
+  const { root, dir, envPath } = budgetTree();
+  const r = await runIn(root, envPath, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--json']);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(JSON.parse(r.stdout).budget.staged !== null, true);
 });
 
+// Runs on win32: the open-record lookup fails open without the stub (see budgetTree); assertions read only timing.json and the staged dir.
 test('#4029: without --check-budgets timing.json has no budget key and is otherwise unchanged', async () => {
-  const { root, dir } = budgetTree();
+  const { root, dir, envPath } = budgetTree();
   const strip = (t) => { const { generatedAt, budget, ...rest } = t; return rest; };
-  assert.equal((await runIn(root, ['--run', dir, '--transcript', TC_SESSION])).status, 0);
+  assert.equal((await runIn(root, envPath, ['--run', dir, '--transcript', TC_SESSION])).status, 0);
   const plain = readTiming(dir);
   assert.equal('budget' in plain, false);
   assert.deepEqual(stagedFiles(dir), []);
-  assert.equal((await runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets'])).status, 0);
+  assert.equal((await runIn(root, envPath, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets'])).status, 0);
   assert.deepEqual(strip(readTiming(dir)), strip(plain));
 });
 
+// Runs on win32: with no .git the lookup fails open, so the stub is not needed (see budgetTree); assertions read stderr, timing.json and the staged dir.
 test('#4029: a staging failure (run dir not anchored under a checkout) is reported, never fatal', async () => {
-  const { root, dir } = budgetTree({ git: false });
-  const r = await runIn(root, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
+  const { root, dir, envPath } = budgetTree({ git: false });
+  const r = await runIn(root, envPath, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--markdown']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stderr, /budget: could not stage the efficiency-budget proposal/);
   const t = readTiming(dir);

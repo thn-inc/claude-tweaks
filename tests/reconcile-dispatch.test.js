@@ -253,6 +253,7 @@ test('AC7.2: docs/reconcile-checks.md and docs/hooks.md state the legacy-route r
   assert.ok(!hooks.includes('The remaining consumers are #3977 and #4421.'), 'docs/hooks.md still lists #4421 as a future consumer');
 });
 
+// Runs on win32: the git shim only logs fetch argv and execs real git; these assertions read module-stub calls and real git state, never that log.
 test('AC1 (#4599): reconcile({ checks: [\'archive\'] }) runs post-merge between mirror and archive, handing it prStates and dryRun', async () => {
   const { r, order, postMergeOpts, archiveOpts } = await reconcileWithAsyncMerge(['archive']);
   assert.deepEqual(order, ['prefetch', 'post-merge', 'archive']);
@@ -266,6 +267,7 @@ test('AC1 (#4599): reconcile({ checks: [\'archive\'] }) runs post-merge between 
   assert.deepEqual(archiveOpts.postMergeDeferred, []);
 });
 
+// Runs on win32: the git shim only logs fetch argv and execs real git; these assertions read module-stub calls and real git state, never that log.
 test('AC1 (#4599): the pass-shared PR-state resolver is warmed with the main checkout before post-merge runs, and a throwing warm-up never breaks the pass', async () => {
   const { prefetchArgs, postMergeOpts, mainDir } = await reconcileWithAsyncMerge(['post-merge']);
   assert.equal(prefetchArgs.root, fs.realpathSync(mainDir));
@@ -281,11 +283,13 @@ test('AC1 (#4599): the pass-shared PR-state resolver is warmed with the main che
   assert.deepEqual(r.postMerge, [{ runDir: '/x', pr: 1, action: 'ran' }]);
 });
 
+// Runs on win32: the git shim only logs fetch argv and execs real git; these assertions read module-stub calls and real git state, never that log.
 test('AC1 (#4599): the dispatch order is release, post-merge, archive when all three are requested', async () => {
   const { order } = await reconcileWithAsyncMerge(['reap', 'archive', 'post-merge', 'release']);
   assert.deepEqual(order, ['release', 'prefetch', 'post-merge', 'archive']);
 });
 
+// Runs on win32: the git shim only logs fetch argv and execs real git; these assertions read module-stub calls and real git state, never that log.
 test('M4 (#4599): post-merge is handed a live predicate over the pass\'s own wall-clock budget', async () => {
   const budgetMod = require('../plugin/bin/lib/reconcile/budget');
   const original = budgetMod.createBudget;
@@ -301,11 +305,13 @@ test('M4 (#4599): post-merge is handed a live predicate over the pass\'s own wal
   assert.equal(postMergeOpts.budgetExceeded(), true, 'it reads the pass budget when called, not a snapshot');
 });
 
+// Runs on win32: the git shim only logs fetch argv and execs real git; these assertions read module-stub calls and real git state, never that log.
 test('AC1 (#4599): post-merge\'s deferred set reaches archiveMerged as postMergeDeferred', async () => {
   const { archiveOpts } = await reconcileWithAsyncMerge(['archive'], { postMergeDeferred: ['/runs/a', '/runs/b'] });
   assert.deepEqual(archiveOpts.postMergeDeferred, ['/runs/a', '/runs/b']);
 });
 
+// Runs on win32: the git shim only logs fetch argv and execs real git; these assertions read module-stub calls and real git state, never that log.
 test('AC1 (#4599): a post-merge failure goes to skipped, leaves postMerge null and defers nothing', async () => {
   const { r, archiveOpts } = await reconcileWithAsyncMerge(['archive'], { postMergeFailure: 'not-github-issues', postMergeDeferred: ['/runs/ignored'] });
   assert.equal(r.postMerge, null);
@@ -313,6 +319,7 @@ test('AC1 (#4599): a post-merge failure goes to skipped, leaves postMerge null a
   assert.deepEqual(archiveOpts.postMergeDeferred, [], 'a failed check holds no run back from archiving');
 });
 
+// Runs on win32: the git shim only logs fetch argv and execs real git; these assertions read module-stub calls and real git state, never that log.
 test('#4933: a post-merge unknown-host failure carries its refusal detail into skipped and the summary line', async () => {
   const detail = 'origin host git.corp.invalid is not a known GitHub host — if it is GitHub Enterprise, export GH_HOST=git.corp.invalid';
   const { r } = await reconcileWithAsyncMerge(['post-merge'], { postMergeFailure: 'unknown-host', postMergeDetail: detail });
@@ -324,6 +331,7 @@ test('#4933: a post-merge unknown-host failure carries its refusal detail into s
   assert.deepEqual(bare.skipped.filter((s) => s.check === 'post-merge'), [{ check: 'post-merge', reason: 'not-github-issues' }]);
 });
 
+// Runs on win32: the git shim only logs fetch argv and execs real git; these assertions read module-stub calls and real git state, never that log.
 test('#4794: a release unknown-host failure carries its refusal detail into skipped and the summary line', async () => {
   const detail = 'origin host git.corp.invalid is not a known GitHub host — if it is GitHub Enterprise, export GH_HOST=git.corp.invalid';
   const releaseMod = require('../plugin/bin/lib/reconcile/release-merged');
@@ -339,6 +347,7 @@ test('#4794: a release unknown-host failure carries its refusal detail into skip
   assert.deepEqual(bare.skipped.filter((s) => s.check === 'release'), [{ check: 'release', reason: 'no-repo-slug' }]);
 });
 
+// Runs on win32: the git shim only logs fetch argv and execs real git; these assertions read module-stub calls and real git state, never that log.
 test('#4794: a remote-prune unknown-host failure carries its refusal detail into skipped', async () => {
   const detail = 'origin host git.corp.invalid is not a known GitHub host — if it is GitHub Enterprise, export GH_HOST=git.corp.invalid';
   const pruneMod = require('../plugin/bin/lib/reconcile/prune-remote');
@@ -359,26 +368,30 @@ test('#4794: a remote-prune unknown-host failure carries its refusal detail into
   }
 });
 
+// Runs on win32: the git shim only logs fetch argv and execs real git; these assertions read module-stub calls and real git state, never that log.
 test('AC1 (#4599): a pass that does not request post-merge or archive leaves postMerge null and does not run it', async () => {
   const { r, order } = await reconcileWithAsyncMerge(['reap']);
   assert.deepEqual(order, []);
   assert.equal(r.postMerge, null);
 });
 
+// Runs on win32: the git shim only logs fetch argv and execs real git; these assertions read module-stub calls and real git state, never that log.
 test('AC1 (#3630): reconcile({ checks: [\'archive\'] }) runs mirror before archive', async () => {
   const { r, seenAtArchive, NEW } = await reconcileWithAsyncMerge(['archive']);
   assert.equal(seenAtArchive.localMain, NEW, 'mirror must have fast-forwarded local main before archive ran');
   assert.ok(r.mirror && r.mirror.action === 'fast-forwarded', JSON.stringify(r.mirror));
 });
 
+// Runs on win32: mirror, archive and reap read module stubs; only the fetch-log check reads the git shim, which is never spawned there (an empty log would pass vacuously), so it alone is guarded.
 test('AC1 (#3630): reconcile({ checks: [\'reap\'] }) runs only reap — no fetch, no mirror', async () => {
   const { r, fetchCalls, archiveCalled, reapCalled } = await reconcileWithAsyncMerge(['reap']);
-  assert.deepEqual(fetchCalls, []);
+  if (!STUB_SKIP) assert.deepEqual(fetchCalls, []);
   assert.equal(r.mirror, null);
   assert.equal(archiveCalled, false);
   assert.equal(reapCalled, true);
 });
 
+// Runs on win32: the git shim only logs fetch argv and execs real git; these assertions read module-stub calls and real git state, never that log.
 test('(#3630): dryRun with an added mirror prerequisite moves nothing but archive still sees origin\'s merge', async () => {
   const { r, seenAtArchive, NEW, mainDir } = await reconcileWithAsyncMerge(['archive'], { dryRun: true });
   assert.deepEqual(r.mirror, { state: 'behind', action: 'skipped', reason: 'dry-run' });
@@ -386,6 +399,7 @@ test('(#3630): dryRun with an added mirror prerequisite moves nothing but archiv
   assert.equal(seenAtArchive.hasMerge, true, 'the shared fetch still refreshes origin/main for the preview');
 });
 
+// Runs on win32: the git shim only logs fetch argv and execs real git; these assertions read module-stub calls and real git state, never that log.
 test('(#3630): a gh preflight failure does not run a mirror the caller never named', async () => {
   const health = { ok: false, reason: 'rate-limited' };
   const { r, archiveCalled, NEW, mainDir } = await reconcileWithAsyncMerge(['archive'], { health });
@@ -395,6 +409,7 @@ test('(#3630): a gh preflight failure does not run a mirror the caller never nam
   assert.ok(r.skipped.some((s) => s.check.split(',').includes('archive') && s.reason === 'preflight-rate-limited'), JSON.stringify(r.skipped));
 });
 
+// Runs on win32: the git shim only logs fetch argv and execs real git; these assertions read module-stub calls and real git state, never that log.
 test('(#3630): a gh preflight failure still runs a mirror the caller did name', async () => {
   const health = { ok: false, reason: 'rate-limited' };
   const { r, archiveCalled } = await reconcileWithAsyncMerge(['mirror', 'archive'], { health });
@@ -1001,6 +1016,7 @@ test('AC4.1: SessionStart passes no budgetMs (default budget); the background pa
 
 // #6143: the hollow-merge check (a PR merged while its run was in flight) holds the run through release,
 // post-merge and archive, and fails closed.
+// Runs on win32: the git shim only logs fetch argv and execs real git; these assertions read module-stub calls and real git state, never that log.
 test('AC4.1 (#6143): a hollow merge is handed to release, post-merge and archive as a hold, kept out of archive, and shown in the summary', async () => {
   const runDir = '/p/.claude-tweaks/pipelines/2026-11-23T1-hollow';
   const entry = { runDir, runId: '2026-11-23T1-hollow', pr: 77, action: 'held', reason: 'hollow-merge', phase: 'build', records: [5], commented: [5] };
@@ -1022,6 +1038,7 @@ test('AC4.1 (#6143): a hollow merge is handed to release, post-merge and archive
   ));
 });
 
+// Runs on win32: the git shim only logs fetch argv and execs real git; these assertions read module-stub calls and real git state, never that log.
 test('AC5.1 (#6143): a clean pass hands release, post-merge and archive empty hold sets and prints no hollow line', async () => {
   const { r, releaseOpts, postMergeOpts, archiveOpts } = await reconcileWithAsyncMerge(['release', 'archive']);
   assert.deepEqual(releaseOpts.hollowRunIds, []);
@@ -1031,6 +1048,7 @@ test('AC5.1 (#6143): a clean pass hands release, post-merge and archive empty ho
   assert.ok(!formatSummary(r).includes('hollow'));
 });
 
+// Runs on win32: the git shim only logs fetch argv and execs real git; these assertions read module-stub calls and real git state, never that log.
 test('AC7.1 (#6143): a failed or throwing hollow-merge check skips release, post-merge and archive for the pass', async () => {
   // `not-github-issues` is no longer a not-applicable refusal (detection runs on any work backend), so it fails closed too.
   const failing = [
@@ -1048,6 +1066,7 @@ test('AC7.1 (#6143): a failed or throwing hollow-merge check skips release, post
   }
 });
 
+// Runs on win32: the git shim only logs fetch argv and execs real git; these assertions read module-stub calls and real git state, never that log.
 test('(#6143): a project with no remote or an origin on an unknown host has nothing to hold, so the three checks still run', async () => {
   // `unknown-host`: setupContext refuses the origin (#4933) before any gh call, so the check can never run;
   // treating it as a failure would hold release, post-merge and archive on every pass, forever.
@@ -1088,6 +1107,7 @@ async function withBranchCheckStubs(extra, fn) {
   }
 }
 
+// Runs on win32: the git shim only logs fetch argv and execs real git; these assertions read module-stub calls and real git state, never that log.
 test('AC4.1 (#6143): archive-branches, remote-prune and reap are handed the held runs\' branches and worktrees', async () => {
   const runDir = '/p/.claude-tweaks/pipelines/2026-11-23T1-hollow';
   const entry = { runDir, runId: '2026-11-23T1-hollow', pr: 77, action: 'held', reason: 'hollow-merge', phase: 'build', records: [5], commented: [5] };
@@ -1101,6 +1121,7 @@ test('AC4.1 (#6143): archive-branches, remote-prune and reap are handed the held
   });
 });
 
+// Runs on win32: the git shim only logs fetch argv and execs real git; these assertions read module-stub calls and real git state, never that log.
 test('AC7.1 (#6143): a failed hollow-merge check skips archive-branches, remote-prune and reap too', async () => {
   await withBranchCheckStubs({ hollow: async () => ({ entries: [], hollowRunDirs: [], failure: 'no-pr-states' }) }, ({ r }, seen) => {
     assert.equal(seen.ab, undefined);

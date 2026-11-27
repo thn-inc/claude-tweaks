@@ -156,7 +156,7 @@ test('AC8.1: the wait row\'s green re-read and the watch\'s RC=0 green each name
 });
 
 test('AC8.2 go-red: the epoch moved into the state-read fence fails the fence pin', () => {
-  const anchor = '--json state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup\n';
+  const anchor = '--json state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup,createdAt\n';
   assert.equal(count(LIVE, anchor), 1, 'state-read gh pr view line is unique');
   const mutated = LIVE.replace(anchor, `${anchor.slice(0, -1)}\n${EPOCH_CMD}\n`);
   assert.notEqual(mutated, LIVE);

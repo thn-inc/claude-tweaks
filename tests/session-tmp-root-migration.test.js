@@ -189,8 +189,10 @@ test('#4173: Step 2.5 resolves its checks and head-runs captures and park-commen
   const resolveAt = text.indexOf(COMBINED_RESOLVE);
   assert.ok(resolveAt > stateAnchor && resolveAt < stateFence, 'the combined resolve precedes the state-read gh pr view fence, so the Red path (reachable without a watch) is covered');
   assert.match(text, /> "\{pr-checks-path\}" 2>&1; RC=\$\?/, 'the watch loop redirects into the resolved {pr-checks-path}');
-  assert.match(text, /--json status > "\{pr-runs-path\}" \|\|/, 'the watch loop writes head runs to the resolved {pr-runs-path}');
-  assert.match(text, /-- "\{pr-runs-path\}"\)/, 'the pending-runs count reads the resolved {pr-runs-path}');
+  assert.match(text, /--json [\w,]+ > "\{pr-runs-path\}" \|\|/, 'the watch loop writes head runs to the resolved {pr-runs-path}');
+  assert.match(text, /-- "\{pr-runs-path\}" "/, 'the pending-runs count reads the resolved {pr-runs-path}');
+  assert.match(text, /--json name,state > "\{pr-checks-json-path\}" \|\|/, 'the watch loop writes its held-state re-read to the resolved {pr-checks-json-path}');
+  assert.ok(text.includes('GATE_START=gate-start-{n}.txt PR_CHECKS_JSON=pr-checks-{n}.json'), 'the combined resolve also resolves PR_CHECKS_JSON');
   assert.match(text, /printf .* "\$VALUE" "\$REASON" "\$PR" "\$RESUME" > "\{park-comment-path\}"/, 'the printf redirect writes the resolved {park-comment-path}');
   assert.match(text, /--body-file "\{park-comment-path\}"/, '--body-file reads the resolved {park-comment-path}');
   assert.doesNotMatch(PRE_CHANGE_PARK_FENCE, /session-tmp-resolve\.js/, 'go-red: the pre-change park fence does not resolve through session-tmp-resolve.js');
