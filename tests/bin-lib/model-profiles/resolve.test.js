@@ -2,7 +2,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { resolve } = require('../../../plugin/bin/lib/model-profiles/profiles');
+const { resolve, STEP_DOWN_REASONS } = require('../../../plugin/bin/lib/model-profiles/profiles');
 
 test('table default resolves with source default', () => {
   assert.deepStrictEqual(resolve('standard', {}), {
@@ -299,7 +299,6 @@ test('diff-facts ceiling defers to an explicit cliOverride (cliOverride already 
 
 // ---- design-reader frontier exception (#6351) ----
 const DR = { exception: 'design-reader' };
-const { STEP_DOWN_REASONS } = require('../../../plugin/bin/lib/model-profiles/profiles');
 
 test('AC1.1: under design-reader, resolutions 1 to 22 return fable with source exception:design-reader', () => {
   for (let used = 0; used < 22; used += 1) {
@@ -364,6 +363,25 @@ test('AC4.1: design-reader with unattended throws the refusal', () => {
 
 test('AC6.1: an unknown exception throws naming design-reader', () => {
   assert.throws(() => resolve('frontier', { exception: 'other' }), /unknown exception "other" — the one exception is "design-reader"/);
+});
+
+test('a bad exceptionUsed throws instead of failing open', () => {
+  for (const bad of [NaN, -1, 1.5, '3', null, Infinity]) {
+    assert.throws(() => resolve('frontier', { ...DR, exceptionUsed: bad }), /exceptionUsed must be a non-negative integer/);
+  }
+  assert.strictEqual(resolve('frontier', { ...DR, exceptionUsed: undefined }).model, 'fable');
+});
+
+test('a cliOverride naming model or effort throws under the exception', () => {
+  const msg = /takes no per-invocation model or effort override/;
+  assert.throws(() => resolve('frontier', { ...DR, cliOverride: { model: 'opus' } }), msg);
+  assert.throws(() => resolve('frontier', { ...DR, cliOverride: { effort: 'low' } }), msg);
+  assert.strictEqual(resolve('frontier', { ...DR, cliOverride: {} }).model, 'fable');
+});
+
+test('an unknown exception plus a bad stance throws the exception message first', () => {
+  assert.throws(() => resolve('frontier', { exception: 'other', stance: 'bogus' }), /unknown exception "other"/);
+  assert.throws(() => resolve('frontier', { ...DR, stance: 'bogus' }), /unknown stance "bogus"/);
 });
 
 test('the exception applies only to frontier', () => {

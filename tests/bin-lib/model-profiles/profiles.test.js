@@ -2,7 +2,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { PROFILES, EFFORT_SCALE, POLICY_KEYS_READ, effortLine } = require('../../../plugin/bin/lib/model-profiles/profiles');
+const { PROFILES, EFFORT_SCALE, POLICY_KEYS_READ, effortLine, FRONTIER_EXCEPTIONS, STEP_DOWN_REASONS } = require('../../../plugin/bin/lib/model-profiles/profiles');
 
 test('PROFILES carries the four canonical rows with family-alias models', () => {
   assert.deepStrictEqual(Object.keys(PROFILES), ['fast', 'standard', 'capable', 'frontier']);
@@ -28,8 +28,6 @@ test('effortLine renders the pinned template, empty for null', () => {
     '[Effort: high — apply high-level reasoning depth to this task.]');
   assert.strictEqual(effortLine(null), '');
 });
-
-const { FRONTIER_EXCEPTIONS, STEP_DOWN_REASONS } = require('../../../plugin/bin/lib/model-profiles/profiles');
 
 test('FRONTIER_EXCEPTIONS holds exactly one frozen entry, design-reader with limit 22', () => {
   assert.deepStrictEqual(Object.keys(FRONTIER_EXCEPTIONS), ['design-reader']);

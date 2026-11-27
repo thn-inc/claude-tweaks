@@ -80,13 +80,25 @@ const STEP_DOWN_REASONS = Object.freeze(['tally', 'policy', 'stance', 'ceiling',
 // reports the first gate that would have moved it off — never a silent lower
 // tier. Effort-only changes (policy effort, stance max-rigor/economy shift)
 // are not step-downs. `diffFacts` never applies (capable-only).
-function resolveException(profile, opts, policy, stance, effortMode) {
+function resolveException(profile, opts) {
   const name = opts.exception;
   if (!Object.hasOwn(FRONTIER_EXCEPTIONS, name)) {
     throw new Error(`unknown exception "${name}" — the one exception is "design-reader"`);
   }
   if (profile !== 'frontier') throw new Error('the design-reader exception applies only to the frontier profile');
   if (opts.unattended) throw new Error('the design-reader exception refuses an unattended call — its readers need a human present');
+  const used = opts.exceptionUsed === undefined ? 0 : opts.exceptionUsed;
+  if (!Number.isInteger(used) || used < 0) throw new Error('exceptionUsed must be a non-negative integer');
+  const cli = opts.cliOverride;
+  if (cli && (cli.model !== undefined || cli.effort !== undefined)) {
+    throw new Error('the design-reader exception takes no per-invocation model or effort override');
+  }
+
+  const policy = opts.policy || {};
+  const stance = opts.stance || policy['model-stance'] || 'default';
+  if (!STANCES.includes(stance)) throw new Error(`unknown stance "${stance}"`);
+  const effortMode = policy['model-effort'] || 'inherit';
+  if (effortMode !== 'inherit' && effortMode !== 'profile') throw new Error(`unknown model-effort "${effortMode}"`);
 
   const top = PROFILES.frontier;
   let effort = top.effort;
@@ -110,7 +122,7 @@ function resolveException(profile, opts, policy, stance, effortMode) {
     if (PROFILE_ORDER.indexOf('frontier') > PROFILE_ORDER.indexOf(ceiling)) reason = reason || 'ceiling';
   }
 
-  if ((opts.exceptionUsed || 0) >= FRONTIER_EXCEPTIONS[name].limit) reason = reason || 'limit';
+  if (used >= FRONTIER_EXCEPTIONS[name].limit) reason = reason || 'limit';
 
   const failedModels = opts.failedModels || new Set();
   if (failedModels.has(top.model)) reason = reason || 'session-failure';
@@ -131,14 +143,7 @@ function resolveException(profile, opts, policy, stance, effortMode) {
 // the last transform that changed the result naming `source`. With
 // `opts.exception` set, resolveException() runs instead (see above).
 function resolve(profile, opts = {}) {
-  if (opts.exception !== undefined) {
-    const policy = opts.policy || {};
-    const stance = opts.stance || policy['model-stance'] || 'default';
-    if (!STANCES.includes(stance)) throw new Error(`unknown stance "${stance}"`);
-    const effortMode = policy['model-effort'] || 'inherit';
-    if (effortMode !== 'inherit' && effortMode !== 'profile') throw new Error(`unknown model-effort "${effortMode}"`);
-    return resolveException(profile, opts, policy, stance, effortMode);
-  }
+  if (opts.exception !== undefined) return resolveException(profile, opts);
   if (!PROFILES[profile]) throw new Error(`unknown profile "${profile}"`);
   const policy = opts.policy || {};
   const stance = opts.stance || policy['model-stance'] || 'default';
