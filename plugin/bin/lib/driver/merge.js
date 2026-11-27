@@ -24,7 +24,7 @@ const {
 } = require('./events');
 const { reduceDetail, canonicalWorktreePath, apiTarget } = require('./settle');
 const { confirmFromFile } = require('../dispatch/merge-verdict');
-const { classifyRollup, normalizeEntry } = require('../pr-checks/classify');
+const { classifyRollup, normalizeEntry, HEAD_RUN_FIELDS, headCommittedAtArgs } = require('../pr-checks/classify');
 const { ensureLabelPayload } = require('../issues/labels');
 const { LABELS } = require('../issues/record-vocabulary');
 const { widenings } = require('../express/eligibility');
@@ -559,10 +559,11 @@ function markReady(s) {
 // ---- The merge-verification gate: pr-first-merge.md Step 2.5, `merge-when-green` and `wait`
 // columns only (the `off` column is not ported; readLever runs `off` as `wait`). ----
 
-const GATE_FIELDS = 'state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup';
+// `createdAt` bounds the PR-event settle window's start (#3468); a read without it is still usable: the
+// window stays pending (classify.js fails closed on an unparseable anchor), it is never a stop.
+const GATE_FIELDS = 'state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup,createdAt';
 // `mergeable` rides on the re-read too (AC6: conflicting "on any read"), beyond the prose's three fields.
 const REREAD_FIELDS = 'state,mergeStateStatus,mergeable,headRefOid';
-const RUN_FIELDS = 'name,workflowName,status,conclusion,url';
 // The ready-run.js states classify reads; `read-failed`, and any state not named here, is a read failure.
 const READY_RUN_USED = ['not-applicable', 'met', 'awaiting', 'red', 'draft-skip-without-ready-trigger'];
 const LEVER_VALUES = ['merge-when-green', 'wait'];
@@ -609,11 +610,21 @@ function gateReads(s, word) {
   if (read.state !== 'OPEN' || read.headRefOid !== ctx.head || isConflicting(read)) return { read, runs: null, ready: null };
   let runs;
   try {
-    runs = parseJson(deps.gh(['run', 'list', '--repo', ctx.repo, '--commit', read.headRefOid, '--limit', '100', '--json', RUN_FIELDS]));
+    runs = parseJson(deps.gh(['run', 'list', '--repo', ctx.repo, '--commit', read.headRefOid, '--limit', '100', '--json', HEAD_RUN_FIELDS]));
   } catch (err) {
     return fail(`head-runs read failed: ${errorText(err)}`);
   }
   if (!Array.isArray(runs) || !runs.every(isObject)) return fail('head-runs read returned no run list');
+  // #3468: with no workflow run for the head yet, the committer date stands in as the settle window's
+  // start. A failed or empty read is null (classify.js keeps the PR pending), never a stop.
+  let committedAt = null;
+  if (runs.length === 0) {
+    try {
+      committedAt = String(deps.gh(headCommittedAtArgs(ctx.repo, read.headRefOid))).trim() || null;
+    } catch {
+      committedAt = null;
+    }
+  }
   let r;
   try {
     r = deps.node(bin('ready-run.js'), ['--pr', String(ctx.pr), '--sha', read.headRefOid],
@@ -626,7 +637,7 @@ function gateReads(s, word) {
   if (!hasStrings(ready, ['state'])) return fail('ready-run.js printed no state');
   if (ready.state === 'read-failed') return fail(`ready-run read-failed: ${reduceDetail(ready.reason)}`);
   if (!READY_RUN_USED.includes(ready.state)) return fail(`ready-run state ${reduceDetail(ready.state)} not recognized`);
-  return { read, runs, ready };
+  return { read, runs, ready, committedAt };
 }
 
 // Step 2.5's table over a read the caller's guards passed (OPEN, the verified head, not
@@ -634,9 +645,15 @@ function gateReads(s, word) {
 // classify.js's classifyRollup — Step 2.5's one pinned code twin — never restated here; the
 // ready-run state is layered on top in the table's order: red adds its failing names,
 // then draft-skip, then awaiting makes the result pending.
-function classify(ctx, read, runs, ready) {
+// A pending verdict inside the PR-event settle window carries `settling: true` (#3468): the gate and
+// every poll then watch instead of arming auto-merge, so GitHub's own required-check rule never
+// ends the window early.
+function classify(ctx, read, runs, ready, { now, committedAt = null } = {}) {
   if (!Array.isArray(runs) || !ready) throw new Error('classify needs the checks reads');
-  const base = classifyRollup({ rollup: read.statusCheckRollup, headRefOid: read.headRefOid, localHead: ctx.head, hasPrCi: true, headRuns: runs });
+  const base = classifyRollup({
+    rollup: read.statusCheckRollup, headRefOid: read.headRefOid, localHead: ctx.head, hasPrCi: true, headRuns: runs,
+    now, headCommittedAt: committedAt, prCreatedAt: read.createdAt,
+  });
   // read-failed and stale are unreachable past gateReads' shape checks and the head guard.
   if (!['red', 'pending', 'green'].includes(base.state)) throw new Error(`classifyRollup returned ${base.state}`);
   if (base.state === 'red' || ready.state === 'red') {
@@ -652,7 +669,7 @@ function classify(ctx, read, runs, ready) {
       .filter((f) => typeof f === 'string' && f !== '');
     return { kind: 'draft-skip', files: files.length ? files : ['unnamed'] };
   }
-  if (base.state === 'pending' || ready.state === 'awaiting') return { kind: 'pending' };
+  if (base.state === 'pending' || ready.state === 'awaiting') return { kind: 'pending', settling: Boolean(base.prEventSettle) };
   return { kind: 'green' };
 }
 
@@ -674,7 +691,7 @@ async function gate(s) {
     return conflictStop(s);
   }
   s.lastRead = read;
-  const verdict = classify(ctx, read, g.runs, g.ready);
+  const verdict = classify(ctx, read, g.runs, g.ready, { now: clock(s.deps), committedAt: g.committedAt });
   s.lastVerdict = verdict.kind;
   emit(s, 'merge-gate', 'ok', `checks ${verdict.kind}; merge state ${reduceDetail(read.mergeStateStatus)}; lever ${s.value}`);
   if (verdict.kind === 'red') return park(s, `check-failed:${verdict.names.join(',')}`, { names: verdict.names });
@@ -690,8 +707,9 @@ async function gate(s) {
   }
   // Once GitHub refused to arm (Step 3 item 1, s.autoRefused), the rest of the run is the `wait` row.
   if (s.value === 'merge-when-green' && !s.autoRefused) {
-    // A pending read GitHub reports BLOCKED (required checks still running) arms auto-merge.
-    if (verdict.kind === 'green' || read.mergeStateStatus === 'BLOCKED') return mergeCall(s, 'auto');
+    // A pending read GitHub reports BLOCKED (required checks still running) arms auto-merge, unless
+    // the pending is the PR-event settle window (#3468): arming there would let GitHub end the window.
+    if (verdict.kind === 'green' || (read.mergeStateStatus === 'BLOCKED' && !verdict.settling)) return mergeCall(s, 'auto');
     return watch(s);
   }
   if (verdict.kind === 'green') return rereadThenMerge(s, read);
@@ -902,7 +920,7 @@ async function pollUntilDecided(s, boundFrom) {
     }
     if (isConflicting(read)) return { next: () => conflictStop(s), note: 'conflicting', polls };
     s.lastRead = read;
-    const verdict = classify(ctx, read, g.runs, g.ready);
+    const verdict = classify(ctx, read, g.runs, g.ready, { now: deps.now(), committedAt: g.committedAt });
     s.lastVerdict = verdict.kind;
     if (verdict.kind === 'red') {
       return { next: () => park(s, `check-failed:${verdict.names.join(',')}`, { names: verdict.names }), note: 'checks red', polls };
@@ -916,8 +934,9 @@ async function pollUntilDecided(s, boundFrom) {
     }
     if (verdict.kind === 'green') return { next: () => rereadThenMerge(s, read), note: 'checks green', polls };
     // pending. Step 3's rule applies at every poll: under merge-when-green a BLOCKED read arms,
-    // unless GitHub already refused to arm this run (then the watch is the `wait` row's).
-    if (s.value === 'merge-when-green' && !s.autoRefused && read.mergeStateStatus === 'BLOCKED') {
+    // unless GitHub already refused to arm this run (then the watch is the `wait` row's), or the
+    // pending is the settle window (#3468), which only a later read past it may end.
+    if (s.value === 'merge-when-green' && !s.autoRefused && read.mergeStateStatus === 'BLOCKED' && !verdict.settling) {
       return { next: () => mergeCall(s, 'auto'), note: 'pending and BLOCKED; arming auto-merge', polls };
     }
     if (deps.now() - boundFrom >= MERGE_WATCH_BOUND_MS) {

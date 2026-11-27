@@ -26,6 +26,7 @@ const { realDeps } = require(path.join(LIB, 'driver', 'run'));
 const { MODEL_POLICY_KEYS, roleModel } = require(path.join(LIB, 'driver', 'launch.js'));
 const { DRIVER_ROLE_PROFILES } = require(path.join(LIB, 'driver', 'roles.js'));
 const { PROFILES } = require(path.join(LIB, 'model-profiles', 'profiles.js'));
+const { HEAD_RUN_FIELDS } = require(path.join(LIB, 'pr-checks', 'classify'));
 const { resolvePolicyKeys } = require(path.join(LIB, 'policy-schema.js'));
 
 const MAIN_NOW = new Date(2026, 10, 13, 9, 0, 0);
@@ -84,10 +85,11 @@ function modelReply(value) {
 }
 
 // The gate's two pr view field sets: the first read and the `wait` row's re-read.
-const GATE_FIELDS = 'state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup';
+const GATE_FIELDS = 'state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup,createdAt';
 const REREAD_FIELDS = 'state,mergeStateStatus,mergeable,headRefOid';
 const GREEN_CHECK = { __typename: 'CheckRun', name: 'unit', status: 'COMPLETED', conclusion: 'SUCCESS', detailsUrl: 'u' };
-const GREEN_RUN = { name: 'CI', workflowName: 'CI', status: 'completed', conclusion: 'success', url: 'u' };
+// #3468: an ordinary green PR carries a pull_request run, so the settle window never applies to it.
+const GREEN_RUN = { name: 'CI', workflowName: 'CI', status: 'completed', conclusion: 'success', url: 'u', event: 'pull_request' };
 const MET = { state: 'met', failing: [], draftSkipWithoutReadyTrigger: [] };
 // The confirmation read after a merge call that exited 0 (Step 3 item 6, plus mergeCommit).
 const CONFIRM_FIELDS = 'state,mergedAt,autoMergeRequest,statusCheckRollup,mergeCommit';
@@ -971,7 +973,7 @@ test('AC4.2: the gate reads state, the head runs and ready-run, each as specifie
   const g = h.calls.findIndex(isGateRead);
   assert.deepEqual(h.calls[g].args, ['pr', 'view', '9', '--repo', 'o/r', '--json', GATE_FIELDS]);
   assert.deepEqual(h.calls[g + 1].args,
-    ['run', 'list', '--repo', 'o/r', '--commit', CTX.head, '--limit', '100', '--json', 'name,workflowName,status,conclusion,url']);
+    ['run', 'list', '--repo', 'o/r', '--commit', CTX.head, '--limit', '100', '--json', HEAD_RUN_FIELDS]);
   const rr = h.calls[g + 2];
   assert.equal(base(rr.args[0]), 'ready-run.js');
   assert.deepEqual(rr.args.slice(1), ['--pr', '9', '--sha', CTX.head]);
@@ -1255,6 +1257,8 @@ test('AC8.2: merge-when-green pending with BLOCKED arms; pending with CLEAN runs
     ['a head run not completed', { runs: [{ ...GREEN_RUN, status: 'in_progress', conclusion: '' }] }],
     ['ready-run awaiting', { readyRun: { state: 'awaiting', failing: [], draftSkipWithoutReadyTrigger: [] } }],
     ['a status context PENDING', { prState: { statusCheckRollup: [{ context: 'ci/x', state: 'PENDING' }] } }],
+    ['a held rollup entry (CANCELLED), #3467', { prState: { statusCheckRollup: [{ ...GREEN_CHECK, conclusion: 'CANCELLED' }] } }],
+    ['a held head run (cancelled), #3467', { runs: [{ ...GREEN_RUN, conclusion: 'cancelled' }] }],
   ];
   for (const [name, over] of pendings) {
     const h = mergeHarness(over);
@@ -2108,7 +2112,7 @@ test('AC4.1, AC4.2: the happy path calls happen in this order', async () => {
   assert.equal(r.outcome, 'merged');
   assert.deepEqual(sequenceFromSupplier(h.calls), [
     'judgments', 'closing-links.js --run', 'compose-subject.js 7', 'readFile title.txt', 'gh pr view isDraft', 'gh pr ready 9',
-    'gh pr view state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup', 'gh run list --commit', 'ready-run.js --pr 9',
+    'gh pr view state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup,createdAt', 'gh run list --commit', 'ready-run.js --pr 9',
     'accept-park.js parked', 'accept-park.js decide', 'gh issue view 7 labels', 'ghCreate pr merge 9 --auto --squash',
     'gh pr view state,mergedAt,autoMergeRequest,statusCheckRollup,mergeCommit',
     'post-merge-run.js --run', 'git fetch --end-of-options origin main', `git describe --tags --contains --first-parent --match v* --end-of-options ${MERGE_SHA}`,
@@ -3648,4 +3652,77 @@ test('the widened stop precedes summary-entry-missing and the integration-model 
   const { h } = await assertWidenedStop(widenedLabels('risk:medium'), { ...CTX, summaryLogged: false, widenedBy: ['risk'] });
   assert.ok(!kindsOf(h).includes('policyCore'), 'no policy read before the stop');
   await assertWidenedStop(widenedLabels('risk:medium'), { ...CTX, summaryLogged: false, widenedBy: [] });
+});
+
+// ---- #3468: the PR-event settle window at the gate and at every watch poll ----
+
+const SETTLE_T0 = Date.parse('2026-11-26T12:00:00Z');
+const settleIso = (offsetMs) => new Date(SETTLE_T0 + offsetMs).toISOString();
+const pushOnlyRun = (offsetMs) => ({ ...GREEN_RUN, event: 'push', createdAt: settleIso(offsetMs) });
+const OLD_PR = { createdAt: settleIso(-10 * 60 * 1000) };
+const isCommitDateRead = (c) => isGh('api')(c) && String(c.args[1]).includes('/commits/');
+// A watch harness whose clock is a real epoch, so ISO dates from the fixtures compare with it.
+function settleHarness(over) {
+  const h = watchHarness(over);
+  const clk = { t: SETTLE_T0 };
+  h.deps.now = () => { clk.t += 1; return clk.t; };
+  h.deps.sleep = async (ms) => { h.sleeps.push(ms); clk.t += ms; };
+  return h;
+}
+
+test('AC1.1: a push-only green rollup inside the settle window does not merge — it watches', async () => {
+  const h = settleHarness({ prState: OLD_PR, runs: [pushOnlyRun(-10_000)] });
+  const r = await merge(CTX, h.deps);
+  assert.equal(r.outcome, 'merged');
+  assert.equal(h.sleeps.length, 2, 'two polls inside the window, the third read past it');
+  assert.equal(modeOf(h), 'immediate', 'merged by the wait row after the window, never armed');
+  assert.equal(mergeCalls(h).length, 1);
+});
+
+test('AC2.1: a path-filtered PR merges once its push runs completed and the window passed', async () => {
+  const h = settleHarness({ prState: OLD_PR, runs: [pushOnlyRun(-70_000)] });
+  const r = await merge(CTX, h.deps);
+  assert.equal(r.outcome, 'merged');
+  assert.equal(h.sleeps.length, 0);
+  assert.equal(modeOf(h), 'auto');
+});
+
+test('an empty head-run list reads the committer date; a failed read keeps the gate pending, never a stop', async () => {
+  const dated = settleHarness({ prState: OLD_PR, runs: [], script: [[isCommitDateRead, `${settleIso(-70_000)}\n`]] });
+  const merged = await merge(CTX, dated.deps);
+  assert.equal(merged.outcome, 'merged');
+  assert.deepEqual(dated.calls.find(isCommitDateRead).args, ['api', `repos/o/r/commits/${CTX.head}`, '--jq', '.commit.committer.date']);
+  const failed = settleHarness({ prState: OLD_PR, runs: [], script: [[isCommitDateRead, new Error('api down')]] });
+  const r = await merge(CTX, failed.deps);
+  assert.equal(r.reason, 'checks-pending-timeout');
+  noMerge(failed);
+  const fresh = settleHarness({ prState: OLD_PR, runs: [], script: [[isCommitDateRead, `${settleIso(-1_000)}\n`]] });
+  assert.equal((await merge(CTX, fresh.deps)).outcome, 'merged');
+  assert.ok(fresh.sleeps.length >= 1, 'a commit pushed seconds ago watched before it merged');
+  // A non-empty list never reads it.
+  const ran = settleHarness({ prState: OLD_PR, runs: [GREEN_RUN] });
+  await merge(CTX, ran.deps);
+  assert.ok(!ran.calls.some(isCommitDateRead));
+});
+
+test('the gate\'s PR view requests createdAt; a view without it and push-only runs watches, never merges', async () => {
+  const h = settleHarness({ runs: [pushOnlyRun(-70_000)] });
+  const r = await merge(CTX, h.deps);
+  assert.ok(h.calls.find(isGateRead).args.join(',').split(',').includes('createdAt'));
+  assert.equal(r.reason, 'checks-pending-timeout');
+  noMerge(h);
+});
+
+test('AC1.1: a settle-only pending read with mergeStateStatus BLOCKED watches, never arms auto-merge', async () => {
+  const blocked = { ...OLD_PR, mergeStateStatus: 'BLOCKED' };
+  const h = settleHarness({ prState: blocked, runs: [pushOnlyRun(-10_000)] });
+  const r = await merge(CTX, h.deps);
+  assert.equal(r.outcome, 'merged');
+  assert.ok(h.sleeps.length >= 1, 'the gate watched');
+  assert.ok(mergeCalls(h).every((c) => !c.args.includes('--auto')), 'no pr merge --auto while settling');
+  // Past the window with a required check still pending, BLOCKED arms as before.
+  const past = settleHarness({ prState: { ...blocked, statusCheckRollup: [PENDING_CHECK] }, runs: [pushOnlyRun(-70_000)] });
+  await merge(CTX, past.deps);
+  assert.equal(modeOf(past), 'auto');
+  assert.equal(past.sleeps.length, 0);
 });

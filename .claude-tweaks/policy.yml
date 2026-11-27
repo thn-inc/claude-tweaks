@@ -21,6 +21,9 @@ project-maturity: established
 # release-tip-moves (#6188): sibling dispatch sessions merge while a release is reviewed, so the default of 2 held v6.178.0 on 2026-11-23.
 # Revert signal: delete this row once #6187 (release from a fixed reviewed commit) lands.
 release-tip-moves: 6
+# planning-decisions (#6350): plan review asks only design-level, hard-to-undo and contradiction questions and settles every other gap by plugin/skills/_shared/planning-decisions.md, listed in the acceptance packet.
+# Revert signal: delete this row if the two-week share of dispatched builds stopping at plan review (counted on #6350's parent) does not fall below 12 of 15, or a settled call is overturned at acceptance.
+planning-decisions: asked-classes
 # release-hook: <command run after the local engine tags a release — local-merge only; under pr-first the release: published workflow is the hook — it needs a PAT, GITHUB_TOKEN-created releases do not trigger it>
 # release-train: false
 specify-decomposition-log: true

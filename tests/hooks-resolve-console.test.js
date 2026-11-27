@@ -14,12 +14,13 @@ const os = require('os');
 const path = require('path');
 const { runCli, spawnCli } = require('./helpers/run-cli');
 const { hookEnv } = require('./helpers/git-fixtures');
+const { writeStubDir, STUB_SKIP } = require('./helpers/path-stub');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
 // The stub `gh` first on PATH: the verb's gh child must find it through the injected env.
-function ghStubEnv(binDir) {
-  return { PATH: `${binDir}${path.delimiter}${process.env.PATH}` };
+function ghStubEnv(stub) {
+  return { PATH: stub.envPath };
 }
 
 // Runs the verb in-process (#5376); the script entry has its own tests below.
@@ -46,7 +47,7 @@ test('resolve-console accepts --filing-failed as a declared flag', async () => {
 });
 
 // #3949: --filing-failed names only a finding row (console.json's findingItem); the CLI renders the refusal.
-test('resolve-console --filing-failed on a non-finding item is refused by the CLI with the not-finding-items message', { skip: process.platform === 'win32' }, async () => {
+test('resolve-console --filing-failed on a non-finding item is refused by the CLI with the not-finding-items message', { skip: STUB_SKIP }, async (t) => {
   const repo = fs.realpathSync(scratchDir('ct-resolve-console-ff-'));
   execFileSync('git', ['init', '-q'], { cwd: repo });
   const runDir = path.join(repo, '.claude-tweaks', 'pipelines', '2026-10-24T000000-ff');
@@ -55,11 +56,10 @@ test('resolve-console --filing-failed on a non-finding item is refused by the CL
   fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({
     commentIds: ['IC_primary'], prNumber: 42, items: [{ id: '1', kind: 'batch', summary: 'fix A' }],
   }));
-  const binDir = path.join(repo, 'stub-bin');
-  fs.mkdirSync(binDir);
   const comment = { id: 'IC_primary', body: '<!-- console-item: resolve -->\n- [ ] **Resolve console**\n<!-- console-item: 1 -->\n- [ ] item 1' };
-  fs.writeFileSync(path.join(binDir, 'gh'), `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(JSON.stringify({ comments: [comment], body: 'Fixes #42' }))});\n`, { mode: 0o755 });
-  const result = await runHook(['resolve-console', '--run', runDir, '--filing-failed', '1'], { cwd: repo, env: ghStubEnv(binDir) });
+  const stub = writeStubDir('gh', `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(JSON.stringify({ comments: [comment], body: 'Fixes #42' }))});\n`);
+  t.after(stub.remove);
+  const result = await runHook(['resolve-console', '--run', runDir, '--filing-failed', '1'], { cwd: repo, env: ghStubEnv(stub) });
   assert.equal(result.code, 1);
   assert.match(result.stdout, /--filing-failed id\(s\) 1 are neither finding rows nor sdd-ruling rows \(no findingItem, no isRulingRow flag\)/);
   assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'console.json'), 'utf8')).executedAt, undefined, 'a refused call writes nothing');
@@ -73,25 +73,25 @@ function runRefusal(slug, items, flags) {
   fs.mkdirSync(runDir, { recursive: true });
   fs.writeFileSync(path.join(runDir, 'config.yml'), 'mode: auto\n');
   fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ commentIds: ['IC_primary'], prNumber: 42, items }));
-  const binDir = path.join(repo, 'stub-bin');
-  fs.mkdirSync(binDir);
   const rows = items.map((i) => `<!-- console-item: ${i.id} -->\n- [ ] item ${i.id}`).join('\n');
   const comment = { id: 'IC_primary', body: `<!-- console-item: resolve -->\n- [ ] **Resolve console**\n${rows}` };
-  fs.writeFileSync(path.join(binDir, 'gh'), `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(JSON.stringify({ comments: [comment], body: 'Fixes #42' }))});\n`, { mode: 0o755 });
+  const stub = writeStubDir('gh', `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(JSON.stringify({ comments: [comment], body: 'Fixes #42' }))});\n`);
   let result;
   try {
     const stdout = execFileSync('node', [HOOKS, 'resolve-console', '--run', runDir, ...flags], {
-      cwd: repo, encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '', PATH: `${binDir}${path.delimiter}${process.env.PATH}` },
+      cwd: repo, encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '', PATH: stub.envPath },
     });
     result = { code: 0, stdout };
   } catch (e) {
     result = { code: e.status, stdout: e.stdout || '' };
+  } finally {
+    stub.remove();
   }
   result.executedAt = JSON.parse(fs.readFileSync(path.join(runDir, 'console.json'), 'utf8')).executedAt;
   return result;
 }
 
-test('resolve-console --digested on a non-finding item is refused naming --digested (#4679)', { skip: process.platform === 'win32' }, () => {
+test('resolve-console --digested on a non-finding item is refused naming --digested (#4679)', { skip: STUB_SKIP }, () => {
   const result = runRefusal('dg1', [{ id: '1', kind: 'batch', summary: 'fix A' }], ['--digested', '1']);
   assert.equal(result.code, 1);
   assert.match(result.stdout, /--digested id\(s\) 1 are not finding rows \(no findingItem\), console not resolved/);
@@ -99,7 +99,7 @@ test('resolve-console --digested on a non-finding item is refused naming --diges
   assert.equal(result.executedAt, undefined, 'a refused call writes nothing');
 });
 
-test('resolve-console naming a ruling in both --digested and --filing-failed is refused naming --digested (#4679)', { skip: process.platform === 'win32' }, () => {
+test('resolve-console naming a ruling in both --digested and --filing-failed is refused naming --digested (#4679)', { skip: STUB_SKIP }, () => {
   const result = runRefusal('dg2', [{ id: 'r1', kind: 'batch', summary: 'ruling', isRulingRow: true }], ['--digested', 'r1', '--filing-failed', 'r1']);
   assert.equal(result.code, 1);
   assert.match(result.stdout, /--digested id\(s\) r1 are not finding rows/);
@@ -107,7 +107,7 @@ test('resolve-console naming a ruling in both --digested and --filing-failed is 
   assert.equal(result.executedAt, undefined, 'a refused call writes nothing');
 });
 
-test('resolve-console naming a finding row in both --digested and --filing-failed is refused as a conflict (#4679)', { skip: process.platform === 'win32' }, () => {
+test('resolve-console naming a finding row in both --digested and --filing-failed is refused as a conflict (#4679)', { skip: STUB_SKIP }, () => {
   const result = runRefusal('dg3', [{ id: 'f1', kind: 'staged', summary: 'finding', findingItem: 'tiebreak:3f2a9c1b7d04' }], ['--digested', 'f1', '--filing-failed', 'f1']);
   assert.equal(result.code, 1);
   assert.match(result.stdout, /id\(s\) f1 named in both --digested and --filing-failed, console not resolved/);
@@ -115,7 +115,7 @@ test('resolve-console naming a finding row in both --digested and --filing-faile
 });
 
 // #3942: a ruling id named in both --reverse-failed and --filing-failed; the CLI renders the refusal.
-test('resolve-console naming one ruling in both --reverse-failed and --filing-failed is refused by the CLI with the conflicting-failure-ids message', { skip: process.platform === 'win32' }, async () => {
+test('resolve-console naming one ruling in both --reverse-failed and --filing-failed is refused by the CLI with the conflicting-failure-ids message', { skip: STUB_SKIP }, async (t) => {
   const repo = fs.realpathSync(scratchDir('ct-resolve-console-cf-'));
   execFileSync('git', ['init', '-q'], { cwd: repo });
   const runDir = path.join(repo, '.claude-tweaks', 'pipelines', '2026-11-03T000000-cf');
@@ -124,11 +124,10 @@ test('resolve-console naming one ruling in both --reverse-failed and --filing-fa
   fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({
     commentIds: ['IC_primary'], prNumber: 42, items: [{ id: 'r1', kind: 'batch', summary: 'ruling', isRulingRow: true }],
   }));
-  const binDir = path.join(repo, 'stub-bin');
-  fs.mkdirSync(binDir);
   const comment = { id: 'IC_primary', body: '<!-- console-item: resolve -->\n- [ ] **Resolve console**\n<!-- console-item: r1 -->\n- [ ] ruling r1' };
-  fs.writeFileSync(path.join(binDir, 'gh'), `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(JSON.stringify({ comments: [comment], body: 'Fixes #42' }))});\n`, { mode: 0o755 });
-  const result = await runHook(['resolve-console', '--run', runDir, '--reverse-failed', 'r1', '--filing-failed', 'r1'], { cwd: repo, env: ghStubEnv(binDir) });
+  const stub = writeStubDir('gh', `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(JSON.stringify({ comments: [comment], body: 'Fixes #42' }))});\n`);
+  t.after(stub.remove);
+  const result = await runHook(['resolve-console', '--run', runDir, '--reverse-failed', 'r1', '--filing-failed', 'r1'], { cwd: repo, env: ghStubEnv(stub) });
   assert.equal(result.code, 1);
   assert.match(result.stdout, /id\(s\) r1 named in both --reverse-failed and --filing-failed, console not resolved/);
   assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'console.json'), 'utf8')).executedAt, undefined, 'a refused call writes nothing');
@@ -144,8 +143,7 @@ test('resolve-console accepts --reverse-failed as a declared flag', async () => 
 // The CLI forwards --reverse-failed into resolveConsoleExecution and renders its
 // not-ruling-items refusal. A stub `gh` first on PATH answers the single `pr view`
 // read; the refusal returns before any write, so no other gh call is ever made.
-// Skipped on win32: a bare executable stub is not a launchable `gh` there.
-test('resolve-console --reverse-failed on an unflagged item is refused by the CLI with the not-ruling-items message', { skip: process.platform === 'win32' }, async () => {
+test('resolve-console --reverse-failed on an unflagged item is refused by the CLI with the not-ruling-items message', { skip: STUB_SKIP }, async (t) => {
   const repo = fs.realpathSync(scratchDir('ct-resolve-console-rf-'));
   execFileSync('git', ['init', '-q'], { cwd: repo });
   const runDir = path.join(repo, '.claude-tweaks', 'pipelines', '2026-10-20T000000-rf');
@@ -154,11 +152,10 @@ test('resolve-console --reverse-failed on an unflagged item is refused by the CL
   fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({
     commentIds: ['IC_primary'], prNumber: 42, items: [{ id: '1', kind: 'batch', summary: 'fix A' }],
   }));
-  const binDir = path.join(repo, 'stub-bin');
-  fs.mkdirSync(binDir);
   const comment = { id: 'IC_primary', body: '<!-- console-item: resolve -->\n- [ ] **Resolve console**\n<!-- console-item: 1 -->\n- [ ] item 1' };
-  fs.writeFileSync(path.join(binDir, 'gh'), `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(JSON.stringify({ comments: [comment], body: 'Fixes #42' }))});\n`, { mode: 0o755 });
-  const result = await runHook(['resolve-console', '--run', runDir, '--reverse-failed', '1'], { cwd: repo, env: ghStubEnv(binDir) });
+  const stub = writeStubDir('gh', `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(JSON.stringify({ comments: [comment], body: 'Fixes #42' }))});\n`);
+  t.after(stub.remove);
+  const result = await runHook(['resolve-console', '--run', runDir, '--reverse-failed', '1'], { cwd: repo, env: ghStubEnv(stub) });
   assert.equal(result.code, 1);
   assert.match(result.stdout, /--reverse-failed id\(s\) 1 are not sdd-ruling items/);
   assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'console.json'), 'utf8')).executedAt, undefined, 'a refused call writes nothing');
@@ -196,7 +193,7 @@ test('resolve-console with a --run path that is not a real directory is rejected
 // #5376: the injected cwd resolves a relative --run, and the injected PATH is where the verb's gh child
 // finds its stub. A verb reading process.cwd() would reject the relative path; one reading process.env
 // would start the real gh, so the stub's canned comment would never be read and the refusal never reached.
-test('AC6.1: resolve-console resolves a relative --run against the injected cwd and starts gh from the injected env PATH', { skip: process.platform === 'win32' }, async () => {
+test('AC6.1: resolve-console resolves a relative --run against the injected cwd and starts gh from the injected env PATH', { skip: STUB_SKIP }, async (t) => {
   const repo = fs.realpathSync(scratchDir('ct-resolve-console-inj-'));
   execFileSync('git', ['init', '-q'], { cwd: repo });
   const runRel = path.join('.claude-tweaks', 'pipelines', '2026-11-15T000000-inj');
@@ -206,12 +203,11 @@ test('AC6.1: resolve-console resolves a relative --run against the injected cwd 
   fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({
     commentIds: ['IC_primary'], prNumber: 42, items: [{ id: '1', kind: 'batch', summary: 'fix A' }],
   }));
-  const binDir = path.join(repo, 'stub-bin');
-  fs.mkdirSync(binDir);
   const comment = { id: 'IC_primary', body: '<!-- console-item: resolve -->\n- [ ] **Resolve console**\n<!-- console-item: 1 -->\n- [ ] item 1' };
-  fs.writeFileSync(path.join(binDir, 'gh'), `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(JSON.stringify({ comments: [comment], body: 'Fixes #42' }))});\n`, { mode: 0o755 });
+  const stub = writeStubDir('gh', `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(JSON.stringify({ comments: [comment], body: 'Fixes #42' }))});\n`);
+  t.after(stub.remove);
   assert.notEqual(fs.realpathSync(process.cwd()), repo, 'the injected cwd must differ from the runner\'s');
-  const result = await runHook(['resolve-console', '--run', runRel, '--reverse-failed', '1'], { cwd: repo, env: ghStubEnv(binDir) });
+  const result = await runHook(['resolve-console', '--run', runRel, '--reverse-failed', '1'], { cwd: repo, env: ghStubEnv(stub) });
   assert.equal(result.code, 1);
   assert.match(result.stdout, /--reverse-failed id\(s\) 1 are not sdd-ruling items/);
   assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'console.json'), 'utf8')).executedAt, undefined, 'a refused call writes nothing');
@@ -222,7 +218,7 @@ test('AC6.1: resolve-console resolves a relative --run against the injected cwd 
 // injected GH_CONFIG_DIR's hosts.yml names, and the injected GH_HOST is empty, so the stub gh sees
 // GH_HOST=ghe.fixture.invalid only if the known-host lookup read the injected env; without it the runner's
 // own gh config is read, the host is unknown, and the stub is started with no GH_HOST.
-test('F2: resolve-console starts gh with the GH_HOST inferred from the injected env\'s gh config dir', { skip: process.platform === 'win32' }, async () => {
+test('F2: resolve-console starts gh with the GH_HOST inferred from the injected env\'s gh config dir', { skip: STUB_SKIP }, async (t) => {
   const host = 'ghe.fixture.invalid';
   const repo = fs.realpathSync(scratchDir('ct-resolve-console-ghhost-'));
   execFileSync('git', ['init', '-q'], { cwd: repo });
@@ -236,13 +232,12 @@ test('F2: resolve-console starts gh with the GH_HOST inferred from the injected 
   fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({
     commentIds: ['IC_primary'], prNumber: 42, items: [{ id: '1', kind: 'batch', summary: 'fix A' }],
   }));
-  const binDir = path.join(repo, 'stub-bin');
-  fs.mkdirSync(binDir);
   const hostFile = path.join(repo, 'gh-host-seen.txt');
   const comment = { id: 'IC_primary', body: '<!-- console-item: resolve -->\n- [ ] **Resolve console**\n<!-- console-item: 1 -->\n- [ ] item 1' };
-  fs.writeFileSync(path.join(binDir, 'gh'), `#!/usr/bin/env node\nrequire('fs').writeFileSync(${JSON.stringify(hostFile)}, process.env.GH_HOST || '');\nprocess.stdout.write(${JSON.stringify(JSON.stringify({ comments: [comment], body: 'Fixes #42' }))});\n`, { mode: 0o755 });
+  const stub = writeStubDir('gh', `#!/usr/bin/env node\nrequire('fs').writeFileSync(${JSON.stringify(hostFile)}, process.env.GH_HOST || '');\nprocess.stdout.write(${JSON.stringify(JSON.stringify({ comments: [comment], body: 'Fixes #42' }))});\n`);
+  t.after(stub.remove);
   const result = await runHook(['resolve-console', '--run', runDir, '--reverse-failed', '1'], {
-    cwd: repo, env: { ...ghStubEnv(binDir), GH_HOST: '', GH_CONFIG_DIR: configDir },
+    cwd: repo, env: { ...ghStubEnv(stub), GH_HOST: '', GH_CONFIG_DIR: configDir },
   });
   assert.equal(result.code, 1);
   assert.match(result.stdout, /--reverse-failed id\(s\) 1 are not sdd-ruling items/);

@@ -94,9 +94,11 @@ function remedyFiles(dir) {
   return hits.sort();
 }
 
-test('dispatch directory: only open-pr-exclusion-report.md names the remedy form', () => {
+// reporting.md's plan-review relay names the form as one of a question's two answer paths
+// (#5053 Deliverable 4); `dispatch resume` runs its own eligibility verdict before acting.
+test('dispatch directory: only open-pr-exclusion-report.md and the plan-review relay name the remedy form', () => {
   assert.ok(fs.readdirSync(DISPATCH_DIR).filter((f) => f.endsWith('.md')).length > 20, 'walk floor');
-  assert.deepStrictEqual(remedyFiles(DISPATCH_DIR), ['open-pr-exclusion-report.md']);
+  assert.deepStrictEqual(remedyFiles(DISPATCH_DIR), ['open-pr-exclusion-report.md', 'reporting.md']);
   // go-red control: the same walk over a tree where a second file also names it
   const tmp = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'resume-remedy-'));
   try {
@@ -281,7 +283,7 @@ const STOP_CLAIMS = [
   ['the temp path comes from session-tmp-resolve.js', /session-tmp-resolve\.js" DECISION_TEXT=decision-text-\{run-id\}-resume-stop\.md/],
   ['the log text is the Degrade-trace condition → fallback line', /one-line text `condition: \{the line, or the stderr with line breaks collapsed\} → fallback: nothing dispatched`/],
   ['the log cites the Degrade-trace rule', /`_shared\/auto-decision-log\.md`'s Degrade-trace rule/],
-  ['a failed close-run does not end the sequence', /a failed `close-run` \(on the exit-2 path it refuses the same dir, exit 1\) does not end the sequence — the ExitWorktree, the log and the stop still run/],
+  ['a failed close-run does not end the sequence', /a failed `close-run` \(on the exit-2 path it refuses the same dir, exit 1\) does not end the sequence — the re-add, the ExitWorktree, the log and the stop still run/],
   ['no session id fails closed on the own lock', /Without a `CLAUDE_CODE_SESSION_ID`, `record-worktree` stamps no `sessionId`, so this check refuses `live-sibling` on this session's own lock \(fails closed\)/],
   ['the printed reasons include stale-bound-run', /reason:'concurrent-resume'\|'live-sibling'\|'stale-bound-run', line\}/],
   ['the stop dispatches neither call', /then stop without dispatching either call\./],
