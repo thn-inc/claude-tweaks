@@ -43,6 +43,8 @@ a way to wrap an existing marketplace plugin instead of requiring a rewrite.
      │                     Design Doc          ◄───  brainstorm
      │                     (specify can invoke brainstorm directly on topic input)
      │
+  design ───────────────►  Design Doc          (an order: a parent with parts; saved in a session folder, specify takes its design.md)
+     │
   specify ──────────────►  Ready record(s)    (writes surface: + design-intent: + ui-stack: body metadata)
      │  calls: design shape (frontend only — appends Impeccable shape output to design doc)
      │  calls: visualize (diagram suggestion, all surfaces)
@@ -150,6 +152,11 @@ behind CLAUDE.md's `## Don'ts` rules.
 /claude-tweaks:challenge --lens=1 meal planning  # optional: human debiasing lens before brainstorming
 /superpowers:brainstorming
 /claude-tweaks:specify meal planning
+/claude-tweaks:flow 73
+
+# An order (a parent with parts) — design session first
+/claude-tweaks:design meal planning
+/claude-tweaks:specify docs/superpowers/specs/{date}-meal-planning/design.md
 /claude-tweaks:flow 73
 
 # Fast — spec already exists
