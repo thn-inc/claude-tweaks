@@ -7,7 +7,7 @@ const os = require('os');
 const path = require('path');
 const { readText } = require('../../helpers/read-skill');
 const { chmodDenialSkip } = require('../../helpers/root');
-const { readBlocks, composeBrief } = require('../../../plugin/bin/lib/design-session/brief');
+const { readBlocks, composeBrief, withoutDecisions } = require('../../../plugin/bin/lib/design-session/brief');
 const { PERSPECTIVES } = require('../../../plugin/bin/lib/design-session/notes');
 
 const BRIEFS_PATH = path.resolve(__dirname, '..', '..', '..', 'plugin', 'skills', 'design', 'reader-briefs.md');
@@ -89,6 +89,38 @@ test('builder brief drops the decisions list', (t) => {
   const pm = compose(folder, 'pre-mortem');
   assert.ok(pm.text.startsWith(piece('pre-mortem')));
   assert.ok(!pm.text.includes(DECISIONS_SENTINEL));
+});
+
+test('the pre-mortem brief holds design.md without decisions, then the storyboard; the builder brief has no storyboard', (t) => {
+  const folder = folderWith(t, {});
+  const pm = compose(folder, 'pre-mortem');
+  assert.strictEqual(pm.ok, true, JSON.stringify(pm));
+  assert.strictEqual(pm.text, [piece('pre-mortem'), withoutDecisions(design()), BOARD_TEXT].join('\n\n'));
+  const builder = compose(folder, 'builder');
+  assert.strictEqual(builder.text, [piece('builder'), withoutDecisions(design())].join('\n\n'));
+  assert.ok(!builder.text.includes(BOARD_TEXT));
+
+  const png = folderWith(t, { 'design.md': design({ file: 'board.png' }), 'board.png': 'PNGDATA' });
+  const named = compose(png, 'pre-mortem');
+  assert.strictEqual(named.ok, true, JSON.stringify(named));
+  assert.ok(named.text.endsWith(`Storyboard file: ${path.join(png, 'board.png')}\nRead this file.`));
+  assert.ok(!named.text.includes('PNGDATA'));
+});
+
+test('the pre-mortem brief refuses a missing or symlinked storyboard, as a perspective brief does', (t) => {
+  assert.strictEqual(compose(folderWith(t, { 'storyboard.md': null }), 'pre-mortem').reason, 'no-storyboard');
+  assert.strictEqual(compose(folderWith(t, { 'design.md': design({ board: false }) }), 'pre-mortem').reason, 'no-storyboard');
+  const outside = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'design-pm-')), 'x.md');
+  t.after(() => fs.rmSync(path.dirname(outside), { recursive: true, force: true }));
+  fs.writeFileSync(outside, 'OUTSIDE-CONTENT');
+  const linked = folderWith(t, {});
+  fs.rmSync(path.join(linked, 'storyboard.md'));
+  fs.symlinkSync(outside, path.join(linked, 'storyboard.md'));
+  const r = compose(linked, 'pre-mortem');
+  assert.strictEqual(r.reason, 'symlink');
+  assert.ok(!JSON.stringify(r).includes('OUTSIDE-CONTENT'));
+  // the builder never reads the storyboard, so a missing one does not refuse it
+  assert.strictEqual(compose(folderWith(t, { 'storyboard.md': null }), 'builder').ok, true);
 });
 
 test('a ## Decisions line inside a fence does not end the removal early or start it', (t) => {

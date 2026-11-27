@@ -146,6 +146,17 @@ function storyboardPiece(folder, file, fsImpl) {
   return { state: 'ok', text: `Storyboard file: ${abs}\nRead this file.` };
 }
 
+// The storyboard piece of the file design.md ## Storyboard names: inline text, or
+// its absolute path with "Read this file". -> { ok: true, text } | a refusal.
+function namedStoryboard(folder, design, fsImpl) {
+  const file = sectionField(design, 'Storyboard', 'File');
+  if (!file || path.basename(file) !== file) return refuse('no-storyboard', 'design.md ## Storyboard names no File in the folder');
+  const boardPiece = storyboardPiece(folder, file, fsImpl);
+  if (boardPiece.state === 'symlink') return symlinkRefusal(file);
+  if (boardPiece.state !== 'ok') return refuse('no-storyboard', `${file} is missing or not a regular file`);
+  return { ok: true, text: boardPiece.text };
+}
+
 // -> { ok: true, text } | { ok: false, reason, detail }
 function composeBrief({ folder, reader, round, briefsText }, fsImpl = fs) {
   const isPerspective = PERSPECTIVES.includes(reader);
@@ -182,7 +193,13 @@ function composeBrief({ folder, reader, round, briefsText }, fsImpl = fs) {
   if (designFile.state === 'symlink') return symlinkRefusal('design.md');
   if (designFile.state !== 'ok') return refuse('no-frame', 'design.md is missing or not a regular file');
   const design = designFile.text;
-  if (!isPerspective) return { ok: true, text: [blocks.get(reader), withoutDecisions(design)].join('\n\n') };
+  if (reader === 'builder') return { ok: true, text: [blocks.get(reader), withoutDecisions(design)].join('\n\n') };
+  if (!isPerspective) {
+    // The pre-mortem reader also sees the storyboard; the builder plans from design.md alone.
+    const b = namedStoryboard(folder, design, fsImpl);
+    if (!b.ok) return b;
+    return { ok: true, text: [blocks.get(reader), withoutDecisions(design), b.text].join('\n\n') };
+  }
 
   const frame = sectionLines(design, 'Frame');
   // The section's own `Status:` line is bookkeeping, not frame.
@@ -192,11 +209,8 @@ function composeBrief({ folder, reader, round, briefsText }, fsImpl = fs) {
   const frameBody = frameLines.join('\n').trim();
   if (!frameBody) return refuse('no-frame', 'design.md has no ## Frame section with content');
 
-  const file = sectionField(design, 'Storyboard', 'File');
-  if (!file || path.basename(file) !== file) return refuse('no-storyboard', 'design.md ## Storyboard names no File in the folder');
-  const boardPiece = storyboardPiece(folder, file, fsImpl);
-  if (boardPiece.state === 'symlink') return symlinkRefusal(file);
-  if (boardPiece.state !== 'ok') return refuse('no-storyboard', `${file} is missing or not a regular file`);
+  const boardPiece = namedStoryboard(folder, design, fsImpl);
+  if (!boardPiece.ok) return boardPiece;
   const board = boardPiece.text;
   const boardRound = Number(sectionField(design, 'Storyboard', 'Round'));
   if (!(boardRound >= round)) {

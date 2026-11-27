@@ -20,7 +20,9 @@ Resolve the reader's tier and dispatch it per SKILL.md's `## Model` (a group of 
 
 ## 2. Read the reply
 
-A valid reply is guess blocks (`GUESS:` / `WHERE:` / `NEEDED-BECAUSE:`) or the literal `NO GUESSES`, with `STATUS: {WORD}` as its last non-empty line. A malformed reply is re-prompted once with `SendMessage` to the same agent, using `_shared/subagent-output-contract.md`'s Re-prompt on violation text and repeating the brief's output format. Still malformed → tell the maintainer the reply was unusable and ask whether to run one more reader (one more resolution of the 22), recommending yes, since the check has no answer without it.
+A valid reply is guess blocks (`GUESS:` / `WHERE:` / `NEEDED-BECAUSE:`) or the literal `NO GUESSES`, with `STATUS: {WORD}` as its last non-empty line. A malformed reply is re-prompted once with `SendMessage` to the same agent, using `_shared/subagent-output-contract.md`'s Re-prompt on violation text and repeating the brief's output format. Still malformed → tell the maintainer the reply was unusable, then read how many of the 22 are left: 22 minus the line count of `{folder}/frontier-exception-tally.log`. Step 7 needs 1 left.
+- 1 or more left → ask whether to run one more reader (one more resolution of the 22), recommending yes, since the check has no answer without it.
+- None left → do not re-dispatch: a resolution would step down on `limit`. Append the gap to `## Decisions` (`- {date} — builder check not answered: the reader's reply was unusable and the folder's 22 readers are used — by: maintainer`), record it under `## Builder check` as a plain line saying so, set `Status: done`, then run `status` and render SKILL.md's `## Next Actions`.
 
 ## 3. Answer each guess
 

@@ -8,19 +8,21 @@ One fresh reader is asked: it is three months later and this failed; why? Each a
 
 ## 1. Brief, resolve, dispatch
 
-Add the section to `{folder}/design.md`, after `## Approaches`, with `Status: in-progress`. Compose the brief:
+Add the section to `{folder}/design.md`, after `## Approaches`, with `Status: in-progress`. Compose the brief — `design.md` without its `## Decisions` list, followed by the storyboard (its text when it is `.md`, `.txt` or `.html`, else its absolute path with `Read this file`):
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/design-session.js" brief --folder "{folder}" --reader pre-mortem
 ```
 
-Exit 1 → stop and show the reason its JSON names (`pending-outcomes` in the last notes round, `no-frame`, or `symlink` — a session file is a symlink, so stop and tell the maintainer). Exit 2 → stop and show stderr.
+Exit 1 → stop and show the reason its JSON names (`pending-outcomes` in the last notes round, `no-frame`, `no-storyboard`, or `symlink` — a session file is a symlink, so stop and tell the maintainer). Exit 2 → stop and show stderr.
 
 Resolve the reader's tier and dispatch it per SKILL.md's `## Model` (a group of one). Its prompt is exactly the brief's stdout followed by the resolver's `effortLine` when it is non-empty — the brief is the reader's whole prompt; nothing from the conversation is added.
 
 ## 2. Read the reply
 
-A valid reply is failure blocks (`FAILURE:` / `LIKELIHOOD: high | medium | low` / `EVIDENCE:`) or the literal `NO FAILURES`, with `STATUS: {WORD}` as its last non-empty line. A malformed reply is re-prompted once with `SendMessage` to the same agent, using `_shared/subagent-output-contract.md`'s Re-prompt on violation text and repeating the brief's output format. Still malformed → tell the maintainer the reply was unusable and ask whether to run one more reader (one more resolution of the 22), recommending yes, since the step has no answer without it.
+A valid reply is failure blocks (`FAILURE:` / `LIKELIHOOD: high | medium | low` / `EVIDENCE:`) or the literal `NO FAILURES`, with `STATUS: {WORD}` as its last non-empty line. A malformed reply is re-prompted once with `SendMessage` to the same agent, using `_shared/subagent-output-contract.md`'s Re-prompt on violation text and repeating the brief's output format. Still malformed → tell the maintainer the reply was unusable, then read how many of the 22 are left: 22 minus the line count of `{folder}/frontier-exception-tally.log`. Step 6 needs 2 left, the extra reader plus step 7's builder.
+- 2 or more left → ask whether to run one more reader (one more resolution of the 22), recommending yes, since the step has no answer without it.
+- Fewer than 2 left → ask whether to run one more reader, recommending no, since another reader now would leave step 7 no reader and the session could never finish. On no, append the gap to `## Decisions` (`- {date} — pre-mortem not answered: the reader's reply was unusable and the folder's readers are kept for the builder check — by: maintainer`), record it under `## Pre-mortem` as a plain line saying so, set `Status: done`, then run `status` and continue.
 
 ## 3. Decide each failure
 

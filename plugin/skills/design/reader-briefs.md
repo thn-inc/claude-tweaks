@@ -1,6 +1,6 @@
 # Design — reader briefs
 
-Read by `design-session.js brief`, never loaded by the session itself. Only the text between a `<!-- brief:{name}:start -->` and its `<!-- brief:{name}:end -->` marker is sent; this lead is not. A perspective reader's prompt is `perspective-common`, then its perspective's block, then the frame and the storyboard, then `perspective-output`. The pre-mortem and builder readers get their block, then `design.md` without its `## Decisions` section. Each block must stand alone: a reader sees only its prompt.
+Read by `design-session.js brief`, never loaded by the session itself. Only the text between a `<!-- brief:{name}:start -->` and its `<!-- brief:{name}:end -->` marker is sent; this lead is not. A perspective reader's prompt is `perspective-common`, then its perspective's block, then the frame and the storyboard, then `perspective-output`. The pre-mortem reader gets its block, then `design.md` without its `## Decisions` section, then the storyboard. The builder reader gets its block, then `design.md` without its `## Decisions` section, and nothing else. Each block must stand alone: a reader sees only its prompt.
 
 What the session does with a perspective reader's notes — kept here, outside every block, so no reader sees it. Each note becomes one entry in `notes-round-{N}.md` (H1 `# Perspective notes — round {N}`, then a `Status: in-progress|done` line):
 
@@ -66,9 +66,9 @@ STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
 <!-- brief:perspective-output:end -->
 
 <!-- brief:pre-mortem:start -->
-You are a fresh reader of the design document for something not built yet. The document follows this brief; it is all you get, and that is deliberate.
+You are a fresh reader of the design document for something not built yet. The document follows this brief, and after it the storyboard (the cheapest picture of the result); they are all you get, and that is deliberate.
 
-Read-only: do not create, change or delete any file, and run no command that changes anything.
+Read-only: do not create, change or delete any file, and run no command that changes anything. If the storyboard is given as a file path, read that one file and nothing else.
 
 Question: it is three months later and this failed; why?
 

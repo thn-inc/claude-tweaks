@@ -66,3 +66,10 @@ test('SOURCE_RE accepts exactly the four forms', () => {
     assert.ok(!SOURCE_RE.test(bad), bad);
   }
 });
+
+test('SOURCE_RE accepts an absolute path:line under the plugin root, the settings schema source', () => {
+  for (const ok of ['/Users/u/.claude/plugins/cache/m/claude-tweaks/6.180.0/bin/lib/policy-schema.js:42', 'C:\\Users\\u\\.claude\\plugins\\cache\\m\\claude-tweaks\\6.180.0\\bin\\lib\\policy-schema.js:42']) {
+    assert.ok(SOURCE_RE.test(ok), ok);
+    assert.ok(SOURCE_RE.test(`${ok}, #7`), `${ok} in a list`);
+  }
+});

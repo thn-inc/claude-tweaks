@@ -243,7 +243,7 @@ test('finish-round when a perspective is missing or a heading is malformed', (t)
   assert.deepStrictEqual(triple(readStatus(ok)), [4, 1, 'close-perspectives']);
 });
 
-const THROUGH_PERSPECTIVES =[section('Frame', 'done'), storyboard('done', 1), section('Perspectives', 'done')];
+const THROUGH_PERSPECTIVES = [section('Frame', 'done'), storyboard('done', 1), section('Perspectives', 'done')];
 const BASE = { 'evidence.md': EVIDENCE, 'storyboard.md': 'x', 'notes-round-1.md': notes(1, 'done', ['minor']) };
 
 test('half-written section resumes that step', (t) => {

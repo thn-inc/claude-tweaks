@@ -38,7 +38,7 @@ Return ONLY pairs of lines, one pair per finding, most relevant first, at most 1
 CLAIM: {one fact you found, stated so it can be checked}
 SOURCE: {#N | sha | path:line | run folder}
 
-SOURCE is one of: an issue or pull request as #N; a commit as its sha (7 to 40 hex characters); a file and line as a repository-relative path:line; a run folder as .claude-tweaks/pipelines/{folder name}. Several sources for one claim are joined by ", ". A claim you cannot give such a source for is not reported.
+SOURCE is one of: an issue or pull request as #N; a commit as its sha (7 to 40 hex characters); a file and line as a repository-relative path:line, or, for a file under ${CLAUDE_PLUGIN_ROOT}, as its absolute path:line; a run folder as .claude-tweaks/pipelines/{folder name}. Several sources for one claim are joined by ", ". A claim you cannot give such a source for is not reported.
 
 If your area holds nothing about the topic, return the literal text NOTHING FOUND and, on the next line, the search you ran.
 
@@ -54,7 +54,7 @@ The source check below only tests a source's shape — any word of seven or more
 
 - `#N` — `gh issue view {N} --json number,title` exits 0
 - a sha — `git cat-file -t {sha}` prints `commit`
-- `path:line` — the file exists under `{repo root}` and has that line; read it
+- `path:line` — the file exists under `{repo root}` and has that line; read it. An absolute path is checked the same way under the absolute plugin root instead, and counts only there: the settings area's schema lives under `${CLAUDE_PLUGIN_ROOT}/bin/lib/` outside this plugin's own repository
 - a run folder — the directory exists under the main checkout's `.claude-tweaks/pipelines/`
 
 Drop a claim whose source fails, or find it a real one. Merge claims two searchers both made.
@@ -72,13 +72,13 @@ Status: in-progress
 
 No area labels, headings or other lines go into the file. An area whose search found nothing, and a searcher that could not reach its area, are not written there — an absence has no source; they are said in the conversation when the file is shown.
 
-When no searcher found anything, the check needs one claim, so write exactly one bullet naming only the areas actually searched — those whose searcher returned `NOTHING FOUND` — with `{sha}` the full `git -C "{repo root}" rev-parse HEAD` of the checkout searched:
+When no claim survives section 2 — nothing was found, every claim was dropped, or a resumed search again found nothing — the check needs one claim, so write the zero-claim bullet below, with `{sha}` the full `git -C "{repo root}" rev-parse HEAD` of the checkout searched:
 
 ```
 - Nothing on this topic was found in {the searched areas, from: issues, merges of the last six weeks, run data, the code, earlier designs, the settings file and schema} — source: {sha}
 ```
 
-An area whose searcher was `BLOCKED` or could not reach it is never named in the bullet; it is said in the conversation as unreached. When no area was searched at all, step 1 cannot finish: stop and tell the maintainer which searchers failed and why. This bullet exists only while there is no other claim: when a later search or a resumed session's merge adds any real claim, drop it.
+An area counts as searched when its searcher replied (claims, `NOTHING FOUND`, or a malformed reply used as is); the zero-claim bullet names the searched areas with no surviving claim; an area is unreached only when its searcher was `BLOCKED` or never replied; on every write the file holds at most one zero-claim bullet, rewritten from the current results. An unreached area is never named in the bullet; it is said in the conversation as unreached. When no area was searched at all, step 1 cannot finish: stop and tell the maintainer which searchers failed and why. The bullet exists only while there is no other claim: when a later search or a resumed session's merge adds any real claim, drop it.
 
 Then run:
 

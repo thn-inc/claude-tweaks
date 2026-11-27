@@ -459,3 +459,81 @@ test('AC5: the dispatch steps themselves say resolve first and dispatch only whe
     assertEachPatternGoesRed(text, facts, missingFactsOf(facts));
   }
 });
+
+// ---------------------------------------------------------------------------------------------
+// final-review fix wave: the 22-reader limit, the zero-claim ruling, plugin-root sources,
+// the legacy worktree key, and what the pre-mortem reader receives
+
+// Pins `facts` in `text` and proves each goes red with its own message.
+function pinFacts(text, facts) {
+  assert.deepEqual(missingFactsOf(facts)(text), []);
+  assertEachPatternGoesRed(text, facts, missingFactsOf(facts));
+}
+
+const RESUME_PROMISE = /picks it up once the reason clears/;
+const assertNoResumePromise = (bullet) => assert.ok(!RESUME_PROMISE.test(bullet), 'limit bullet promises a resume');
+
+test('a limit step-down says the count never resets and offers an honest handoff', () => {
+  const model = sectionOf(SKILL, '## Model');
+  const limit = lineStartingWith(model, '   - `limit` —');
+  assert.notEqual(limit, '', '`limit` bullet missing');
+  pinFacts(limit, [
+    [/The count belongs to this design folder and never resets: waiting, resuming or rerunning never clears it\./, 'limit: count never resets'],
+    [/`Record the gap and end at the handoff \(Recommended\)` — append to `## Decisions` which readers did not run/, 'limit: recommended option records the gap'],
+    [/then render `## Next Actions` with the design as it stands/, 'limit: ends at the handoff'],
+    [/or `Stop here` — the session ends with nothing recorded/, 'limit: stop option'],
+    [/Recommend recording the gap, because stopping leaves a design no session can finish/, 'limit: recommendation and its reason'],
+  ]);
+  // the resume promise belongs only to the other reasons
+  assertNoResumePromise(limit);
+  assert.throws(() => assertNoResumePromise(`${limit} It picks it up once the reason clears.`), { message: 'limit bullet promises a resume' });
+  const other = lineStartingWith(model, '   - Any other reason.');
+  assert.notEqual(other, '', 'other-reason bullet missing');
+  pinFacts(other, [[/`Fix the cause and retry` — the maintainer clears the reason \(for `policy`, `stance` or `ceiling`, the setting that caused it\)/, 'other reasons: fix and retry']]);
+  pinFacts(sectionOf(SKILL, '## Next Actions'), [[/A `limit` gap recorded in `## Decisions` is not a stop: it renders both lines\./, 'Next Actions: a limit gap renders both lines']]);
+});
+
+test('steps 6 and 7 read what is left of the 22 before recommending another reader', () => {
+  const TALLY = /read how many of the 22 are left: 22 minus the line count of `\{folder\}\/frontier-exception-tally\.log`\./;
+  pinFacts(sectionOf(STEP6, '## 2. Read the reply'), [
+    [TALLY, 'step-6 reads the tally'],
+    [/Step 6 needs 2 left, the extra reader plus step 7's builder\./, 'step-6 needs 2 left'],
+    [/- 2 or more left → ask whether to run one more reader \(one more resolution of the 22\), recommending yes/, 'step-6 enough left: recommend yes'],
+    [/- Fewer than 2 left → ask whether to run one more reader, recommending no/, 'step-6 too few left: recommend no'],
+    [/append the gap to `## Decisions` \(`- \{date\} — pre-mortem not answered:/, 'step-6 records the gap'],
+  ]);
+  pinFacts(sectionOf(STEP7, '## 2. Read the reply'), [
+    [TALLY, 'step-7 reads the tally'],
+    [/Step 7 needs 1 left\./, 'step-7 needs 1 left'],
+    [/- 1 or more left → ask whether to run one more reader \(one more resolution of the 22\), recommending yes/, 'step-7 enough left: recommend yes'],
+    [/- None left → do not re-dispatch/, 'step-7 none left: no re-dispatch'],
+    [/Append the gap to `## Decisions` \(`- \{date\} — builder check not answered:/, 'step-7 records the gap'],
+  ]);
+});
+
+test('step 1: the zero-claim ruling, and plugin-root sources for the settings schema', () => {
+  pinFacts(sectionOf(STEP1, '## 3. Write, check, show'), [
+    [/When no claim survives section 2 — nothing was found, every claim was dropped, or a resumed search again found nothing — /, 'zero-claim: when no claim survives'],
+    [/An area counts as searched when its searcher replied \(claims, `NOTHING FOUND`, or a malformed reply used as is\);/, 'zero-claim: searched means replied'],
+    [/the zero-claim bullet names the searched areas with no surviving claim;/, 'zero-claim: names searched areas'],
+    [/an area is unreached only when its searcher was `BLOCKED` or never replied;/, 'zero-claim: unreached'],
+    [/on every write the file holds at most one zero-claim bullet, rewritten from the current results\./, 'zero-claim: at most one, rewritten'],
+  ]);
+  pinFacts(STEP1, [
+    [/a file and line as a repository-relative path:line, or, for a file under \$\{CLAUDE_PLUGIN_ROOT\}, as its absolute path:line;/, 'searcher may cite a plugin-root absolute path'],
+    [/An absolute path is checked the same way under the absolute plugin root instead, and counts only there/, 'source check: absolute path under the plugin root'],
+  ]);
+});
+
+test('the named-repository worktree gate reads the legacy key and fails closed', () => {
+  pinFacts(sectionOf(SKILL, '## Session folder and resume'), [
+    [/its `worktree-always:` line, or when that line is absent its legacy `worktree\.always:` line/, 'gate reads the legacy key'],
+    [/a value other than `true` or `false` counts as `true`/, 'gate: unparseable is true'],
+  ]);
+});
+
+test('the pre-mortem reader gets the storyboard; the builder gets design.md alone', () => {
+  pinFacts(sectionOf(STEP6, '## 1. Brief, resolve, dispatch'), [[/Compose the brief — `design\.md` without its `## Decisions` list, followed by the storyboard/, 'step-6 brief carries the storyboard']]);
+  pinFacts(sectionOf(STEP7, '## 1. Brief, resolve, dispatch'), [[/Compose the brief — `design\.md` without its `## Decisions` list, so the reader plans from the design/, 'step-7 brief is design.md alone']]);
+  pinFacts(readBlocks(BRIEFS).get('pre-mortem'), [[/The document follows this brief, and after it the storyboard/, 'pre-mortem block names the storyboard']]);
+});
