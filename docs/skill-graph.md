@@ -256,7 +256,7 @@ is `plugin/skills/_shared/integration-branch.md`. Paths outside the payload (`do
 | `/specify` | The session ends by naming `/claude-tweaks:specify` on its `design.md`, which specify accepts as a design-doc path and decomposes. `/design` never starts a build. |
 | `/design-wrapper` | Step 3 invokes `shape` (`/claude-tweaks:design-wrapper shape --source design`) for a screens-based storyboard; `--source design` marks it caller-invoked so the wrapper renders no Next Actions. Skipped output falls back to a text storyboard. |
 | `/brainstorming` | `/superpowers:brainstorming` stays the route for a single small fix; `/design` is for an order (a parent with parts). |
-| `/help` | Lists `/design` in the component skills table and the plan-phase chain. |
+| `/help` | Lists `/design` in the reference card's Lifecycle table and the plan-phase chain. |
 | `_shared/frontier-exception.md` | The readers' only tier source: `plugin/skills/design/SKILL.md` `## Model` (and steps 4, 6 and 7) resolve the `design-reader` exception through it. |
 
 ## design-wrapper
