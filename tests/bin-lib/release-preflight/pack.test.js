@@ -464,6 +464,15 @@ test('a dependency that fails is named in the dependent field\'s error, never re
   for (const k of ['lastTag', 'unreleased', 'proposedVersion']) assert.match(broken[k].error, /^history unresolved: .*not a git repository/, k);
 });
 
+test('ciTip (pr-first): a cancelled, action_required or stale tip run is pending, never failure (#3467 family rule)', async () => {
+  const runs = { total_count: 4, check_runs: [{ status: 'completed', conclusion: 'success', head_sha: SHA }, { status: 'completed', conclusion: 'cancelled' }, { status: 'completed', conclusion: 'action_required' }, { status: 'completed', conclusion: 'stale' }] };
+  const r = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ checkRuns: runs }).deps });
+  assert.equal(r.ciTip.value.state, 'pending');
+  assert.deepEqual([r.ciTip.value.success, r.ciTip.value.failure, r.ciTip.value.pending], [1, 0, 3]);
+  const red = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ checkRuns: { total_count: 2, check_runs: [{ status: 'completed', conclusion: 'cancelled', head_sha: SHA }, { status: 'completed', conclusion: 'failure' }] } }).deps });
+  assert.equal(red.ciTip.value.state, 'failure', 'a failing run still reads failure');
+});
+
 test('ciTip (pr-first): the branch is asked by name, paginated, with local/remote skew recorded (ruling 11); AC 3: a gh failure degrades ciTip and releasePr alone', async () => {
   const runs = { total_count: 3, check_runs: [{ status: 'completed', conclusion: 'success', head_sha: SHA }, { status: 'completed', conclusion: 'failure' }, { status: 'in_progress', conclusion: null }] };
   const fresh = fakeDeps({ checkRuns: runs });

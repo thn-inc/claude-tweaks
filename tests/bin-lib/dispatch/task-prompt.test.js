@@ -123,10 +123,16 @@ test('resume prefixes RESUME_PR and appends the resume context', () => {
     assert.ok(renderResumeContext({ ...VERDICT, context }).endsWith('last logged phase: none recorded; open defects: none recorded'));
   }
   assert.throws(() => render({ call: 'second', resume: VERDICT }), /first call only/);
-  assert.throws(() => render({ headless: true, resume: VERDICT }), /resume/);
   assert.ok(render({ resume: VERDICT, stepToken: 'test' }).includes('test auto'));
   assert.throws(() => renderResumeContext({ ...VERDICT, prUrl: '' }));
   assert.throws(() => renderResumeContext({ ...VERDICT, priorRunId: undefined }));
+});
+
+test('headless resume carries both prefixes on both first-call lines', () => {
+  const out = render({ headless: true, resume: VERDICT });
+  assert.strictEqual(out.split('" DISPATCH_HEADLESS=1 RESUME_PR="https://github.com/o/r/pull/9" /claude-tweaks:flow').length - 1, 2);
+  assert.ok(out.includes(renderResumeContext(VERDICT)));
+  assert.throws(() => render({ call: 'second', headless: true, resume: VERDICT }), /first call only/);
 });
 
 test('renders a $& path literally', () => {

@@ -163,15 +163,20 @@ test('AC7.1 go-red: each anchor set fails on the pre-change boundary, and a one-
   assert.ok(!promptMatches(mutated));
 });
 
-// The dispatched-call bullet's answer instruction; origin/main asked for any body edit.
-const ANSWER_INSTRUCTION = "the instruction to answer each question by adding a `**Decision**` paragraph (or an Acceptance Criterion) to the record's body";
-const FROZEN_ANSWER_INSTRUCTION = "then the instruction to answer by editing the record's body — the next build materializes the body, not comments.";
+// The dispatched-call question comment's closing instruction (#5053: an `/answer` reply or a body
+// `**Decision**` paragraph). The frozen controls are the two instructions it replaced: origin/main
+// before #4958 asked for any body edit; #4958 asked for a body `**Decision**` paragraph only.
+const ANSWER_INSTRUCTION = "The closing instruction tells the human to answer each question in one of two ways: reply with a comment whose first line starts `/answer`, and the next bare `/claude-tweaks:dispatch` folds the reply into the record's body and resumes the build; or add a `**Decision**` paragraph (or an Acceptance Criterion) to the record's body and run `/claude-tweaks:dispatch resume #{n}`.";
+const FROZEN_ANSWER_INSTRUCTIONS = [
+  "then the instruction to answer by editing the record's body — the next build materializes the body, not comments.",
+  "then the instruction to answer each question by adding a `**Decision**` paragraph (or an Acceptance Criterion) to the record's body — the next build materializes the body, not comments.",
+];
 const asksForRecordedDecision = (text) => norm(text).includes(ANSWER_INSTRUCTION);
 
-test('the dispatched question comment asks for the answer as a recorded decision', () => {
+test('the dispatched question comment offers the /answer reply and a recorded decision', () => {
   assert.ok(asksForRecordedDecision(subsection(REVIEW, NEEDS_HUMAN)));
-  // go-red: the same check fails on the pre-change instruction.
-  assert.ok(!asksForRecordedDecision(FROZEN_ANSWER_INSTRUCTION));
+  // go-red: the same check fails on each pre-change instruction.
+  for (const frozen of FROZEN_ANSWER_INSTRUCTIONS) assert.ok(!asksForRecordedDecision(frozen));
 });
 
 test('plan-review.md stays within the rail', () => {

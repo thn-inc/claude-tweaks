@@ -16,6 +16,7 @@ const { readConfig, readBumpFlags, resolveTargets, versionAtRef, MANIFEST_FILE }
 const { compareVersions, nextVersion } = require('../changelog.js');
 const { splitNul } = require('../git-z');
 const { resolvePolicyConfig } = require('../policy-schema.js');
+const { HELD_CONCLUSIONS } = require('../pr-checks/classify.js');
 const { wrapProbe, withTimeout } = require('../wrap-up/pack.js');
 const { ghOptions } = require('../repo-resolve.js');
 const { execTimeoutMsFor } = require('../shared-primitives');
@@ -382,7 +383,8 @@ function prepare({ deps, rootArg, runDir, cwd }) {
       const list = runs.check_runs || [];
       const counts = { total: runs.total_count || 0, success: 0, failure: 0, pending: 0 };
       for (const r of list) {
-        if (r.status !== 'completed') counts.pending += 1;
+        // A held conclusion (cancelled, action_required, stale) verified nothing: the remedy is a rerun, so it reads pending, never failure (#3467's family rule).
+        if (r.status !== 'completed' || HELD_CONCLUSIONS.includes(String(r.conclusion || '').toUpperCase())) counts.pending += 1;
         else if (r.conclusion === 'success' || r.conclusion === 'skipped' || r.conclusion === 'neutral') counts.success += 1;
         else counts.failure += 1;
       }
