@@ -6,7 +6,7 @@ Find what already exists before any idea is discussed. Nothing is proposed — n
 
 ## 1. Search
 
-`action: 'continue'` with an `evidence.md` already present: read it. When this session still holds every searcher's reply, go to section 3. Otherwise the file does not say which areas were searched, so run every searcher again and merge their claims with the file's, dropping duplicates. Either way the file is shown (section 3) before it is marked done.
+`action: 'continue'` with an `evidence.md` already present: read it. When this session still holds every searcher's reply, go to section 2 — or to section 3 when those replies' sources were already checked this session. Otherwise the file does not say which areas were searched, so run every searcher again and merge their claims with the file's, dropping duplicates. Either way the file is shown (section 3) before it is marked done.
 
 > **Parallel execution:** Dispatch one searcher per area below as parallel Task agents — each runs independently and returns claim/source pairs. Assemble results after all agents complete.
 
@@ -70,7 +70,15 @@ Status: in-progress
 - {claim} — source: {source}
 ```
 
-No area labels, headings or other lines go into the file. An area whose search found nothing, and a searcher that could not reach its area, are not written there — an absence has no source; they are said in the conversation when the file is shown. Then run:
+No area labels, headings or other lines go into the file. An area whose search found nothing, and a searcher that could not reach its area, are not written there — an absence has no source; they are said in the conversation when the file is shown.
+
+When no searcher found anything, the check needs one claim, so write exactly this one bullet, with `{sha}` the full `git -C "{repo root}" rev-parse HEAD` of the checkout searched:
+
+```
+- Nothing on this topic was found in issues, merges of the last six weeks, run data, the code, earlier designs, or the settings file and schema — source: {sha}
+```
+
+Then run:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/design-session.js" check-evidence --folder "{folder}"
