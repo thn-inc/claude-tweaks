@@ -10,9 +10,8 @@ integration-model: pr-first
 housekeeping-auto-merge: true
 express-lane: true
 express-driver: on
-# express-driver-runner (#6120): a Dispatch script job runs drive.js --budget here (docs/driver.md "Running it as a script job"), so the session drain leaves driver-routable records to it (with no running job, those records stay unbuilt).
-# Revert signal: guard 1 or guard 3 regresses against the design's baseline, or two firings in a row end worker-stop — disable the job and set this back to session.
-express-driver-runner: script
+# express-driver-runner (#6120): the driver trial is parked (Factory v7 answers its question from the replay set); `session` keeps driver-routable records with the session drain. To resume the trial, set this to `script` and run the job per docs/driver.md "Running it as a script job".
+express-driver-runner: session
 # implementer-tier (#5995): record runs a size:low record with one or two Key Files on Fast, every other record on Standard.
 # Revert signal: over the first 20 implementation tasks on Fast, a share needing a fix round higher than Standard's over
 # the same runs (tools/pipeline-cost-report.js's review-results-by-role-and-tier table) means set this back to lane.
@@ -21,6 +20,9 @@ project-maturity: established
 # release-tip-moves (#6188): sibling dispatch sessions merge while a release is reviewed, so the default of 2 held v6.178.0 on 2026-11-23.
 # Revert signal: delete this row once #6187 (release from a fixed reviewed commit) lands.
 release-tip-moves: 6
+# planning-decisions (#6350): plan review asks only design-level, hard-to-undo and contradiction questions and settles every other gap by plugin/skills/_shared/planning-decisions.md, listed in the acceptance packet.
+# Revert signal: delete this row if the two-week share of dispatched builds stopping at plan review (counted on #6350's parent) does not fall below 12 of 15, or a settled call is overturned at acceptance.
+planning-decisions: asked-classes
 # release-hook: <command run after the local engine tags a release — local-merge only; under pr-first the release: published workflow is the hook — it needs a PAT, GITHUB_TOKEN-created releases do not trigger it>
 # release-train: false
 specify-decomposition-log: true
