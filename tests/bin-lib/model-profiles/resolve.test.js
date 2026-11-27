@@ -296,3 +296,82 @@ test('diff-facts ceiling defers to an explicit cliOverride (cliOverride already 
   assert.strictEqual(r.model, 'opus');
   assert.strictEqual(r.source, 'cli');
 });
+
+// ---- design-reader frontier exception (#6351) ----
+const DR = { exception: 'design-reader' };
+const { STEP_DOWN_REASONS } = require('../../../plugin/bin/lib/model-profiles/profiles');
+
+test('AC1.1: under design-reader, resolutions 1 to 22 return fable with source exception:design-reader', () => {
+  for (let used = 0; used < 22; used += 1) {
+    const r = resolve('frontier', { ...DR, exceptionUsed: used });
+    assert.strictEqual(r.model, 'fable');
+    assert.strictEqual(r.source, 'exception:design-reader');
+    assert.strictEqual(r.effort, 'high');
+  }
+});
+
+test('AC1.2: under design-reader, resolution 23 returns stepDown limit', () => {
+  assert.deepStrictEqual(resolve('frontier', { ...DR, exceptionUsed: 22 }), { stepDown: { reason: 'limit' } });
+});
+
+const GATES = {
+  policy: { policy: { 'model-profiles': { frontier: { model: 'opus' } } } },
+  stance: { stance: 'economy' },
+  ceiling: { policy: { 'model-ceiling': 'capable' } },
+  limit: { exceptionUsed: 22 },
+  'session-failure': { failedModels: new Set(['fable']) },
+};
+function mergeGates(...names) {
+  const out = {};
+  for (const n of names) {
+    const g = GATES[n];
+    if (g.policy) out.policy = { ...(out.policy || {}), ...g.policy };
+    for (const k of Object.keys(g)) if (k !== 'policy') out[k] = g[k];
+  }
+  return out;
+}
+
+test('AC2.1: each step-down reason is reported with no model', () => {
+  for (const reason of Object.keys(GATES)) {
+    const r = resolve('frontier', { ...DR, ...mergeGates(reason) });
+    assert.deepStrictEqual(r, { stepDown: { reason } });
+    assert.ok(!('model' in r));
+  }
+});
+
+test('AC2.2: precedence — with every gate firing, the first reason in STEP_DOWN_REASONS order wins', () => {
+  const order = STEP_DOWN_REASONS.filter((x) => x !== 'tally');
+  for (let i = 0; i < order.length; i += 1) {
+    const r = resolve('frontier', { ...DR, ...mergeGates(...order.slice(i)) });
+    assert.deepStrictEqual(r, { stepDown: { reason: order[i] } });
+  }
+});
+
+test('effort-only changes are not step-downs under the exception', () => {
+  const a = resolve('frontier', { ...DR, stance: 'max-rigor' });
+  assert.strictEqual(a.model, 'fable');
+  assert.strictEqual(a.effort, 'xhigh');
+  assert.strictEqual(a.source, 'exception:design-reader');
+  const b = resolve('frontier', { ...DR, policy: { 'model-profiles': { frontier: { effort: 'medium' } } } });
+  assert.strictEqual(b.model, 'fable');
+  assert.strictEqual(b.effort, 'medium');
+  assert.strictEqual(b.source, 'exception:design-reader');
+});
+
+test('AC4.1: design-reader with unattended throws the refusal', () => {
+  assert.throws(() => resolve('frontier', { ...DR, unattended: true }), /refuses an unattended call/);
+});
+
+test('AC6.1: an unknown exception throws naming design-reader', () => {
+  assert.throws(() => resolve('frontier', { exception: 'other' }), /unknown exception "other" — the one exception is "design-reader"/);
+});
+
+test('the exception applies only to frontier', () => {
+  assert.throws(() => resolve('capable', DR), /applies only to the frontier profile/);
+});
+
+test('AC5.1: without an exception the fourth frontier resolution still degrades with degraded:cap', () => {
+  const r = resolve('frontier', { frontierUsed: 3 });
+  assert.strictEqual(r.model, 'opus');
+  assert.strictEqual(r.source, 'degraded:cap');
+});

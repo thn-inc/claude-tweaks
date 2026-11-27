@@ -28,3 +28,17 @@ test('effortLine renders the pinned template, empty for null', () => {
     '[Effort: high — apply high-level reasoning depth to this task.]');
   assert.strictEqual(effortLine(null), '');
 });
+
+const { FRONTIER_EXCEPTIONS, STEP_DOWN_REASONS } = require('../../../plugin/bin/lib/model-profiles/profiles');
+
+test('FRONTIER_EXCEPTIONS holds exactly one frozen entry, design-reader with limit 22', () => {
+  assert.deepStrictEqual(Object.keys(FRONTIER_EXCEPTIONS), ['design-reader']);
+  assert.strictEqual(FRONTIER_EXCEPTIONS['design-reader'].limit, 22);
+  assert.ok(Object.isFrozen(FRONTIER_EXCEPTIONS));
+  assert.ok(Object.isFrozen(FRONTIER_EXCEPTIONS['design-reader']));
+});
+
+test('STEP_DOWN_REASONS is the six-reason precedence list', () => {
+  assert.deepStrictEqual([...STEP_DOWN_REASONS], ['tally', 'policy', 'stance', 'ceiling', 'limit', 'session-failure']);
+  assert.ok(Object.isFrozen(STEP_DOWN_REASONS));
+});
