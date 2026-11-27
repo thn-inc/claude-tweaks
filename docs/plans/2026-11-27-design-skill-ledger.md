@@ -37,3 +37,6 @@
 | 33 | review | low Test quality tests/design-skill-conformance.test.js:417: bare-reference sweep names skills by hand | accepted | accepted — tiebreak recommended drop: the omitted skills cannot appear in these step files and the listed names go red; widening is speculative |
 | 34 | review | low Test quality tests/bin-lib/design-session/cli.test.js:123: CLI storyboard check satisfied by brief prose (tiebreak cant-tell) | fixed | fixed in 15234fed94 — same fix as brief.js:222 (sentinels), so no digest entry |
 | 35 | review/hindsight | Convention drift: four hand-rolled fence toggles in design-session lib; parse-signal-discipline skill does not point at markdown-blocks.js [skill: parse-signal-discipline] | deferred | staged/reflect-1.md (Review Console Skill updates); code itself fixed in 15234fed94 |
+| 36 | wrap-up | Reflect (near-misses): path patterns must accept a spaced path — staged/reflect-2.md for the Review Console (edit parse-signal-discipline) | observation | — |
+| 37 | wrap-up | pr — PR #6362 — this run's own pr-first PR; disposition is Phase 4's merge decision | observation | — |
+| 38 | wrap-up | residue — suite probe unknown (skipped via --no-suite, pack-fed) — suite state comes from the verify pass stamp: CI test.yml run 46066094417 on the review head, 37849 pass / 0 fail | observation | — |
