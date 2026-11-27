@@ -30,6 +30,16 @@ test('slugFor throws on an empty topic', () => {
   assert.throws(() => slugFor('!!!'), /empty topic/);
 });
 
+test('slugFor hashes a topic with letters but no ascii alphanumerics', () => {
+  const crypto = require('crypto');
+  const topic = '  設計の議論  ';
+  const want = `topic-${crypto.createHash('sha256').update(topic.trim().normalize('NFC')).digest('hex').slice(0, 10)}`;
+  assert.strictEqual(slugFor(topic), want);
+  assert.match(slugFor(topic), /^topic-[0-9a-f]{10}$/);
+  assert.notStrictEqual(slugFor('設計の議論'), slugFor('別の議論'));
+  assert.throws(() => slugFor('!!! ---'), /empty topic/);
+});
+
 function tmp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'design-folder-'));
 }

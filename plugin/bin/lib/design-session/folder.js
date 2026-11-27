@@ -3,6 +3,7 @@
 'use strict';
 
 const fs = require('fs');
+const crypto = require('crypto');
 const path = require('path');
 
 const MAX_SLUG = 50;
@@ -20,7 +21,12 @@ function slugFor(input) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
-  if (!slug) throw new Error('empty topic');
+  if (!slug) {
+    // Letters of another script (CJK, ...) leave no ascii: a stable hash slug.
+    if (!/[\p{L}\p{N}]/u.test(raw)) throw new Error('empty topic');
+    const hash = crypto.createHash('sha256').update(raw.normalize('NFC')).digest('hex');
+    return `topic-${hash.slice(0, 10)}`;
+  }
 
   if (slug.length > MAX_SLUG) {
     const cutInsideWord = slug[MAX_SLUG] !== '-';

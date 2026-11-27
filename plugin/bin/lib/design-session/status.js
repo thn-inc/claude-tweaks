@@ -139,4 +139,4 @@ function readStatus(folder, fsImpl = fs) {
   return { steps, resumeAt: 3, round: R + 1, action: 'revise-storyboard', openSerious: [] };
 }
 
-module.exports = { sectionStatus, readStatus };
+module.exports = { sectionStatus, sectionLines, sectionField, readStatus };
