@@ -268,3 +268,69 @@ test('fix3: the leaf is opened with O_NOFOLLOW, not trusted from an earlier lsta
   assert.strictEqual(r.ok, false);
   assert.strictEqual(r.reason, 'symlink');
 });
+
+test('fix3.1: a FIFO named design.md is refused, not waited on', { skip: process.platform === 'win32', timeout: 5000 }, (t) => {
+  const folder = folderWith(t, { 'design.md': null });
+  require('child_process').execFileSync('mkfifo', [path.join(folder, 'design.md')]);
+  for (const [reader, round] of [['user', 1], ['builder', undefined]]) {
+    const r = compose(folder, reader, round);
+    assert.strictEqual(r.ok, false, reader);
+    assert.strictEqual(r.reason, 'no-frame', reader);
+  }
+});
+
+test('fix3.2: a non-text storyboard is never opened or read', (t) => {
+  const folder = folderWith(t, { 'design.md': design({ file: 'board.png' }), 'board.png': 'x' });
+  const touched = [];
+  const note = (f) => touched.push(typeof f === 'number' ? 'fd' : path.basename(String(f)));
+  const spy = {
+    ...fs,
+    readFileSync: (f, ...a) => { note(f); return fs.readFileSync(f, ...a); },
+    openSync: (f, ...a) => { note(f); return fs.openSync(f, ...a); },
+  };
+  assert.strictEqual(composeBrief({ folder, reader: 'user', round: 1, briefsText: BRIEFS }, spy).ok, true);
+  assert.ok(!touched.includes('board.png'), touched.join());
+  assert.ok(touched.includes('design.md'), 'the spy sees opens');
+});
+
+const NO_NOFOLLOW = { ...fs, constants: { ...fs.constants, O_NOFOLLOW: undefined } };
+const composeWin = (folder, reader, round, fsImpl = NO_NOFOLLOW) => composeBrief({ folder, reader, round, briefsText: BRIEFS }, fsImpl);
+
+test('fix3.3: the lstat fallback (no O_NOFOLLOW) refuses a symlink, a directory and a missing file', (t) => {
+  const outside = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'design-win-')), 'x.md');
+  t.after(() => fs.rmSync(path.dirname(outside), { recursive: true, force: true }));
+  fs.writeFileSync(outside, 'OUTSIDE-CONTENT');
+  const a = folderWith(t, {});
+  fs.rmSync(path.join(a, 'storyboard.md'));
+  fs.symlinkSync(outside, path.join(a, 'storyboard.md'));
+  assert.strictEqual(composeWin(a, 'user', 1).reason, 'symlink');
+
+  const b = folderWith(t, {});
+  fs.mkdirSync(path.join(b, 'notes-round-1.md'));
+  const r = composeWin(b, 'builder');
+  assert.strictEqual(r.reason, 'pending-outcomes');
+  assert.ok(/not a regular file/.test(r.detail), r.detail);
+
+  assert.strictEqual(composeWin(folderWith(t, { 'design.md': null }), 'user', 1).reason, 'no-frame');
+  assert.strictEqual(composeWin(folderWith(t, {}), 'user', 1).ok, true);
+
+  const denied = { ...NO_NOFOLLOW, lstatSync: () => { throw Object.assign(new Error('EACCES: denied'), { code: 'EACCES' }); } };
+  assert.throws(() => composeWin(folderWith(t, {}), 'user', 1, denied), /EACCES|cannot inspect/);
+});
+
+test('fix3.4: a last notes round listed but gone at open refuses, never reads as clean', (t) => {
+  const folder = folderWith(t, { 'notes-round-1.md': notesFile(1) });
+  const gone = {
+    ...fs,
+    openSync: (f, ...a) => {
+      if (path.basename(String(f)) === 'notes-round-1.md') throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      return fs.openSync(f, ...a);
+    },
+  };
+  for (const reader of ['builder', 'pre-mortem']) {
+    const r = composeBrief({ folder, reader, briefsText: BRIEFS }, gone);
+    assert.strictEqual(r.ok, false, reader);
+    assert.strictEqual(r.reason, 'pending-outcomes', reader);
+    assert.ok(/notes-round-1\.md/.test(r.detail) && /vanished/.test(r.detail), r.detail);
+  }
+});

@@ -62,7 +62,10 @@ function readLeaf(file, fsImpl) {
   }
   let fd;
   try {
-    fd = fsImpl.openSync(file, nofollow ? O_RDONLY | O_NOFOLLOW : O_RDONLY);
+    // O_NONBLOCK: opening a FIFO with no writer would otherwise block forever;
+    // it is a no-op for a regular file, and the fstat below maps a FIFO to 'other'.
+    const nonblock = (fsImpl.constants || fs.constants).O_NONBLOCK || 0;
+    fd = fsImpl.openSync(file, (nofollow ? O_RDONLY | O_NOFOLLOW : O_RDONLY) | nonblock);
   } catch (err) {
     const code = err && err.code;
     if (code === 'ENOENT' || code === 'ENOTDIR') return { state: 'missing' };
@@ -167,7 +170,8 @@ function composeBrief({ folder, reader, round, briefsText }, fsImpl = fs) {
       const notes = readLeaf(path.join(folder, `notes-round-${last}.md`), fsImpl);
       if (notes.state === 'symlink') return symlinkRefusal(`notes-round-${last}.md`);
       if (notes.state === 'other') return refuse('pending-outcomes', `notes-round-${last}.md is not a regular file`);
-      const c = checkNotes(notes.state === 'ok' ? notes.text : '', last);
+      if (notes.state !== 'ok') return refuse('pending-outcomes', `notes-round-${last}.md vanished after it was listed`);
+      const c = checkNotes(notes.text, last);
       if (c.pending.length) {
         return refuse('pending-outcomes', `round ${last} is not settled — pending: ${c.pending.join(', ')}`);
       }
