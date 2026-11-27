@@ -99,6 +99,41 @@ test('reject: no-repo-root cwd with --run-dir inside some checkout — distinct 
   assert.doesNotMatch(res.stderr, /resolves outside the main checkout/);
 });
 
+// #6351: --session-dir (the design-reader exception's tally folder) is a working-tree path its
+// skill owns, not a shared run dir: accepted in a linked worktree and outside any checkout,
+// refused only inside a .claude-tweaks/pipelines/ directory (a run's spend is --run-dir's).
+const EXC = ['frontier', '--exception', 'design-reader', '--session-dir'];
+
+test('session-dir: accepted in a linked worktree', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const session = path.join(wt, 'docs', 'superpowers', 'specs', 's1');
+  fs.mkdirSync(session, { recursive: true });
+  const res = runCli([...EXC, session], wt);
+  assert.strictEqual(res.status, 0, res.stderr);
+  assert.strictEqual(JSON.parse(res.stdout).model, 'fable');
+  assert.strictEqual(fs.readFileSync(path.join(session, 'frontier-exception-tally.log'), 'utf8').split('\n').filter(Boolean).length, 1);
+});
+
+test('session-dir: refused inside .claude-tweaks/pipelines', () => {
+  const main = gitRepo();
+  const inside = path.join(main, '.claude-tweaks', 'pipelines', 'r1');
+  fs.mkdirSync(inside, { recursive: true });
+  const res = runCli([...EXC, inside], main);
+  assert.strictEqual(res.status, 1);
+  assert.match(res.stderr, /--session-dir /);
+  assert.match(res.stderr, /inside \.claude-tweaks\/pipelines\//);
+  assert.deepStrictEqual(fs.readdirSync(inside), []);
+});
+
+test('session-dir: accepted outside any checkout', () => {
+  const main = gitRepo();
+  const outside = scratchDir('rp-session-');
+  const res = runCli([...EXC, outside], main);
+  assert.strictEqual(res.status, 0, res.stderr);
+  assert.ok(fs.existsSync(path.join(outside, 'frontier-exception-tally.log')));
+});
+
 test('accept: symlinked tmpdir spelling classifies by real location (AC 11)', () => {
   const main = gitRepo();
   const realOutside = scratchDir('rp-sym-');
