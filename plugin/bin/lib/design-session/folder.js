@@ -47,7 +47,8 @@ function findFolder({ specsDir, slug, today }, fsImpl = fs) {
     names = fsImpl.readdirSync(specsDir, { withFileTypes: true })
       .filter((e) => e.isDirectory() && re.test(e.name))
       .map((e) => e.name);
-  } catch (_) {
+  } catch (err) {
+    if (!err || err.code !== 'ENOENT') throw err;
     names = [];
   }
   if (names.length) {

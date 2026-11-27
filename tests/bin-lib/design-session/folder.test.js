@@ -58,3 +58,10 @@ test('findFolder on an empty dir names a new folder and creates nothing', () => 
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('findFolder rethrows non-ENOENT read errors, treats ENOENT as no folder', () => {
+  const eacces = { readdirSync() { throw Object.assign(new Error('denied'), { code: 'EACCES' }); } };
+  assert.throws(() => findFolder({ specsDir: '/x', slug: 'a', today: '2026-11-27' }, eacces), /denied/);
+  const enoent = { readdirSync() { throw Object.assign(new Error('none'), { code: 'ENOENT' }); } };
+  assert.strictEqual(findFolder({ specsDir: '/x', slug: 'a', today: '2026-11-27' }, enoent).existing, false);
+});

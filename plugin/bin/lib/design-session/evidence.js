@@ -23,14 +23,18 @@ function checkEvidence(text) {
   }
 
   const unsourced = [];
+  let claims = 0;
+  let fenced = false;
   lines.forEach((line, idx) => {
-    if (!/^\s*- /.test(line)) return;
+    if (/^\s*```/.test(line)) { fenced = !fenced; return; }
+    if (fenced || !/^\s*- /.test(line)) return;
+    claims++;
     const at = line.lastIndexOf(' — source: ');
     const src = at === -1 ? null : line.slice(at + ' — source: '.length).trim();
     if (!src || !SOURCE_RE.test(src)) unsourced.push(idx + 1);
   });
 
-  return { done: status === 'done' && unsourced.length === 0, unsourced };
+  return { done: status === 'done' && claims > 0 && unsourced.length === 0, unsourced };
 }
 
 module.exports = { checkEvidence, SOURCE_RE };
