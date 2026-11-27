@@ -66,7 +66,9 @@ function degrade(reason) {
 }
 
 // The one named frontier exception (#6351): a code-only entry, never a
-// setting. `limit` is the per-session count of top-tier resolutions it allows.
+// setting. `limit` is the per-session count of top-tier resolutions it allows;
+// 22 = five readers per round x at most four rounds, plus one pre-mortem reader
+// and one builder-check reader (the design skill's reader count, #6352).
 const FRONTIER_EXCEPTIONS = Object.freeze({
   'design-reader': Object.freeze({ limit: 22 }),
 });

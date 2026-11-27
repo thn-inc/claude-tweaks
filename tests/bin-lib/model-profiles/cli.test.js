@@ -499,6 +499,20 @@ test('--exception with --stance bogus exits 1 naming the stance and leaves the t
   assert.ok(!fs.existsSync(path.join(s, '.frontier-exception-tally.lock')));
 });
 
+// The pre-check refusals fire before the session folder is looked at: a missing folder
+// alone would be exit 3 (reason tally), so exit 1 here proves the ordering.
+for (const [key, value] of [['model-ceiling', 'bogus'], ['model-effort', 'sometimes']]) {
+  test(`--exception with an invalid ${key} and a missing --session-dir exits 1, not 3 with tally`, () => {
+    const dir = tmpProject(`${key}: ${value}\n`);
+    const missing = path.join(dir, 'no-such-session');
+    const r = call([...EXC, '--session-dir', missing], dir);
+    assert.strictEqual(r.code, 1);
+    assert.match(r.stderr, new RegExp(value));
+    assert.strictEqual(r.stdout, '');
+    assert.ok(!fs.existsSync(missing));
+  });
+}
+
 test('--exception without --session-dir exits 1', () => {
   const dir = tmpProject(null);
   const r = call(EXC, dir);

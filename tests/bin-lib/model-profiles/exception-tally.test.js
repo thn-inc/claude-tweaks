@@ -111,7 +111,7 @@ test('an error thrown by decide is re-thrown, nothing appended, and the lock rel
 // green with the lock deleted, so the second resolution is attempted in-process from
 // inside the first call's read seam. Removing `withLock` from resolveUnderTally turns
 // this red (the inner call then runs, appends, and is not refused) — proven once.
-test('a second resolution attempted between the first call\'s read and its append is refused with LOCK_TIMEOUT', () => {
+test('a second resolution attempted between the first call\'s read and its append is refused as reason tally because the lock times out', () => {
   const dir = sessionDir();
   let inner;
   const outer = resolveUnderTally({

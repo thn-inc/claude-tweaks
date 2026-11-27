@@ -126,6 +126,19 @@ test('session-dir: refused inside .claude-tweaks/pipelines', () => {
   assert.deepStrictEqual(fs.readdirSync(inside), []);
 });
 
+test('session-dir: a symlink outside pipelines pointing inside it is refused, nothing written', () => {
+  const main = gitRepo();
+  const inside = path.join(main, '.claude-tweaks', 'pipelines', 'r1');
+  fs.mkdirSync(inside, { recursive: true });
+  const aliasParent = scratchDir('rp-sessionlink-');
+  const alias = path.join(aliasParent, 'alias');
+  fs.symlinkSync(inside, alias);
+  const res = runCli([...EXC, alias], main);
+  assert.strictEqual(res.status, 1);
+  assert.match(res.stderr, /inside \.claude-tweaks\/pipelines\//);
+  assert.deepStrictEqual(fs.readdirSync(inside), []);
+});
+
 test('session-dir: accepted outside any checkout', () => {
   const main = gitRepo();
   const outside = scratchDir('rp-session-');

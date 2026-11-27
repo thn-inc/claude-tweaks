@@ -357,6 +357,55 @@ test('effort-only changes are not step-downs under the exception', () => {
   assert.strictEqual(b.source, 'exception:design-reader');
 });
 
+test('a model-ceiling equal to the top tier does not step down', () => {
+  const r = resolve('frontier', { ...DR, policy: { 'model-ceiling': 'frontier' } });
+  assert.strictEqual(r.stepDown, undefined);
+  assert.strictEqual(r.model, 'fable');
+  assert.strictEqual(r.source, 'exception:design-reader');
+});
+
+test('a policy row restating the frontier model does not step down', () => {
+  const r = resolve('frontier', { ...DR, policy: { 'model-profiles': { frontier: { model: 'fable' } } } });
+  assert.strictEqual(r.stepDown, undefined);
+  assert.strictEqual(r.model, 'fable');
+  assert.strictEqual(r.source, 'exception:design-reader');
+});
+
+test('the run frontier cap is never consulted under the exception', () => {
+  for (const frontierUsed of [3, 10]) {
+    const r = resolve('frontier', { ...DR, frontierUsed });
+    assert.strictEqual(r.model, 'fable');
+    assert.strictEqual(r.source, 'exception:design-reader');
+  }
+  // The same inputs without the exception degrade on the cap — the cap is live, the exception bypasses it.
+  assert.strictEqual(resolve('frontier', { frontierUsed: 3 }).source, 'degraded:cap');
+});
+
+test('the exception path computes launchEffort and effortLine like the non-exception frontier path', () => {
+  const cases = [
+    { policy: { 'model-effort': 'profile' } },
+    {},
+    { policy: { 'model-effort': 'profile' }, stance: 'max-rigor' },
+    { stance: 'max-rigor' },
+    { policy: { 'model-effort': 'profile', 'model-profiles': { frontier: { effort: 'medium' } } } },
+    { policy: { 'model-profiles': { frontier: { effort: 'medium' } } } },
+  ];
+  for (const opts of cases) {
+    const exc = resolve('frontier', { ...DR, ...opts });
+    const plain = resolve('frontier', opts);
+    assert.strictEqual(exc.effort, plain.effort, JSON.stringify(opts));
+    assert.strictEqual(exc.launchEffort, plain.launchEffort, JSON.stringify(opts));
+    assert.strictEqual(exc.effortLine, plain.effortLine, JSON.stringify(opts));
+  }
+  const profile = resolve('frontier', { ...DR, policy: { 'model-effort': 'profile' } });
+  assert.strictEqual(profile.launchEffort, 'high');
+  assert.strictEqual(profile.effortLine, EFFORT_LINE('high'));
+  assert.strictEqual(resolve('frontier', DR).launchEffort, null);
+  const shifted = resolve('frontier', { ...DR, stance: 'max-rigor', policy: { 'model-effort': 'profile' } });
+  assert.strictEqual(shifted.launchEffort, 'xhigh');
+  assert.strictEqual(shifted.effortLine, EFFORT_LINE('xhigh'));
+});
+
 test('AC4.1: design-reader with unattended throws the refusal', () => {
   assert.throws(() => resolve('frontier', { ...DR, unattended: true }), /refuses an unattended call/);
 });
