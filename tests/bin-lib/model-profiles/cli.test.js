@@ -4,6 +4,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawn } = require('node:child_process');
 const { runCliSync, spawnCli } = require('../../helpers/run-cli');
 const { failurePath } = require('../../../plugin/bin/lib/model-profiles/session-failures');
 
@@ -368,4 +369,234 @@ test('clear-failures on a session with no blacklist is a harmless no-op', () => 
   assert.ok(!fs.existsSync(failurePath(sessionId, tmp)));
   const out = run(['clear-failures'], dir, { env, tmp });
   assert.deepStrictEqual(out, { cleared: true, sessionId });
+});
+
+// Characterization (#6351): the no-exception frontier output every installed caller reads.
+test('AC5.1: no-exception frontier output is byte-identical to the pre-change CLI', () => {
+  const dir = tmpProject(null);
+  const runDir = path.join(dir, 'run');
+  fs.mkdirSync(runDir);
+  const line = (model, source) => `{"model":"${model}","effort":"high","source":"${source}","effortLine":"[Effort: high — apply high-level reasoning depth to this task.]","launchEffort":null}\n`;
+  for (let i = 0; i < 3; i++) {
+    const r = call(['frontier', '--run-dir', runDir], dir);
+    assert.strictEqual(r.code, 0, r.stderr);
+    assert.strictEqual(r.stdout, line('fable', 'default'));
+    assert.strictEqual(r.stderr, '');
+  }
+  const fourth = call(['frontier', '--run-dir', runDir], dir);
+  assert.strictEqual(fourth.code, 0, fourth.stderr);
+  assert.strictEqual(fourth.stdout, line('opus', 'degraded:cap'));
+});
+
+// --- the design-reader exception (#6351) ---------------------------------
+
+const EXC = ['frontier', '--exception', 'design-reader'];
+const TALLY_FILE = 'frontier-exception-tally.log';
+
+function sessionIn(dir, name = 'session') {
+  const s = path.join(dir, name);
+  fs.mkdirSync(s, { recursive: true });
+  return s;
+}
+function tallyLines(s) {
+  try { return fs.readFileSync(path.join(s, TALLY_FILE), 'utf8').split('\n').filter(Boolean); } catch { return []; }
+}
+
+test('AC1.1, AC1.2: 22 resolutions in one session dir return fable, the 23rd exits 3 with stepDown limit', () => {
+  const dir = tmpProject(null);
+  const s = sessionIn(dir);
+  for (let i = 0; i < 22; i++) {
+    const r = call([...EXC, '--session-dir', s], dir);
+    assert.strictEqual(r.code, 0, `call ${i + 1}: ${r.stderr}`);
+    const j = JSON.parse(r.stdout);
+    assert.strictEqual(j.model, 'fable');
+    assert.strictEqual(j.source, 'exception:design-reader');
+  }
+  assert.strictEqual(tallyLines(s).length, 22);
+  const r = call([...EXC, '--session-dir', s], dir);
+  assert.strictEqual(r.code, 3);
+  assert.strictEqual(r.stdout, '{"stepDown":{"reason":"limit"}}\n');
+  assert.strictEqual(tallyLines(s).length, 22);
+});
+
+const STEP_DOWN_CASES = [
+  { reason: 'tally', setup: (dir) => ({ args: ['--session-dir', path.join(dir, 'no-such-session')] }) },
+  { reason: 'policy', policy: 'model-profiles:\n  frontier:\n    model: opus\n' },
+  { reason: 'stance', extra: ['--stance', 'economy'] },
+  { reason: 'ceiling', policy: 'model-ceiling: capable\n' },
+  { reason: 'limit', prefill: 22 },
+  { reason: 'session-failure', failFable: true },
+];
+for (const c of STEP_DOWN_CASES) {
+  test(`AC2.1, AC3.1, AC3.2: step-down reason ${c.reason} prints exactly {"stepDown":{"reason":…}} and exits 3`, () => {
+    const dir = tmpProject(c.policy === undefined ? null : c.policy);
+    const s = sessionIn(dir);
+    if (c.prefill) fs.writeFileSync(path.join(s, TALLY_FILE), 'design-reader\tt\n'.repeat(c.prefill));
+    let env = isolatedEnv();
+    const tmp = tmpDirFor();
+    if (c.failFable) {
+      env = { ...env, CLAUDE_CODE_SESSION_ID: `cli-test-${process.pid}-exc-fail` };
+      assert.strictEqual(call(['record-failure', 'fable'], dir, { env, tmp }).code, 0);
+    }
+    const args = c.setup ? c.setup(dir).args : ['--session-dir', s];
+    const before = tallyLines(s).length;
+    const r = call([...EXC, ...args, ...(c.extra || [])], dir, { env, tmp });
+    assert.strictEqual(r.code, 3, r.stderr);
+    assert.strictEqual(r.stdout, `{"stepDown":{"reason":"${c.reason}"}}\n`);
+    assert.strictEqual(r.stderr, '');
+    assert.strictEqual(JSON.parse(r.stdout).model, undefined);
+    assert.strictEqual(tallyLines(s).length, before, 'a step-down uses no slot');
+  });
+}
+
+test('AC4.1: --exception with --unattended exits 1 naming the refusal, nothing written', () => {
+  const dir = tmpProject(null);
+  const s = sessionIn(dir);
+  const r = call([...EXC, '--session-dir', s, '--unattended'], dir);
+  assert.strictEqual(r.code, 1);
+  assert.strictEqual(r.stdout, '');
+  assert.match(r.stderr, /refuses an unattended call/);
+  assert.deepStrictEqual(tallyLines(s), []);
+});
+
+test('AC6.1: --exception other exits 1 naming design-reader', () => {
+  const dir = tmpProject(null);
+  const s = sessionIn(dir);
+  const r = call(['frontier', '--exception', 'other', '--session-dir', s], dir);
+  assert.strictEqual(r.code, 1);
+  assert.match(r.stderr, /unknown exception "other".*"design-reader"/);
+  assert.deepStrictEqual(tallyLines(s), []);
+});
+
+test('--exception other in a project with a malformed policy.yml exits 1 naming design-reader, not the policy', () => {
+  const dir = tmpProject('frontier-run-cap: soon\n');
+  const s = sessionIn(dir);
+  const r = call(['frontier', '--exception', 'other', '--session-dir', s], dir);
+  assert.strictEqual(r.code, 1);
+  assert.match(r.stderr, /unknown exception "other".*"design-reader"/);
+  assert.doesNotMatch(r.stderr, /soon/);
+});
+
+test('--exception with a profile other than frontier exits 1, nothing written', () => {
+  const dir = tmpProject(null);
+  const s = sessionIn(dir);
+  const r = call(['standard', '--exception', 'design-reader', '--session-dir', s], dir);
+  assert.strictEqual(r.code, 1);
+  assert.match(r.stderr, /applies only to the frontier profile/);
+  assert.deepStrictEqual(tallyLines(s), []);
+});
+
+// The CLI refuses `--stance bogus` at its pre-call, so the re-throw-inside-the-lock path is
+// covered by exception-tally.test.js's decide-throws unit test.
+test('--exception with --stance bogus exits 1 naming the stance and leaves the tally unchanged', () => {
+  const dir = tmpProject(null);
+  const s = sessionIn(dir);
+  fs.writeFileSync(path.join(s, TALLY_FILE), 'design-reader\tt\n');
+  const r = call([...EXC, '--session-dir', s, '--stance', 'bogus'], dir);
+  assert.strictEqual(r.code, 1);
+  assert.match(r.stderr, /unknown stance "bogus"/);
+  assert.deepStrictEqual(tallyLines(s), ['design-reader\tt']);
+  assert.ok(!fs.existsSync(path.join(s, '.frontier-exception-tally.lock')));
+});
+
+// The pre-check refusals fire before the session folder is looked at: a missing folder
+// alone would be exit 3 (reason tally), so exit 1 here proves the ordering.
+for (const [key, value] of [['model-ceiling', 'bogus'], ['model-effort', 'sometimes']]) {
+  test(`--exception with an invalid ${key} and a missing --session-dir exits 1, not 3 with tally`, () => {
+    const dir = tmpProject(`${key}: ${value}\n`);
+    const missing = path.join(dir, 'no-such-session');
+    const r = call([...EXC, '--session-dir', missing], dir);
+    assert.strictEqual(r.code, 1);
+    assert.match(r.stderr, new RegExp(value));
+    assert.strictEqual(r.stdout, '');
+    assert.ok(!fs.existsSync(missing));
+  });
+}
+
+test('--exception without --session-dir exits 1', () => {
+  const dir = tmpProject(null);
+  const r = call(EXC, dir);
+  assert.strictEqual(r.code, 1);
+  assert.match(r.stderr, /--exception requires --session-dir/);
+});
+
+test('--session-dir without --exception exits 1', () => {
+  const dir = tmpProject(null);
+  const s = sessionIn(dir);
+  const r = call(['frontier', '--session-dir', s], dir);
+  assert.strictEqual(r.code, 1);
+  assert.match(r.stderr, /--session-dir requires --exception/);
+  assert.deepStrictEqual(tallyLines(s), []);
+});
+
+test('--run-dir with --exception exits 1', () => {
+  const dir = tmpProject(null);
+  const s = sessionIn(dir);
+  const runDir = sessionIn(dir, 'run');
+  const r = call([...EXC, '--session-dir', s, '--run-dir', runDir], dir);
+  assert.strictEqual(r.code, 1);
+  assert.match(r.stderr, /--run-dir cannot be combined with --exception/);
+  assert.deepStrictEqual(tallyLines(s), []);
+  assert.ok(!fs.existsSync(path.join(runDir, 'frontier-tally.log')));
+});
+
+test('the exception never reads or appends the run\'s frontier-tally.log', () => {
+  const dir = tmpProject(null);
+  const s = sessionIn(dir);
+  const runDir = sessionIn(dir, 'run');
+  const runTally = path.join(runDir, 'frontier-tally.log');
+  fs.writeFileSync(runTally, 'frontier\tt\nfrontier\tt\nfrontier\tt\n');
+  // The run's cap (3) is spent; the exception still resolves fable and leaves that file alone.
+  for (let i = 0; i < 2; i++) assert.strictEqual(run([...EXC, '--session-dir', s], dir).model, 'fable');
+  assert.strictEqual(fs.readFileSync(runTally, 'utf8'), 'frontier\tt\nfrontier\tt\nfrontier\tt\n');
+  assert.strictEqual(tallyLines(s).length, 2);
+});
+
+test('session-dir: a relative path resolves against the injected cwd', () => {
+  const dir = tmpProject(null);
+  const s = sessionIn(dir, 'rel-session');
+  // The runner's real cwd has no `rel-session`; only deps.cwd() can find it.
+  assert.strictEqual(run([...EXC, '--session-dir', 'rel-session'], dir).model, 'fable');
+  assert.strictEqual(tallyLines(s).length, 1);
+});
+
+test('the script entry exits 3 on a step-down', () => {
+  const dir = tmpProject(null);
+  const s = sessionIn(dir);
+  fs.writeFileSync(path.join(s, TALLY_FILE), 'design-reader\tt\n'.repeat(22));
+  const r = spawnCli(CLI, [...EXC, '--session-dir', s], { env: isolatedEnv(), cwd: dir });
+  assert.strictEqual(r.code, 3);
+  assert.strictEqual(r.stdout, '{"stepDown":{"reason":"limit"}}\n');
+  assert.strictEqual(r.stderr, '');
+});
+
+function spawnAsync(args, cwd, env) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [CLI, ...args], { cwd, env, windowsHide: true });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => { stdout += d; });
+    child.stderr.on('data', (d) => { stderr += d; });
+    child.on('error', reject);
+    child.on('close', (code) => resolve({ code, stdout, stderr }));
+  });
+}
+
+// CLI path, not the lock proof (that is exception-tally.test.js's seam test): the five
+// children start together; each holds the lock for one read and one append, well inside
+// TALLY_LOCK_WAIT_MS, so the outcome is deterministic.
+test('five parallel CLI processes at count 20 yield exactly two fable resolutions and three limit step-downs, and the tally ends at 22 lines', async () => {
+  const dir = tmpProject(null);
+  const s = sessionIn(dir);
+  fs.writeFileSync(path.join(s, TALLY_FILE), 'design-reader\tt\n'.repeat(20));
+  const results = await Promise.all(
+    [0, 1, 2, 3, 4].map(() => spawnAsync([...EXC, '--session-dir', s], dir, isolatedEnv())),
+  );
+  const ok = results.filter((r) => r.code === 0);
+  const down = results.filter((r) => r.code === 3);
+  assert.strictEqual(ok.length, 2, JSON.stringify(results));
+  assert.strictEqual(down.length, 3, JSON.stringify(results));
+  for (const r of ok) assert.strictEqual(JSON.parse(r.stdout).model, 'fable');
+  for (const r of down) assert.strictEqual(r.stdout, '{"stepDown":{"reason":"limit"}}\n');
+  assert.strictEqual(tallyLines(s).length, 22);
 });

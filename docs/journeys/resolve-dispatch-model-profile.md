@@ -5,8 +5,10 @@ files:
   - plugin/bin/lib/model-profiles/profiles.js
   - plugin/bin/lib/model-profiles/policy-fragment.js
   - plugin/bin/lib/model-profiles/session-failures.js
+  - plugin/bin/lib/model-profiles/exception-tally.js
   - plugin/bin/lib/policy-schema.js
   - plugin/skills/_shared/subagent-dispatch-core.md
+  - plugin/skills/_shared/frontier-exception.md
 ---
 
 # Resolve a Dispatch's Model Profile
@@ -14,7 +16,7 @@ files:
 **Persona:** claude-tweaks skill author (or a maintainer of a project using the plugin) who wants proof that dispatch-time model resolution actually honors the documented override chain — table default, policy row, stance, ceiling, Frontier gates, session-failure avoidance — rather than trusting the contract's prose.
 **Goal:** Watch profiles resolve under six configurations and confirm the returned `model`/`effort`/`launchEffort`/`source` change exactly as `plugin/skills/_shared/subagent-dispatch-core.md` §Model Selection says they will.
 **Entry point:** A terminal at this repo's checkout root — the repo that ships `plugin/bin/resolve-profile.js`, not the `plugin/` payload directory itself.
-**Success state:** Six JSON results: `default`, `policy`, a `launchEffort` that turns `null` under `model-effort: inherit` while `effort` stays put, `degraded:cap`, `degraded:session-failure`, and back to `default` (post-`clear-failures`), with the models the contract's table and override rules predict.
+**Success state:** Six JSON results: `default`, `policy`, a `launchEffort` that turns `null` under `model-effort: inherit` while `effort` stays put, `degraded:cap`, `degraded:session-failure`, and back to `default` (post-`clear-failures`), with the models the contract's table and override rules predict — plus the one named fan-out exception (step 7): `fable` with `source: "exception:design-reader"`, and a step-down that prints only `{"stepDown":{…}}` and exits 3 instead of quietly returning a lower tier.
 
 ## Steps
 
@@ -43,7 +45,7 @@ files:
 - **URL:** `mkdir -p /tmp/mp-journey && node plugin/bin/resolve-profile.js frontier --run-dir /tmp/mp-journey` (run it four times)
 - **Action:** Run the command four times; inspect `/tmp/mp-journey/frontier-tally.log` between runs.
 - **Should feel:** Deterministic — three `fable` resolutions, each appending one `frontier\t{timestamp}` tally line, then a fourth returning `{"model":"opus",...,"source":"degraded:cap"}` with no fourth tally line.
-- **Should understand:** This is the per-run spend ceiling on the most expensive model profile: the cap (default 3, policy key `frontier-run-cap`) is enforced mechanically by the resolver, and degradation is visible in `source` rather than silent. `--unattended` degrades immediately the same way — headless contexts never resolve Frontier. The two are independent inputs, not one mechanism: the tally flags (`--run-dir`, `--frontier-used`) answer "how much Frontier has this run already spent", while `--unattended` answers "is a human present" — it resolves `{"source":"degraded:unattended"}` (never `degraded:cap`), reads no tally and appends no tally line even with `--run-dir` passed. Run `node plugin/bin/resolve-profile.js frontier --run-dir /tmp/mp-journey --unattended` on a fresh dir to see both: a degraded line and no `frontier-tally.log` at all.
+- **Should understand:** This is the per-run spend ceiling on the most expensive model profile: the cap (default 3, policy key `frontier-run-cap`) is enforced mechanically by the resolver, and degradation is visible in `source` rather than silent. `--unattended` degrades immediately the same way — headless contexts never resolve Frontier. The two are independent inputs, not one mechanism: the tally (`--run-dir`'s `frontier-tally.log`; the CLI has no `--frontier-used` flag — `frontierUsed` is `resolve()`'s in-process option) answers "how much Frontier has this run already spent", while `--unattended` answers "is a human present" — it resolves `{"source":"degraded:unattended"}` (never `degraded:cap`), reads no tally and appends no tally line even with `--run-dir` passed. Run `node plugin/bin/resolve-profile.js frontier --run-dir /tmp/mp-journey --unattended` on a fresh dir to see both: a degraded line and no `frontier-tally.log` at all.
 - **Red flags:** A fourth tally line appearing after the degraded resolution (the tally must only record actual Frontier results); the cap counting non-`frontier` lines in the log. Running this step from a **linked worktree** with a *relative* `--run-dir` (or one pointing inside any checkout other than the main one) exits 1 with a "resolves outside the main checkout" message naming the resolved path — that is the anchored-or-outside guard (#1065, the `[IL-127]` shadow-copy protection) working as designed, not a defect; the documented `/tmp/mp-journey` form is outside any checkout and always passes.
 
 ### 5. Blacklist a failed model, then confirm the next resolution avoids it — terminal
@@ -60,5 +62,13 @@ files:
 - **Should understand:** `clear-failures` prints `{"cleared":true,"sessionId":"journey-probe-..."}` and deletes the same `os.tmpdir()/ct-model-failures-{sessionId}.json` file `record-failure` wrote — the next `frontier` resolution returns to `{"model":"fable","source":"default",...}`, exactly as if `record-failure` had never run this session. Equivalent manual recovery (no CLI needed): `rm "${TMPDIR:-/tmp}/ct-model-failures-${CLAUDE_CODE_SESSION_ID}.json"`.
 - **Red flags:** `clear-failures` exiting 0 but the following resolution still returning `degraded:session-failure` (the delete silently failed, or targeted the wrong session's file); `clear-failures` throwing when the blacklist file never existed (it must be a harmless no-op).
 
+### 7. Resolve a design reader through the named fan-out exception — terminal with a scratch session folder
+- **URL:** `mkdir -p /tmp/design-journey && node plugin/bin/resolve-profile.js frontier --exception design-reader --session-dir /tmp/design-journey`, then the same command with `--stance economy` appended, then with `--session-dir /tmp/design-journey/nope`
+- **Action:** Run the three commands; inspect `/tmp/design-journey/frontier-exception-tally.log` after the first.
+- **Should feel:** Like a gate that never quietly downgrades — either the top tier, or a loud stop the caller cannot misread as a model.
+- **Should understand:** The first prints `{"model":"fable",…,"source":"exception:design-reader",…}` (exit 0) and appends one `design-reader\t{timestamp}` line — the exception counts in this folder's own tally (limit 22 per design session; the folder is the session), never in a run's `frontier-tally.log` or against `frontier-run-cap`. The `economy` run prints exactly `{"stepDown":{"reason":"stance"}}` and exits 3 with no `model` key and no tally line; a missing folder prints `{"stepDown":{"reason":"tally"}}` (exit 3) — `/design`'s readers (#6352) stop and ask on exit 3 rather than lowering the tier. `--unattended`, an unknown `--exception` name (the message names `design-reader`), or `--run-dir` beside `--exception` exit 1 instead. Full rules: `plugin/skills/_shared/frontier-exception.md`.
+- **Red flags:** A step-down that prints a `model` field or exits 0; a tally line appended on a step-down or refusal; the 23rd resolution in one folder returning `fable` instead of `{"stepDown":{"reason":"limit"}}`; the call touching any run dir's `frontier-tally.log`.
+
 ## Origin
+- Updated during build of #6351: step 7 (new) — the named `design-reader` fan-out exception, its per-folder tally and its exit-3 step-down signal.
 - Updated during build of #5941: the resolver's `launchEffort` field and the `model-effort` key (step 3, new); step 1 moves to `fast` and step 2 edits the existing row, because this repo's own policy now overrides Standard and Capable.

@@ -29,6 +29,16 @@
 //
 //   rm "${TMPDIR:-/tmp}/ct-model-failures-${CLAUDE_CODE_SESSION_ID}.json"
 //
+// Frontier exception (#6351): `frontier --exception design-reader --session-dir
+// <path> [--stance <s>]` resolves the top tier for a design reader, counted per
+// design session (limit 22, in `{session-dir}/frontier-exception-tally.log`,
+// bin/lib/model-profiles/exception-tally.js) and never against --run-dir's
+// frontier-tally.log. Exit 0 prints the normal JSON line; exit 3 prints exactly
+// `{"stepDown":{"reason":"<reason>"}}` (no `model` key) when the top tier is
+// unavailable; exit 1 refuses (unknown exception, a profile other than
+// frontier, --unattended, --run-dir, either flag without the other, a
+// --session-dir inside .claude-tweaks/pipelines/). Exit 3 is this CLI's own.
+//
 // No TTL: unlike the sibling blacklist this module mirrors
 // (bin/lib/issues/record-snapshot.js, which has both a TTL and
 // invalidateSnapshot()), this stays explicit-clear-only for now — a
@@ -41,6 +51,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { resolve, PROFILES } = require('./lib/model-profiles/profiles');
+const { resolveUnderTally } = require('./lib/model-profiles/exception-tally');
+const { canonicalRealpath } = require('./lib/path-guard');
 const { locatePolicyFile } = require('./lib/policy-file');
 const { readPolicyModelConfig } = require('./lib/model-profiles/policy-fragment');
 const { readFailedModels, recordFailure, invalidateFailures } = require('./lib/model-profiles/session-failures');
@@ -61,7 +73,46 @@ function requireValue(args, flag) {
   return { ok: true, value: v };
 }
 
-// run(argv, deps) -> 0 | 1. `argv` is the arguments after the script name;
+// True when `p` has `.claude-tweaks` immediately followed by `pipelines` among its segments.
+function insidePipelinesDir(p) {
+  const segs = p.split(/[\\/]+/);
+  return segs.some((s, i) => s === '.claude-tweaks' && segs[i + 1] === 'pipelines');
+}
+
+// The named-exception path (`--exception <name> --session-dir <path>`, #6351): the top tier
+// is tallied per design session under a fail-closed lock instead of by the run's cap. Exit 0
+// resolved, 3 step-down (`{"stepDown":{"reason":…}}` on stdout, nothing else), 1 refusal.
+function runException({ profile, exception, sessionDirArg, stance, unattended, policy, deps, fail }) {
+  // With the policy in hand, the refusals that need it (an unknown stance, model-ceiling or
+  // effort) fire here, before any tally I/O.
+  try {
+    resolve(profile, { policy, stance, unattended, exception, exceptionUsed: 0 });
+  } catch (e) {
+    return fail(e.message);
+  }
+
+  const sessionDir = resolveAgainst(deps.cwd(), sessionDirArg);
+  const real = canonicalRealpath(sessionDir);
+  if (insidePipelinesDir(sessionDir) || (real !== null && insidePipelinesDir(real))) {
+    return fail(`--session-dir ${sessionDirArg} is inside .claude-tweaks/pipelines/ — a run's frontier spend is tallied by --run-dir`);
+  }
+
+  const failedModels = readFailedModels(deps.env.CLAUDE_CODE_SESSION_ID, { dir: deps.tmpDir() });
+  let outcome;
+  try {
+    outcome = resolveUnderTally({
+      sessionDir, name: exception, env: deps.env,
+      decide: (used) => resolve(profile, { policy, stance, failedModels, exception, exceptionUsed: used }),
+    });
+  } catch (e) {
+    return fail(e.message);
+  }
+  const result = outcome.ok ? outcome.result : { stepDown: { reason: outcome.reason } };
+  deps.stdout(`${JSON.stringify(result)}\n`);
+  return result.stepDown ? 3 : 0;
+}
+
+// run(argv, deps) -> 0 | 1 | 3 (3 only under --exception). `argv` is the arguments after the script name;
 // every outside-world read goes through `deps` (stdout, stderr, cwd, env,
 // tmpDir — the directory the session-failure file lives under).
 function run(argv, deps) {
@@ -69,7 +120,7 @@ function run(argv, deps) {
   const args = argv.slice();
   const profile = args.shift();
   if (!profile) {
-    return fail('usage: resolve-profile.js <profile>|record-failure <model>|clear-failures [--stance <s>] [--unattended] [--run-dir <path>] [--diff-facts <json>]');
+    return fail('usage: resolve-profile.js <profile>|record-failure <model>|clear-failures [--stance <s>] [--unattended] [--run-dir <path>] [--diff-facts <json>] [--exception <name> --session-dir <path>]');
   }
 
   if (profile === 'record-failure') {
@@ -98,16 +149,25 @@ function run(argv, deps) {
   let unattended = false;
   let runDir;
   let diffFactsRaw;
+  let exception;
+  let sessionDirArg;
   while (args.length) {
     const a = args.shift();
     if (a === '--unattended') { unattended = true; continue; }
-    if (a !== '--stance' && a !== '--run-dir' && a !== '--diff-facts') return fail(`unknown argument "${a}"`);
+    if (a !== '--stance' && a !== '--run-dir' && a !== '--diff-facts' && a !== '--exception' && a !== '--session-dir') return fail(`unknown argument "${a}"`);
     const v = requireValue(args, a);
     if (!v.ok) return fail(`${a} requires a value`);
     if (a === '--stance') stance = v.value;
     else if (a === '--run-dir') runDir = v.value;
+    else if (a === '--exception') exception = v.value;
+    else if (a === '--session-dir') sessionDirArg = v.value;
     else diffFactsRaw = v.value;
   }
+
+  // The flag combinations are refused before any I/O.
+  if (exception === undefined && sessionDirArg !== undefined) return fail('--session-dir requires --exception');
+  if (exception !== undefined && sessionDirArg === undefined) return fail('--exception requires --session-dir');
+  if (exception !== undefined && runDir !== undefined) return fail('--run-dir cannot be combined with --exception — the exception is tallied per design session by --session-dir');
 
   // #1912: `--diff-facts` carries `computeDiffFacts`'s own JSON shape
   // (`bin/lib/dispatch/ceremony-derive.js`) — malformed JSON fails loud
@@ -132,12 +192,24 @@ function run(argv, deps) {
     if (message) return fail(message);
   }
 
+  // The exception-name, profile and unattended refusals need no policy: resolve() owns their
+  // messages, so they fire ahead of the policy read (a malformed policy.yml reports after them).
+  if (exception !== undefined) {
+    try {
+      resolve(profile, { unattended, exception, exceptionUsed: 0 });
+    } catch (e) {
+      return fail(e.message);
+    }
+  }
+
   let policy;
   try {
     policy = readPolicyModelConfig(locatePolicyFile(deps.cwd()).path);
   } catch (e) {
     return fail(e.message);
   }
+
+  if (exception !== undefined) return runException({ profile, exception, sessionDirArg, stance, unattended, policy, deps, fail });
 
   let frontierUsed = 0;
   // A relative --run-dir is read and appended against the injected cwd, not the
