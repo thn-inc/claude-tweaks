@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const { MAX_ROUNDS, PERSPECTIVES, STATUS_RE, checkNotes, splitLines } = require('./notes');
 const { sectionLines, sectionField } = require('./status');
+const { lstatType } = require('../path-guard');
 
 const NOTES_FILE_RE = /^notes-round-(\d+)\.md$/;
 const INLINE_EXT = new Set(['.md', '.txt', '.html']);
@@ -42,14 +43,27 @@ function readBlocks(briefsText) {
   return blocks;
 }
 
-function readOrNull(file, fsImpl) {
+// A session file read with its leaf checked first: a symlink is never followed
+// (it could carry text from outside the folder into a reader's prompt).
+// -> { state: 'ok', text } | { state: 'missing' | 'symlink' | 'other' }
+function readLeaf(file, fsImpl) {
+  const t = lstatType(file, { fsImpl });
+  if (t.type === 'missing') return { state: 'missing' };
+  if (t.type === 'symlink') return { state: 'symlink' };
+  if (t.type !== 'file') return { state: 'other' };
   try {
-    return fsImpl.readFileSync(file, 'utf8');
+    return { state: 'ok', text: fsImpl.readFileSync(file, 'utf8') };
   } catch (err) {
-    if (!err || (err.code !== 'ENOENT' && err.code !== 'ENOTDIR')) throw err;
-    return null;
+    if (err && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) return { state: 'missing' };
+    throw err;
   }
 }
+
+const symlinkRefusal = (name) => ({
+  ok: false,
+  reason: 'symlink',
+  detail: `${name} is a symlink; the session reads only regular files in its folder`,
+});
 
 // design.md text without its `## Decisions` section (through the next
 // top-level heading outside a fence, or the end).
@@ -70,9 +84,10 @@ const refuse = (reason, detail) => ({ ok: false, reason, detail });
 
 // The first pending-outcome id list of `notes-round-{n}.md`, or a refusal.
 function pendingRefusal(folder, n, fsImpl) {
-  const text = readOrNull(path.join(folder, `notes-round-${n}.md`), fsImpl);
-  if (text === null) return refuse('pending-outcomes', `notes-round-${n}.md is missing`);
-  const c = checkNotes(text, n);
+  const notes = readLeaf(path.join(folder, `notes-round-${n}.md`), fsImpl);
+  if (notes.state === 'symlink') return symlinkRefusal(`notes-round-${n}.md`);
+  if (notes.state !== 'ok') return refuse('pending-outcomes', `notes-round-${n}.md is missing`);
+  const c = checkNotes(notes.text, n);
   if (c.ok) return null;
   const parts = [];
   if (c.pending.length) parts.push(`pending: ${c.pending.join(', ')}`);
@@ -89,17 +104,23 @@ function lastNotesRound(folder, fsImpl) {
     if (!err || err.code !== 'ENOENT') throw err;
     return 0;
   }
-  const rounds = names.map((n) => NOTES_FILE_RE.exec(n)).filter(Boolean).map((m) => Number(m[1]));
+  // Same window as status.js: a file past the cap is never a round.
+  const rounds = names.map((n) => NOTES_FILE_RE.exec(n)).filter(Boolean).map((m) => Number(m[1]))
+    .filter((n) => n >= 1 && n <= MAX_ROUNDS);
   return rounds.length ? Math.max(...rounds) : 0;
 }
 
+// -> { state: 'ok', text } | { state: 'missing' | 'symlink' | 'other' }. A
+// non-text storyboard is only lstat-checked, never read.
 function storyboardPiece(folder, file, fsImpl) {
   const abs = path.join(folder, file);
   if (INLINE_EXT.has(path.extname(file).toLowerCase())) {
-    const text = readOrNull(abs, fsImpl);
-    return text === null ? null : text.trim();
+    const r = readLeaf(abs, fsImpl);
+    return r.state === 'ok' ? { state: 'ok', text: r.text.trim() } : r;
   }
-  return readOrNull(abs, fsImpl) === null ? null : `Storyboard file: ${abs}\nRead this file.`;
+  const t = lstatType(abs, { fsImpl });
+  if (t.type !== 'file') return { state: t.type === 'symlink' ? 'symlink' : 'missing' };
+  return { state: 'ok', text: `Storyboard file: ${abs}\nRead this file.` };
 }
 
 // -> { ok: true, text } | { ok: false, reason, detail }
@@ -123,16 +144,19 @@ function composeBrief({ folder, reader, round, briefsText }, fsImpl = fs) {
   } else {
     const last = lastNotesRound(folder, fsImpl);
     if (last > 0) {
-      const text = readOrNull(path.join(folder, `notes-round-${last}.md`), fsImpl) || '';
-      const c = checkNotes(text, last);
+      const notes = readLeaf(path.join(folder, `notes-round-${last}.md`), fsImpl);
+      if (notes.state === 'symlink') return symlinkRefusal(`notes-round-${last}.md`);
+      const c = checkNotes(notes.state === 'ok' ? notes.text : '', last);
       if (c.pending.length) {
         return refuse('pending-outcomes', `round ${last} is not settled — pending: ${c.pending.join(', ')}`);
       }
     }
   }
 
-  const design = readOrNull(path.join(folder, 'design.md'), fsImpl);
-  if (design === null) return refuse('no-frame', 'design.md is missing');
+  const designFile = readLeaf(path.join(folder, 'design.md'), fsImpl);
+  if (designFile.state === 'symlink') return symlinkRefusal('design.md');
+  if (designFile.state !== 'ok') return refuse('no-frame', 'design.md is missing');
+  const design = designFile.text;
   if (!isPerspective) return { ok: true, text: [blocks.get(reader), withoutDecisions(design)].join('\n\n') };
 
   const frame = sectionLines(design, 'Frame');
@@ -145,8 +169,10 @@ function composeBrief({ folder, reader, round, briefsText }, fsImpl = fs) {
 
   const file = sectionField(design, 'Storyboard', 'File');
   if (!file || path.basename(file) !== file) return refuse('no-storyboard', 'design.md ## Storyboard names no File in the folder');
-  const board = storyboardPiece(folder, file, fsImpl);
-  if (board === null) return refuse('no-storyboard', `${file} is missing`);
+  const boardPiece = storyboardPiece(folder, file, fsImpl);
+  if (boardPiece.state === 'symlink') return symlinkRefusal(file);
+  if (boardPiece.state !== 'ok') return refuse('no-storyboard', `${file} is missing or not a regular file`);
+  const board = boardPiece.text;
   const boardRound = Number(sectionField(design, 'Storyboard', 'Round'));
   if (!(boardRound >= round)) {
     return refuse('stale-storyboard', `the storyboard is at round ${Number.isNaN(boardRound) ? 'none' : boardRound}, this brief is for round ${round}`);

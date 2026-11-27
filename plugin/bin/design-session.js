@@ -24,12 +24,18 @@
 //       for pre-mortem and builder.
 //   design-session.js --help
 //
-// Exit codes (verdict family: a failed check is data the calling prose branches on, not a usage error):
+// Exit codes: 0/1/2, shaped like the Payload-1/Invocation-2 family but not a
+// member — there, 1 is a bad payload; here a failed check or refused brief is
+// a verdict the calling prose branches on, so it is data:
 //   0  success; for the check-* verbs, the check passed
 //   1  a check failed or a brief was refused — stdout carries the JSON naming why
 //      (brief: { ok: false, reason, detail }, reason one of round-cap,
-//      pending-outcomes, no-frame, no-storyboard, stale-storyboard, unknown-reader)
-//   2  malformed invocation, an unreadable or missing folder or file (stderr says which)
+//      pending-outcomes, no-frame, no-storyboard, stale-storyboard, symlink,
+//      unknown-reader)
+//   2  malformed invocation, or a folder or file the caller named that cannot be
+//      read (stderr says which). A missing evidence.md or notes-round-N.md is 2,
+//      not 1: the calling step has just written it, so absence means a wrong
+//      --folder or --round, which no caller handles differently from a bad call.
 
 'use strict';
 
@@ -105,6 +111,8 @@ function today(now) {
 }
 
 // A relative path resolves against deps.cwd(); an absolute one never reads it.
+// path.resolve, not resolveAgainst: the folder is printed and embedded in a
+// brief, so one absolute normalized value is needed.
 function resolveIn(deps, p) {
   return path.isAbsolute(p) ? path.normalize(p) : path.resolve(deps.cwd(), p);
 }
@@ -141,6 +149,7 @@ function json(deps, value) {
 }
 
 function runVerb(verb, flags, deps) {
+  if (flags['--create'] && verb !== 'folder') throw new UsageError('--create applies only to the folder verb');
   if (verb === 'folder') {
     need(flags, ['--topic', '--root']);
     let slug;

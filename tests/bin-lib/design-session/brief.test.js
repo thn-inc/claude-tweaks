@@ -166,3 +166,56 @@ test('readBlocks matches markers only at the start of a line', () => {
   // the live file's lead mentions the marker syntax inline and still parses
   assert.ok(BLOCKS.has('perspective-common') && BLOCKS.has('builder'));
 });
+
+test('fix1: a symlinked design.md, storyboard or notes file is refused, never read', (t) => {
+  const outside = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'design-outside-')), 'x.md');
+  t.after(() => fs.rmSync(path.dirname(outside), { recursive: true, force: true }));
+  fs.writeFileSync(outside, 'OUTSIDE-CONTENT');
+  const link = (dir, name, target = outside) => { fs.rmSync(path.join(dir, name), { force: true }); fs.symlinkSync(target, path.join(dir, name)); };
+
+  const board = folderWith(t, {});
+  link(board, 'storyboard.md');
+  const r1 = compose(board, 'user', 1);
+  assert.strictEqual(r1.ok, false);
+  assert.strictEqual(r1.reason, 'symlink');
+  assert.ok(!JSON.stringify(r1).includes('OUTSIDE-CONTENT'));
+
+  const des = folderWith(t, {});
+  link(des, 'design.md');
+  assert.strictEqual(compose(des, 'builder').reason, 'symlink');
+  assert.strictEqual(compose(des, 'user', 1).reason, 'symlink');
+
+  const prev = folderWith(t, { 'design.md': design({ boardRound: 2 }) });
+  link(prev, 'notes-round-1.md');
+  assert.strictEqual(compose(prev, 'user', 2).reason, 'symlink');
+
+  const last = folderWith(t, {});
+  link(last, 'notes-round-1.md');
+  assert.strictEqual(compose(last, 'builder').reason, 'symlink');
+});
+
+test('fix4: a notes file past the round cap never gates pre-mortem or builder', (t) => {
+  const folder = folderWith(t, { 'notes-round-1.md': notesFile(1), 'notes-round-9.md': notesFile(9, { pending: true }) });
+  assert.strictEqual(compose(folder, 'builder').ok, true);
+  assert.strictEqual(compose(folder, 'pre-mortem').ok, true);
+  const zero = folderWith(t, { 'notes-round-0.md': notesFile(0, { pending: true }) });
+  assert.strictEqual(compose(zero, 'builder').ok, true);
+});
+
+test('fix5: a File naming a directory is a no-storyboard refusal, for text and non-text names', (t) => {
+  for (const file of ['boarddir.md', 'boarddir.png']) {
+    const folder = folderWith(t, { 'design.md': design({ file }) });
+    fs.mkdirSync(path.join(folder, file));
+    const r = compose(folder, 'user', 1);
+    assert.strictEqual(r.ok, false, file);
+    assert.strictEqual(r.reason, 'no-storyboard', file);
+  }
+});
+
+test('fix5: a non-text storyboard is checked, not read', (t) => {
+  const folder = folderWith(t, { 'design.md': design({ file: 'board.png' }), 'board.png': 'x' });
+  const reads = [];
+  const spy = { ...fs, readFileSync: (f, ...a) => { reads.push(path.basename(String(f))); return fs.readFileSync(f, ...a); } };
+  assert.strictEqual(composeBrief({ folder, reader: 'user', round: 1, briefsText: BRIEFS }, spy).ok, true);
+  assert.ok(!reads.includes('board.png'));
+});

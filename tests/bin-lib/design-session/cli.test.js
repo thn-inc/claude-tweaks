@@ -184,3 +184,25 @@ test('script entry: shebang, exit code and the real reader-briefs file', (t) => 
   assert.strictEqual(bad.code, 2);
   assert.ok(fs.readFileSync(CLI, 'utf8').startsWith('#!/usr/bin/env node'));
 });
+
+test('fix6: --create on any verb but folder is a usage error', (t) => {
+  const dir = session(t);
+  for (const argv of [['status', '--folder', dir, '--create'], ['check-evidence', '--folder', dir, '--create'],
+    ['check-notes', '--folder', dir, '--round', '1', '--create'], ['brief', '--folder', dir, '--reader', 'builder', '--create']]) {
+    const r = call(argv, '/');
+    assert.strictEqual(r.code, 2, JSON.stringify(argv));
+    assert.ok(r.stderr.includes('--create'), JSON.stringify(argv));
+  }
+});
+
+test('fix1: a symlinked storyboard refuses through the CLI with exit 1', (t) => {
+  const dir = session(t);
+  const outside = path.join(scratch(t), 'o.md');
+  fs.writeFileSync(outside, 'OUTSIDE');
+  fs.rmSync(path.join(dir, 'storyboard.md'));
+  fs.symlinkSync(outside, path.join(dir, 'storyboard.md'));
+  const r = call(['brief', '--folder', dir, '--reader', 'user', '--round', '1'], '/');
+  assert.strictEqual(r.code, 1);
+  assert.strictEqual(JSON.parse(r.stdout).reason, 'symlink');
+  assert.ok(!r.stdout.includes('OUTSIDE'));
+});
