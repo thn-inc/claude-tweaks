@@ -10,11 +10,11 @@ Draw the cheapest picture of the result — what someone sees, sends or gets onc
 
 ## 1. Pick the form
 
-Pick the form the kind of result needs, and say which and why:
+Recommend the form the kind of result needs, with its reason — the form that shows what the frame's goals promise most directly — and confirm it with the maintainer, one `AskUserQuestion` with the recommended form marked and the next most fitting form as the alternative. Append the chosen form to `## Decisions` (`- {date} — storyboard form: {form} — by: maintainer`).
 
 | The result is | Storyboard |
 |---|---|
-| Screens a person uses | Screen sketches through `/claude-tweaks:design-wrapper shape {topic} --description "{the frame's Problem line}"`; write or copy its output into the folder as `storyboard.md` (images it makes go into the folder too, named from the storyboard) |
+| Screens a person uses | Screen sketches through `/claude-tweaks:design-wrapper shape {topic} --description "{the frame's Problem line}" --source design` (`--source design` marks it caller-invoked, so the wrapper renders no Next Actions of its own); write or copy its returned output into the folder as `storyboard.md` — nothing it produces is left outside the folder (images it makes are copied in too, named from the storyboard) |
 | A command, API or tool | Example calls with their answers, including one that fails |
 | Data or state | Sample rows before and after |
 | A conversation or agent flow | A typed-out session, start to finish |

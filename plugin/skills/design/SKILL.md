@@ -30,6 +30,8 @@ Not for:
 | `topic` | Free text naming what is being designed. The folder slug is derived from it. |
 | `#N` | An issue ref. The session reads the issue (`gh issue view {N} --json title,body,state`), uses its title as the topic for searching, and cites `#N` as a source. The folder slug is `issue-{N}`. |
 
+Two placeholders follow from it. `{argument}` is what names the session: the `#N` as given, or the topic with every character other than letters (any script, `é` included), digits, spaces and `#` replaced by a space — the slug keeps only letters and digits, so the folder is the same, and no quote, `$` or backtick of free text reaches the shell. Every `folder --topic` call and every rerun or resume line uses `{argument}`. `{topic}` is the text searched for and written in headings: the topic as given, or the issue's title for `#N`.
+
 The maintainer may also name, at start, the repository that holds most of the order's work. Without one, the repository is the current checkout.
 
 ## Session folder and resume
@@ -37,21 +39,23 @@ The maintainer may also name, at start, the repository that holds most of the or
 The session's folder is `docs/superpowers/specs/{YYYY-MM-DD}-{slug}/` in the repository, holding `evidence.md`, `design.md`, `storyboard.{ext}` and `notes-round-{N}.md`. The skill writes nothing outside it, and never creates a worktree or a branch.
 
 1. `{repo root}` is `git rev-parse --show-toplevel` of the current checkout, or the absolute path of the local checkout the maintainer named.
-2. **Worktree gate, before the first write.** Read `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values worktree-always` (it reads the current directory's project; for a named other repository, read the `worktree-always:` line of `{repo root}/.claude-tweaks/policy.yml`, absent meaning `false`). When it is `true` and the checkout is the main checkout, not a linked worktree — `git -C "{repo root}" rev-parse --git-dir` prints the same as `git -C "{repo root}" rev-parse --git-common-dir` — stop. Tell the maintainer to start the session inside a worktree (`/superpowers:using-git-worktrees`) and run `/claude-tweaks:design {topic}` again: the `worktree-always` gate would refuse the write.
+2. **Worktree gate, before the first write.** Read `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values worktree-always` (it reads the current directory's project; for a named other repository, read the `worktree-always:` line of `{repo root}/.claude-tweaks/policy.yml`, absent meaning `false`). When it is `true` and the checkout is the main checkout, not a linked worktree — `git -C "{repo root}" rev-parse --git-dir` prints the same as `git -C "{repo root}" rev-parse --git-common-dir` — stop. Tell the maintainer to start the session inside a worktree (`/superpowers:using-git-worktrees`) and run `/claude-tweaks:design {argument}` again: the `worktree-always` gate would refuse the write.
 3. Find or create the folder:
 
    ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/bin/design-session.js" folder --topic "{topic}" --root "{repo root}" --create
+   node "${CLAUDE_PLUGIN_ROOT}/bin/design-session.js" folder --topic "{argument}" --root "{repo root}" --create
    ```
 
-   `{topic}` is the argument with every character other than letters, digits, spaces and `#` replaced by a space — the slug keeps only letters and digits, so the folder is the same, and no quote, `$` or backtick of free text reaches the shell. The printed folder is `{folder}` (also written `{design folder}`) in every later command, as an absolute path. An existing folder for the same slug is resumed, never duplicated.
+   The printed folder is `{folder}` (also written `{design folder}`) in every later command, as an absolute path. An existing folder for the same slug is resumed, never duplicated.
 4. Read where to continue:
 
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/bin/design-session.js" status --folder "{folder}"
    ```
 
-   It prints `steps`, `resumeAt`, `round`, `action` and `openSerious`. Continue at `resumeAt`, in the mode `action` names, and load only that step's sub-file (`## Steps`). `resumeAt: 'complete'` → say the session is finished and render `## Next Actions`; nothing is rewritten. Exit 2 → stop and show stderr.
+   It prints `steps`, `resumeAt`, `round`, `action` and `openSerious`. Exit 2 → stop and show stderr.
+5. **Session model check** (`## Model`, The session) — every start, whatever step `status` resumes at, before going on.
+6. Continue at `resumeAt`, in the mode `action` names, and load only that step's sub-file (`## Steps`). `resumeAt: 'complete'` → say the session is finished and render `## Next Actions`; nothing is rewritten.
 
 Run `status` again after each step finishes, and follow it; never pick the next step by hand.
 
@@ -61,7 +65,7 @@ The folder is uncommitted until the maintainer commits it, and a later session r
 
 ## Model
 
-**The session.** At start, before step 2, run `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" frontier` and compare its printed `model` with the session's own model family (`haiku` < `sonnet` < `opus` < `fable`). When the session's is lower, say so and ask with one `AskUserQuestion`: `Switch to the top tier and resume (Recommended)` — the session stops; the maintainer switches with `/model` and runs `/claude-tweaks:design {topic}` again — or `Continue on this model` — the session runs below the top tier while its readers still resolve to it. Recommend switching because the session itself judges every note and settles every guess. A choice to continue goes into `## Decisions` (`by: maintainer`) once `design.md` exists.
+**The session.** At every start (step 5 of `## Session folder and resume`), so always before step 2, run `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" frontier` and compare its printed `model` with the session's own model family (`haiku` < `sonnet` < `opus` < `fable`). When the session's is lower, say so and ask with one `AskUserQuestion`: `Switch to the top tier and resume (Recommended)` — the session stops; the maintainer switches with `/model` and runs `/claude-tweaks:design {argument}` again — or `Continue on this model` — the session runs below the top tier while its readers still resolve to it. Recommend switching because the session itself judges every note and settles every guess. A choice to continue goes into `## Decisions` (`by: maintainer`) once `design.md` exists.
 
 **Step 1's searchers** are the one exception to the top tier: they resolve with `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" fast` (`step-1-evidence.md`).
 
@@ -72,10 +76,10 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" frontier --exception design-
 ```
 
 1. Resolve every reader of a dispatch group first, one call each, before any reader of that group is started. Resolve only readers not yet recorded: a resumed round resolves only the perspectives `check-notes` lists in `missingPerspectives`, since every resolution counts against the 22-per-session limit whether or not its reader ran.
-2. Any call exits 3 → stop before any reader of that round is started. Show the `stepDown.reason` it printed; for `limit`, also the count already used — the line count of `{folder}/frontier-exception-tally.log`, out of 22. Ask the maintainer what to do. Never lower the tier, and never dispatch a reader on another profile.
+2. Any call exits 3 → stop before any reader of that round is started. Show the `stepDown.reason` it printed; for `limit`, also the count already used — the line count of `{folder}/frontier-exception-tally.log`, out of 22. Ask with one `AskUserQuestion`: `Stop and resume later (Recommended)` — the session ends here and `/claude-tweaks:design {argument}` picks it up once the reason clears — or `Fix the cause and retry` — the maintainer clears the reason (for `policy`, `stance` or `ceiling`, the setting that caused it) and the same group is resolved again. Recommend stopping because a reader below the top tier would hand back weaker notes that look the same, and the session cannot judge the design without them. Never lower the tier, and never dispatch a reader on another profile.
 3. Any call exits 1 → stop and show its stderr.
-4. Only when every call exited 0, dispatch the whole group in one message: one `Agent` call per reader, a fresh agent (never `subagent_type: "fork"`), `model` = the printed `model`, `effort` = the printed `launchEffort` when it is not `null` (no `effort` when it is). The prompt is exactly the `brief` command's stdout followed by the printed `effortLine` — the brief is the reader's whole prompt, and nothing from the conversation is added, summarized or reworded.
-5. A reader that fails with a credit or usage-exhaustion error → run `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" record-failure {model}`, then stop and ask.
+4. Only when every call exited 0, dispatch the whole group in one message: one `Agent` call per reader, a fresh agent (never `subagent_type: "fork"`), `model` = the printed `model`, `effort` = the printed `launchEffort` when it is not `null` (no `effort` when it is). The prompt is exactly the `brief` command's stdout followed by the printed `effortLine` when it is non-empty — the brief is the reader's whole prompt, and nothing from the conversation is added, summarized or reworded.
+5. A reader that fails with a credit or usage-exhaustion error → run `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" record-failure {model}`, then stop and ask with one `AskUserQuestion`: `Stop and resume later (Recommended)` — the session ends; `/claude-tweaks:design {argument}` resumes it once the usage window resets — or `Retry now` — the group is resolved again, and the resolver steps down past the failed model, so step 2 applies. Recommend stopping, since a retry inside the same window resolves to a step-down that step 2 already refuses.
 
 The exception's full rules are in `_shared/frontier-exception.md`.
 
@@ -108,13 +112,13 @@ The readers' briefs live in `reader-briefs.md`; the `brief` command composes eac
 After step 7, or when `status` prints `resumeAt: 'complete'`, render as plain markdown (docs/skill-authoring.md's Skill handoffs convention), with `{design.md path}` the repository-relative path of the session's `design.md`:
 
 **`/claude-tweaks:specify {design.md path}`** — shape the design into records (recommended)
-`/claude-tweaks:design {topic}` — resume or reread this session later, from the same checkout
+`/claude-tweaks:design {argument}` — resume or reread this session later, from the same checkout
 
 When the session stops early (a step-down, a stop at the round cap, the worktree gate), render only the resume line.
 
 ## Component-Skill Contract
 
-`/claude-tweaks:design` is standalone and human-present: no skill or pipeline invokes it, so there is no `PIPELINE_RUN_DIR` signal to check, and `## Next Actions` always renders. It never runs headless — its readers' tier resolution refuses an unattended call.
+`/claude-tweaks:design` is standalone and human-present: no skill or pipeline invokes it, so there is no `PIPELINE_RUN_DIR` signal to check, and `## Next Actions` always renders. It is never run unattended: every step waits on the maintainer.
 
 ## Anti-Patterns
 

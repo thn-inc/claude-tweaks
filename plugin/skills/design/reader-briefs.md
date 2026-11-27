@@ -2,6 +2,16 @@
 
 Read by `design-session.js brief`, never loaded by the session itself. Only the text between a `<!-- brief:{name}:start -->` and its `<!-- brief:{name}:end -->` marker is sent; this lead is not. A perspective reader's prompt is `perspective-common`, then its perspective's block, then the frame and the storyboard, then `perspective-output`. The pre-mortem and builder readers get their block, then `design.md` without its `## Decisions` section. Each block must stand alone: a reader sees only its prompt.
 
+What the session does with a perspective reader's notes — kept here, outside every block, so no reader sees it. Each note becomes one entry in `notes-round-{N}.md` (H1 `# Perspective notes — round {N}`, then a `Status: in-progress|done` line):
+
+```
+## {N}.{i} — {perspective} — serious|minor
+> {the reader's note block, every line prefixed "> "}
+Outcome: pending
+```
+
+A `NO NOTES` reply is `## {N}.{i} — {perspective} — none`, with no `Outcome:` line. The outcome vocabulary the refusal gate (`check-notes`) reads is `pending` until the maintainer decides, then one of `changed — {what changed}`, `declined — {why}`, `accepted-risk — {the risk, named}`; an outcome without its explanation after the dash counts as pending.
+
 <!-- brief:perspective-common:start -->
 You are a fresh reader of a design for something not built yet. You see only the design's frame (the problem, why now, goals, non-goals, anti-goals, and how success is measured) and its storyboard (the cheapest picture of the result), which follow this brief. You have no other context, and that is deliberate: judge only what these two pieces say, and treat anything they leave unsaid as unsaid.
 

@@ -6,7 +6,7 @@ Find what already exists before any idea is discussed. Nothing is proposed — n
 
 ## 1. Search
 
-`action: 'continue'` with an `evidence.md` already present: read it, and dispatch searchers only for the areas it has no claim from.
+`action: 'continue'` with an `evidence.md` already present: read it. When this session still holds every searcher's reply, go to section 3. Otherwise the file does not say which areas were searched, so run every searcher again and merge their claims with the file's, dropping duplicates. Either way the file is shown (section 3) before it is marked done.
 
 > **Parallel execution:** Dispatch one searcher per area below as parallel Task agents — each runs independently and returns claim/source pairs. Assemble results after all agents complete.
 
@@ -23,7 +23,7 @@ Find what already exists before any idea is discussed. Nothing is proposed — n
 
 Substitute the absolute plugin root for `${CLAUDE_PLUGIN_ROOT}` and the absolute `{repo root}` before dispatch. `{topic}` is the topic (for `#N`, the issue's title); `{keywords}` is two to five plain words from it, letters and digits only.
 
-Each searcher's prompt is this block, filled in, with the resolver's `effortLine` appended when it is not `null`:
+Each searcher's prompt is this block, filled in, with the resolver's `effortLine` appended when it is non-empty:
 
 ```
 Task scope: find what already exists in the repository at {repo root} about this topic: {topic}
@@ -61,21 +61,23 @@ Drop a claim whose source fails, or find it a real one. Merge claims two searche
 
 ## 3. Write, check, show
 
-Write `{folder}/evidence.md`:
+Write `{folder}/evidence.md` — its H1, its `Status:` line, and one `- {claim} — source: {source}` bullet per claim, nothing else:
 
 ```
 # Evidence — {topic}
-Status: done
+Status: in-progress
 
 - {claim} — source: {source}
 ```
 
-One `- {claim} — source: {source}` bullet per claim, grouped under plain paragraph lines naming the area if that helps, never under `## ` headings. A search that found nothing is not a bullet, since an absence has no source: name it in a plain line, `Searched, nothing found: {area} ({the search}).` Then run:
+No area labels, headings or other lines go into the file. An area whose search found nothing, and a searcher that could not reach its area, are not written there — an absence has no source; they are said in the conversation when the file is shown. Then run:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/design-session.js" check-evidence --folder "{folder}"
 ```
 
-Exit 1 → its JSON names the `unsourced` bullet lines and whether a fence is left open (`unclosedFence`); fix those lines and run it again, until it exits 0. Exit 2 → stop and show stderr.
+While the file says `Status: in-progress` this exits 1 even when every claim is sound; read its JSON and require `unsourced: []` and `unclosedFence: false`. Anything else → fix the lines it names and run it again. Exit 2 → stop and show stderr.
 
-Only after it exits 0, show `evidence.md` to the maintainer, in full, with any searcher that could not reach its area. Then run `status` and continue.
+Once `unsourced` is empty and no fence is open, show `evidence.md` to the maintainer, in full, followed by the areas that found nothing (with the search each ran) and any searcher that could not reach its area. Only after it has been shown, set `Status: done` and run `check-evidence` again; it must exit 0. Then run `status` and continue.
+
+A resumed session (`action: 'continue'`) whose `evidence.md` is still `Status: in-progress` with no searches left to run goes straight to this section: check it, show it, then mark it done.
