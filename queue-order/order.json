@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-26T18:46:16.191Z",
+  "computedAt": "2026-11-27T16:30:31.435Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -21,11 +21,6 @@
       {
         "number": 5070,
         "updatedAt": "2026-11-15T15:09:46Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5053,
-        "updatedAt": "2026-11-26T16:53:40Z",
         "state": "OPEN"
       },
       {
@@ -536,16 +531,6 @@
       {
         "number": 3731,
         "updatedAt": "2026-11-24T10:18:08Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 3468,
-        "updatedAt": "2026-11-26T16:19:36Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 3467,
-        "updatedAt": "2026-11-26T16:59:49Z",
         "state": "OPEN"
       },
       {
@@ -6645,84 +6630,6 @@
           "grants": {
             "build": true,
             "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Verified-as-of: 6ebb484d71cc753d74ca967edfa6f45f3e41fe83\n\nOrigin: #3405 build ruling (ledger row 11)\n\nDefer-reason: needs-human-decision\n\n## Current State\n\n#3405 cross-checks the workflow runs that already exist for the PR head sha (`gh run list --commit`), so a registered-but-incomplete run reads pending. A `pull_request` run GitHub has not created yet is invisible to both the rollup and the runs list, so a push-triggered run alone can still read green in that first moment. The obvious fix, requiring at least one head run with `event: pull_request` whenever the repo has PR CI (`hasPullRequestCi`), was declined during the build because it would hold path-filtered PRs (no PR workflow triggers) pending until the 15-minute park.\n\n## Deliverables\n\n- [ ] Choose a rule that closes the pre-creation window without parking path-filtered PRs, for example a short settle delay after the head's push, or reading the workflow definitions' path filters against the PR's changed files.\n- [ ] Implement it in `classify.js`/`pr-checks.js` and Step 2.5's prose, with a test for the path-filtered case.\n\n**Decision** (2026-11-26, maintainer, recorded by the orchestrating session; answers Deliverable 1): **a 60-second settle window.** When the repo has PR CI (`hasPrCi`) and the head commit has no `pull_request`/`pull_request_target` run yet, the PR reads `pending` until 60 seconds after the earliest workflow run GitHub created for that head sha, under any event. When no run exists at all, the head commit's committer date stands in. After the window, the absence of a PR-event run means none applies (the path-filtered case), and the existing rollup and head runs decide.\n\n- **Evidence:** over the last 25 merged PRs (read 2026-11-26), GitHub created the `test` `pull_request` run 2 to 19 seconds after the push. In 9 of the 25, the push-only `track-issue-fixes` run had already completed 1 to 17 seconds before that, so a read in that gap saw only green. #5153's ready-run check closes this window only for workflows that skip draft PRs, and it reports `not-applicable` in this repository.\n- **Cost:** a normal PR waits nothing extra. A path-filtered PR waits 60 seconds once.\n- **Rejected:** matching workflow path filters against the PR's changed files. It would re-implement GitHub's branches/paths/paths-ignore/types semantics, and every divergence would be a false green or a false hold.\n- **Shares `classify.js` with #3467:** build the two one after the other, never in parallel.\n\n## Acceptance Criteria\n\n- A PR whose `pull_request` run has not been created yet does not read green.\n- A PR whose path filters match no PR workflow still reads green once its push runs complete.\n\n_Filed by `wrap-up` via specShapedBody._\n\n## Release Note\n\nPipeline merges wait for a pull_request workflow that GitHub has not created yet.\n\n_Filed by `wrap-up` via specShapedBody._",
-        "createdAt": "2026-10-17T20:43:36Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 3468,
-        "state": "OPEN",
-        "title": "A pull_request workflow run not yet created still leaves a partial rollup green at the merge gate",
-        "updatedAt": "2026-11-26T16:19:36Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
           },
           "bot": {
             "inProgress": false,
