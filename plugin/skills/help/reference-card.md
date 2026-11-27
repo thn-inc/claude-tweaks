@@ -45,6 +45,7 @@ Quick reference for all claude-tweaks skills. For full details, run `/claude-twe
 | `/claude-tweaks:dispatch` | The queue consumer — selects an authorized record's group (the record, or its fast-lane bundle), mints its run directory, and hands it to `/flow` (which claims it via an atomic blob lock at its Step 2.8); settles on success/failure. `close-out` is a distinct mode: closes out an already-`pending-review` PR a human approved directly on GitHub, with no live dispatch session left to resume. `resume #N` is another: restarts a dispatched build that stalled before the test gate, on its own still-open draft PR | `[#N[,#M...]] [--budget <n\|all>] [--priority high\|medium\|low] [--settle-parked] [close-out [#N[,#M...]]] [resume #N]` |
 | `/claude-tweaks:browse` | Unified browser automation (utility) | `[<url>\|<task description>] [--session <name> ...] [resize <w> <h>\|--device "<name>"] [backend=chrome ...] [--quick]` |
 | `/claude-tweaks:ledger` | Open items tracking — query, resolve ledger entries | `[resolve [<feature-name>]\|<feature-name>]` |
+| `/claude-tweaks:design` | Design session for an order (a parent with parts) — evidence, frame, storyboard, five fresh readers, alternatives, pre-mortem, builder check, saved in one folder as it happens; ends by naming `/claude-tweaks:specify` | `<topic\|#N>` |
 | `/claude-tweaks:research` | Deep web research with citation-audited reports — 4 runtime modes from quick to ultradeep. `verify` mode grounds a design's assumptions before `/superpowers:brainstorming`; the bare-topic form stays a no-fixed-position utility. | `verify [brief-path\|#N] \| <topic> [--mode=quick\|standard\|deep\|ultradeep] [--engine=auto\|inline] [--output=<path>]` |
 | `/claude-tweaks:code-health` | LLM-as-judge recurring sweep — applies criteria holistically to a directory slice, deduplicates against open GitHub issues, files pre-specs as GitHub issues. Scheduled Routine. Never edits code. | `[--area <path>] [focus=<vertical>] [--budget <n>] [--min-risk low\|medium\|high] [--dry-run] [--root <dir>]` |
 | `/claude-tweaks:routine` | Instantiate a skill's routine template (e.g. code-health's) into a live cloud Routine via `RemoteTrigger` — template-driven, resolves project/account values with minimal prompts. `fleet on\|status\|off` provisions/aggregates/pauses the whole self-maintaining fleet in one action instead of one skill at a time | `<create\|update\|status\|pause\|resume\|webhook-trigger> <skill>\|--all\|<fleet on\|status\|off> [--dry-run] [--defaults] [--branch <name>] [--environment <id>] [--refresh-environment] [--events <e1,e2,...>] [--filter <field>=<op>:<value>[,...]]` |
@@ -124,6 +125,13 @@ or standalone:
 /claude-tweaks:test full                              → the whole suite on this machine, asked for by name
 ```
 
+### Order from scratch (a parent with parts)
+```
+/claude-tweaks:design a meal planning order           → session folder under docs/superpowers/specs/
+/claude-tweaks:specify docs/superpowers/specs/{date}-meal-planning/design.md
+/claude-tweaks:flow 73
+```
+
 ### Brownfield onboarding
 ```
 /claude-tweaks:init
@@ -142,6 +150,7 @@ Backlog record → Design Doc → Ready record(s) → Code → Stories → TEST_
 | `/claude-tweaks:capture` | Backlog record | — |
 | `/claude-tweaks:challenge` | — | — |
 | `/superpowers:brainstorming` | Design Doc | — |
+| `/claude-tweaks:design` | Design session folder (`evidence.md`, `design.md`, `storyboard`, `notes-round-N.md`) | — |
 | `/claude-tweaks:specify` | Ready record(s) — shapes an existing record in place, or creates ready sub-issues (plus a parent when kept) | Design Doc |
 | `/claude-tweaks:build` | Code (+ Journeys via /journeys) | — |
 | `/claude-tweaks:journeys` | Journey files | — |

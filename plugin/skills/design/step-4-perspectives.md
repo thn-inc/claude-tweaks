@@ -37,7 +37,7 @@ For each perspective to run, compose its brief:
 node "${CLAUDE_PLUGIN_ROOT}/bin/design-session.js" brief --folder "{folder}" --reader {perspective} --round {N}
 ```
 
-Exit 1 → stop and show the reason its JSON names (`pending-outcomes`, `round-cap`, `no-frame`, `no-storyboard`); no reader of this round is started. Exit 2 → stop and show stderr.
+Exit 1 → stop and show the reason its JSON names (`pending-outcomes`, `round-cap`, `no-frame`, `no-storyboard`, `stale-storyboard` — the storyboard is behind this round, so go to step 3 and revise it first; `unknown-reader`; `symlink` — a session file is a symlink, so stop and tell the maintainer); no reader of this round is started. Exit 2 → stop and show stderr.
 
 With every brief in hand, resolve each perspective's tier and dispatch them per SKILL.md's `## Model`: every resolution first, and the whole group in one message only when all exited 0. Each reader's prompt is exactly its brief's stdout followed by the resolver's `effortLine` when it is non-empty — the brief is the reader's whole prompt; nothing from the conversation, the evidence or the decisions is added.
 

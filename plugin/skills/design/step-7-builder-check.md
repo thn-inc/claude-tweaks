@@ -14,7 +14,7 @@ Add the section to `{folder}/design.md`, after `## Pre-mortem`, with `Status: in
 node "${CLAUDE_PLUGIN_ROOT}/bin/design-session.js" brief --folder "{folder}" --reader builder
 ```
 
-Exit 1 → stop and show the reason its JSON names. Exit 2 → stop and show stderr.
+Exit 1 → stop and show the reason its JSON names (`pending-outcomes` in the last notes round, `no-frame`, or `symlink` — a session file is a symlink, so stop and tell the maintainer). Exit 2 → stop and show stderr.
 
 Resolve the reader's tier and dispatch it per SKILL.md's `## Model` (a group of one). Its prompt is exactly the brief's stdout followed by the resolver's `effortLine` when it is non-empty — the brief is the reader's whole prompt; nothing from the conversation is added.
 
