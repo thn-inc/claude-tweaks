@@ -4,9 +4,7 @@
 'use strict';
 
 const { fencedLineMask } = require('../markdown-blocks');
-const { splitLines } = require('./notes');
-
-const H2_RE = /^##\s/;
+const { H2_RE, splitLines } = require('./notes');
 
 // Lines of the `## {heading}` section, heading excluded, up to the next `## `
 // line outside a fence; null when the heading is absent.
@@ -36,4 +34,4 @@ function sectionField(designText, heading, key) {
   return null;
 }
 
-module.exports = { H2_RE, sectionLines, sectionField };
+module.exports = { sectionLines, sectionField };

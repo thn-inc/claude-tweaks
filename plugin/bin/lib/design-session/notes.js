@@ -124,6 +124,6 @@ function lastNotesRound(names) {
 }
 
 module.exports = {
-  MAX_ROUNDS, PERSPECTIVES, OUTCOMES, STATUS_RE, parseNotes, checkNotes, roundSettled, lastNotesRound,
+  MAX_ROUNDS, PERSPECTIVES, OUTCOMES, STATUS_RE, H2_RE, parseNotes, checkNotes, roundSettled, lastNotesRound,
   leadingStatus, splitLines,
 };

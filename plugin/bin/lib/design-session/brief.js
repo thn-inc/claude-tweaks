@@ -6,8 +6,10 @@
 
 const fs = require('fs');
 const path = require('path');
-const { MAX_ROUNDS, PERSPECTIVES, STATUS_RE, roundSettled, lastNotesRound, splitLines } = require('./notes');
-const { H2_RE, sectionLines, sectionField } = require('./design-md');
+const {
+  MAX_ROUNDS, PERSPECTIVES, STATUS_RE, H2_RE, roundSettled, lastNotesRound, splitLines,
+} = require('./notes');
+const { sectionLines, sectionField } = require('./design-md');
 const { fencedLineMask } = require('../markdown-blocks');
 const { lstatType } = require('../path-guard');
 
