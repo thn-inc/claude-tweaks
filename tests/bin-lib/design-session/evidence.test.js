@@ -14,7 +14,7 @@ test('AC1.1: every evidence line names a source', () => {
     '- Slug rule — source: plugin/bin/lib/worktree/name.js:20, 014fe653bf',
     '- Run — source: .claude-tweaks/pipelines/2026-11-27T180207-record-6352/work',
   ].join('\n');
-  assert.deepStrictEqual(checkEvidence(text), { done: true, unsourced: [] });
+  assert.deepStrictEqual(checkEvidence(text), { done: true, unsourced: [], unclosedFence: false });
 
   const bad = ['# E', 'Status: done', '- ok — source: #1', '- none', '- vague — source: somewhere'].join('\n');
   const r = checkEvidence(bad);
@@ -28,7 +28,7 @@ test('done with no claim bullets is not done', () => {
 
 test('bullets inside a fenced code block are not claims', () => {
   const text = ['# E', 'Status: done', '- a — source: #1', '```', '- example bullet', '```'].join('\n');
-  assert.deepStrictEqual(checkEvidence(text), { done: true, unsourced: [] });
+  assert.deepStrictEqual(checkEvidence(text), { done: true, unsourced: [], unclosedFence: false });
 });
 
 test('a fence that is never closed leaves the evidence not done', () => {
@@ -36,7 +36,8 @@ test('a fence that is never closed leaves the evidence not done', () => {
   assert.strictEqual(checkEvidence(only).done, false);
   // A sourced claim before the open fence must not let the swallowed bullets pass.
   const after = ['# E', 'Status: done', '- a — source: #1', '```', '- unsourced claim'].join('\n');
-  assert.strictEqual(checkEvidence(after).done, false);
+  assert.deepStrictEqual(checkEvidence(after), { done: false, unsourced: [], unclosedFence: true });
+  assert.strictEqual(checkEvidence(only).unclosedFence, true);
 });
 
 test('unsourced bullets are reported by line number', () => {
@@ -54,7 +55,7 @@ test('unsourced bullets are reported by line number', () => {
 
 test('in-progress status is not done', () => {
   const r = checkEvidence('# E\n\nStatus: in-progress\n- a — source: #1\n');
-  assert.deepStrictEqual(r, { done: false, unsourced: [] });
+  assert.deepStrictEqual(r, { done: false, unsourced: [], unclosedFence: false });
 });
 
 test('SOURCE_RE accepts exactly the four forms', () => {

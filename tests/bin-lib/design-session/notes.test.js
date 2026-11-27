@@ -91,13 +91,43 @@ test('a malformed or unknown-perspective heading keeps the round open', () => {
   const r = checkNotes(text);
   assert.strictEqual(r.ok, false);
   assert.strictEqual(r.malformed.length, 2);
+  assert.match(r.malformed[0], /^line 23: /);
   assert.deepStrictEqual(r.pending, []);
+});
+
+test('a duplicate entry id is malformed, naming the id', () => {
+  const r = checkNotes(round(1, 'done', [...ALL_FIVE, '## 1.2 — smallest — minor', 'x', 'Outcome: changed — y']));
+  assert.strictEqual(r.ok, false);
+  assert.deepStrictEqual(r.malformed, ['line 23: duplicate id 1.2']);
+});
+
+test('an entry id from another round is malformed, naming the id', () => {
+  const entries = ALL_FIVE.map((l) => l.replace(/^## 1\.5 /, '## 3.5 '));
+  const r = checkNotes(round(1, 'done', entries));
+  assert.strictEqual(r.ok, false);
+  assert.deepStrictEqual(r.malformed, ['line 19: id 3.5 is not in round 1']);
+});
+
+test('the round comes from the H1; a missing or mismatched H1 is malformed', () => {
+  assert.strictEqual(parseNotes(round(2, 'done', [])).round, 2);
+
+  const noHeading = round(1, 'done', ALL_FIVE).replace('# Perspective notes — round 1', '# Notes');
+  const m = checkNotes(noHeading);
+  assert.strictEqual(m.ok, false);
+  assert.deepStrictEqual(m.malformed, ["line 1: missing '# Perspective notes — round N' heading"]);
+  assert.strictEqual(parseNotes(noHeading).round, null);
+
+  // Round 1 file read as round 2 (the caller's expected round from the file name).
+  const wrong = checkNotes(round(1, 'done', ALL_FIVE), 2);
+  assert.strictEqual(wrong.ok, false);
+  assert.deepStrictEqual(wrong.malformed, ['line 1: heading says round 1, expected round 2']);
+  assert.strictEqual(checkNotes(round(1, 'done', ALL_FIVE), 1).ok, true);
 });
 
 test('headings and outcomes inside a fence are note text', () => {
   const text = round(1, 'done', [
     ...ALL_FIVE.slice(0, 3),
-    '```', '## 9.9 — user — serious', 'Outcome: pending', '```', '',
+    '```', '## 1.9 — user — serious', 'Outcome: pending', '```', '',
     ...ALL_FIVE.slice(3),
   ]);
   const r = parseNotes(text);

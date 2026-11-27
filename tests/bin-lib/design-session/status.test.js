@@ -174,7 +174,76 @@ test('cap reached, then continued', (t) => {
   assert.strictEqual(s.round, null);
 });
 
-const THROUGH_PERSPECTIVES = [section('Frame', 'done'), storyboard('done', 1), section('Perspectives', 'done')];
+const LOOP_BASE = { 'evidence.md': EVIDENCE, 'storyboard.md': 'x' };
+const triple = (s) => [s.resumeAt, s.round, s.action];
+
+test('Perspectives marked done with a pending outcome finishes the round', (t) => {
+  const dir = folderWith(t, {
+    ...LOOP_BASE, 'notes-round-1.md': notes(1, 'done', ['serious'], 'pending'),
+    'design.md': design(...UP_TO_STORYBOARD, section('Perspectives', 'done')),
+  });
+  const s = readStatus(dir);
+  assert.strictEqual(s.steps[4], 'partial');
+  assert.deepStrictEqual(triple(s), [4, 1, 'finish-round']);
+});
+
+test('Perspectives marked done with no notes file does not reach step 5', (t) => {
+  const dir = folderWith(t, { ...LOOP_BASE, 'design.md': design(...UP_TO_STORYBOARD, section('Perspectives', 'done')) });
+  const s = readStatus(dir);
+  assert.strictEqual(s.steps[4], 'partial');
+  assert.deepStrictEqual(triple(s), [4, 1, 'start-round']);
+});
+
+test('Perspectives marked done while round 1 still has a serious note is not closed', (t) => {
+  const dir = folderWith(t, {
+    ...LOOP_BASE, 'notes-round-1.md': notes(1, 'done', ['serious']),
+    'design.md': design(...UP_TO_STORYBOARD, section('Perspectives', 'done')),
+  });
+  assert.deepStrictEqual(triple(readStatus(dir)), [3, 2, 'revise-storyboard']);
+});
+
+test('a notes-round-5.md is ignored and round 5 is never returned', (t) => {
+  const files = {
+    ...LOOP_BASE, 'design.md': design(section('Frame', 'done'), storyboard('done', 5), section('Perspectives', 'in-progress')),
+    'notes-round-5.md': notes(5, 'in-progress', ['serious'], 'pending'),
+  };
+  for (let n = 1; n <= 4; n++) files[`notes-round-${n}.md`] = notes(n, 'done', ['serious'], 'declined — no');
+  const s = readStatus(folderWith(t, files));
+  assert.deepStrictEqual(triple(s), [4, 4, 'cap-reached']);
+  const only5 = readStatus(folderWith(t, {
+    ...LOOP_BASE, 'design.md': design(...UP_TO_STORYBOARD), 'notes-round-5.md': notes(5, 'done', ['serious']),
+  }));
+  assert.deepStrictEqual(triple(only5), [4, 1, 'start-round']);
+});
+
+test('a storyboard with a missing or non-numeric Round: is revised, not re-read', (t) => {
+  for (const extra of [['File: storyboard.md'], ['Round: two', 'File: storyboard.md']]) {
+    const dir = folderWith(t, {
+      ...LOOP_BASE, 'notes-round-1.md': notes(1, 'done', ['serious']),
+      'design.md': design(section('Frame', 'done'), section('Storyboard', 'done', extra)),
+    });
+    const s = readStatus(dir);
+    assert.strictEqual(s.steps[3], 'done');
+    assert.deepStrictEqual(triple(s), [3, 2, 'revise-storyboard'], extra.join(' | '));
+  }
+});
+
+test('finish-round when a perspective is missing or a heading is malformed', (t) => {
+  const design1 = design(...UP_TO_STORYBOARD);
+  const full = notes(1, 'done', ['minor']);
+  const missing = full.replace('## 1.5 — introduction — none', '');
+  // Every perspective still recorded; only the extra heading is wrong.
+  const bad = `${full}\n## 1.6 user serious\nx\nOutcome: changed — y\n`;
+  for (const text of [missing, bad]) {
+    assert.notStrictEqual(text, full);
+    const dir = folderWith(t, { ...LOOP_BASE, 'design.md': design1, 'notes-round-1.md': text });
+    assert.deepStrictEqual(triple(readStatus(dir)), [4, 1, 'finish-round']);
+  }
+  const ok = folderWith(t, { ...LOOP_BASE, 'design.md': design1, 'notes-round-1.md': full });
+  assert.deepStrictEqual(triple(readStatus(ok)), [4, 1, 'close-perspectives']);
+});
+
+const THROUGH_PERSPECTIVES =[section('Frame', 'done'), storyboard('done', 1), section('Perspectives', 'done')];
 const BASE = { 'evidence.md': EVIDENCE, 'storyboard.md': 'x', 'notes-round-1.md': notes(1, 'done', ['minor']) };
 
 test('half-written section resumes that step', (t) => {

@@ -10,7 +10,8 @@ const SOURCE_RE = new RegExp(`^${ONE}(?:, ${ONE})*$`);
 
 const STATUS_RE = /^status:\s*(done|in-progress)\s*$/i;
 
-// -> { done, unsourced: 1-based line numbers of bullets without a valid source }
+// -> { done, unsourced: 1-based line numbers of bullets without a valid source,
+//      unclosedFence: a ``` fence is still open at end of file }
 function checkEvidence(text) {
   const lines = String(text).split(/\r?\n/);
   const h1 = lines.findIndex((l) => /^# /.test(l));
@@ -35,7 +36,11 @@ function checkEvidence(text) {
   });
 
   // An unclosed fence hides every bullet after it, so the file is not done.
-  return { done: status === 'done' && !fenced && claims > 0 && unsourced.length === 0, unsourced };
+  return {
+    done: status === 'done' && !fenced && claims > 0 && unsourced.length === 0,
+    unsourced,
+    unclosedFence: fenced,
+  };
 }
 
 module.exports = { checkEvidence, SOURCE_RE };

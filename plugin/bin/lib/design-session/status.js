@@ -95,27 +95,35 @@ function readStatus(folder, fsImpl = fs) {
     if (!present) steps[3] = 'partial';
   }
 
-  const first = [1, 2, 3, 4, 5, 6, 7].find((n) => steps[n] !== 'done');
-  if (first === undefined) return { steps, resumeAt: 'complete', round: null, action: null, openSerious: [] };
-  if (first > 4 || first < 3 || steps[4] === 'done') return { steps, ...plain(first, steps[first]) };
-
-  // The 3<->4 loop. R = highest notes round within the cap; a file past the
-  // cap is never a round to resume.
+  // R = highest notes round within the cap; a file past the cap is never a
+  // round to resume.
   const rounds = listOrEmpty(folder, fsImpl)
     .map((name) => NOTES_FILE_RE.exec(name))
     .filter(Boolean)
     .map((m) => Number(m[1]))
     .filter((n) => n >= 1 && n <= MAX_ROUNDS);
   const R = rounds.length ? Math.max(...rounds) : 0;
+  const notesText = R ? readOrNull(path.join(folder, `notes-round-${R}.md`), fsImpl) || '' : '';
+  const check = checkNotes(notesText, R);
+  const roundDone = R > 0 && check.ok && parseNotes(notesText, R).done;
 
+  // A `done` Perspectives section counts only when the loop really closed:
+  // the last round is complete and has no serious note, or the cap was reached.
+  if (steps[4] === 'done' && !(roundDone && (check.serious.length === 0 || R >= MAX_ROUNDS))) {
+    steps[4] = 'partial';
+  }
+
+  const first = [1, 2, 3, 4, 5, 6, 7].find((n) => steps[n] !== 'done');
+  if (first === undefined) return { steps, resumeAt: 'complete', round: null, action: null, openSerious: [] };
+  if (first > 4 || first < 3 || steps[4] === 'done') return { steps, ...plain(first, steps[first]) };
+
+  // The 3<->4 loop.
   if (R === 0) {
     if (steps[3] !== 'done') return { steps, ...plain(3, steps[3]), round: 1 };
     return { steps, resumeAt: 4, round: 1, action: 'start-round', openSerious: [] };
   }
 
-  const notesText = readOrNull(path.join(folder, `notes-round-${R}.md`), fsImpl) || '';
-  const check = checkNotes(notesText);
-  if (!check.ok || !parseNotes(notesText).done) {
+  if (!roundDone) {
     return { steps, resumeAt: 4, round: R, action: 'finish-round', openSerious: [] };
   }
   if (check.serious.length === 0) {

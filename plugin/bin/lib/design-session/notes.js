@@ -12,6 +12,7 @@ const STATUS_RE = /^\s*status:\s*(done|in-progress)\s*$/i;
 const FENCE_RE = /^\s*```/;
 const H2_RE = /^##\s/;
 const ENTRY_RE = /^##\s+(\d+\.\d+)\s+[—–]\s+(\S+)\s+[—–]\s+(serious|minor|none)\s*$/i;
+const ROUND_H1_RE = /^#\s+perspective notes\s+[—–]\s+round\s+(\d+)\s*$/i;
 const OUTCOME_LINE_RE = /^\s*outcome:\s*(.*?)\s*$/i;
 // An outcome counts only with its explanation: `changed — {what changed}`.
 const OUTCOME_VALUE_RE = new RegExp(`^(${OUTCOMES.join('|')})\\s+[—–]\\s+\\S`, 'i');
@@ -32,12 +33,22 @@ function leadingStatus(lines) {
   return null;
 }
 
-// -> { done, notes: [{ id, perspective, severity, outcome }], perspectivesRecorded,
-//      malformed: 1-based line numbers of `## ` headings that are not a valid entry }
-function parseNotes(text) {
+// -> { done, round, notes: [{ id, perspective, severity, outcome }], perspectivesRecorded,
+//      malformed: one `line N: {why}` string per bad H1 or entry heading }
+// `round` is the H1's N; `expectedRound` (the file name's N), when given, must match it.
+function parseNotes(text, expectedRound) {
   const lines = splitLines(text);
   const notes = [];
   const malformed = [];
+  const h1 = lines.findIndex((l) => /^# /.test(l));
+  const hm = h1 === -1 ? null : ROUND_H1_RE.exec(lines[h1]);
+  const round = hm ? Number(hm[1]) : null;
+  const h1Line = h1 === -1 ? 1 : h1 + 1;
+  if (round === null) malformed.push(`line ${h1Line}: missing '# Perspective notes — round N' heading`);
+  else if (expectedRound != null && round !== Number(expectedRound)) {
+    malformed.push(`line ${h1Line}: heading says round ${round}, expected round ${expectedRound}`);
+  }
+  const ids = new Set();
   let current = null;
   let fenced = false;
   lines.forEach((line, idx) => {
@@ -46,11 +57,17 @@ function parseNotes(text) {
     if (H2_RE.test(line)) {
       const m = ENTRY_RE.exec(line);
       const perspective = m && m[2].toLowerCase();
-      if (!m || !PERSPECTIVES.includes(perspective)) {
-        malformed.push(idx + 1);
+      let why = null;
+      if (!m) why = `'${line.trim()}' is not an entry heading`;
+      else if (!PERSPECTIVES.includes(perspective)) why = `unknown perspective '${m[2]}' in ${m[1]}`;
+      else if (ids.has(m[1])) why = `duplicate id ${m[1]}`;
+      else if (round !== null && Number(m[1].split('.')[0]) !== round) why = `id ${m[1]} is not in round ${round}`;
+      if (why) {
+        malformed.push(`line ${idx + 1}: ${why}`);
         current = null;
         return;
       }
+      ids.add(m[1]);
       current = { id: m[1], perspective, severity: m[3].toLowerCase(), outcome: null, seen: false };
       notes.push(current);
       return;
@@ -68,14 +85,14 @@ function parseNotes(text) {
     delete n.seen;
     if (!perspectivesRecorded.includes(n.perspective)) perspectivesRecorded.push(n.perspective);
   }
-  return { done: leadingStatus(lines) === 'done', notes, perspectivesRecorded, malformed };
+  return { done: leadingStatus(lines) === 'done', round, notes, perspectivesRecorded, malformed };
 }
 
 // -> { ok, pending: ids with no outcome, serious: ids marked serious,
 //      missingPerspectives, malformed }. `ok` needs nothing pending, every
-//      perspective recorded, and no malformed entry heading.
-function checkNotes(text) {
-  const { notes, perspectivesRecorded, malformed } = parseNotes(text);
+//      perspective recorded, and nothing malformed.
+function checkNotes(text, expectedRound) {
+  const { notes, perspectivesRecorded, malformed } = parseNotes(text, expectedRound);
   const pending = notes.filter((n) => n.severity !== 'none' && n.outcome === null).map((n) => n.id);
   const serious = notes.filter((n) => n.severity === 'serious').map((n) => n.id);
   const missingPerspectives = PERSPECTIVES.filter((p) => !perspectivesRecorded.includes(p));
