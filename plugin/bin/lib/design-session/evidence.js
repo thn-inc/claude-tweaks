@@ -34,7 +34,8 @@ function checkEvidence(text) {
     if (!src || !SOURCE_RE.test(src)) unsourced.push(idx + 1);
   });
 
-  return { done: status === 'done' && claims > 0 && unsourced.length === 0, unsourced };
+  // An unclosed fence hides every bullet after it, so the file is not done.
+  return { done: status === 'done' && !fenced && claims > 0 && unsourced.length === 0, unsourced };
 }
 
 module.exports = { checkEvidence, SOURCE_RE };

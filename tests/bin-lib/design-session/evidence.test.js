@@ -31,6 +31,14 @@ test('bullets inside a fenced code block are not claims', () => {
   assert.deepStrictEqual(checkEvidence(text), { done: true, unsourced: [] });
 });
 
+test('a fence that is never closed leaves the evidence not done', () => {
+  const only = ['# E', 'Status: done', '```', '- a — source: #1'].join('\n');
+  assert.strictEqual(checkEvidence(only).done, false);
+  // A sourced claim before the open fence must not let the swallowed bullets pass.
+  const after = ['# E', 'Status: done', '- a — source: #1', '```', '- unsourced claim'].join('\n');
+  assert.strictEqual(checkEvidence(after).done, false);
+});
+
 test('unsourced bullets are reported by line number', () => {
   const text = [
     '# Evidence',
