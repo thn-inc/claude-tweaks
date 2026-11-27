@@ -38,7 +38,7 @@ Return ONLY pairs of lines, one pair per finding, most relevant first, at most 1
 CLAIM: {one fact you found, stated so it can be checked}
 SOURCE: {#N | sha | path:line | run folder}
 
-SOURCE is one of: an issue or pull request as #N; a commit as its sha (7 to 40 hex characters); a file and line as a repository-relative path:line, or, for a file under ${CLAUDE_PLUGIN_ROOT}, as its absolute path:line; a run folder as .claude-tweaks/pipelines/{folder name}. Several sources for one claim are joined by ", ". A claim you cannot give such a source for is not reported.
+SOURCE is one of: an issue or pull request as #N; a commit as its sha (7 to 40 hex characters); a file and line as a repository-relative path:line, or, for a file under ${CLAUDE_PLUGIN_ROOT}, as its absolute path:line; a run folder as .claude-tweaks/pipelines/{folder name}. A path may contain spaces (a plugin root under a spaced directory) but not ", ", and starts and ends at non-space characters, ending in the file's extension and `:line`. Several sources for one claim are joined by ", ". A claim you cannot give such a source for is not reported.
 
 If your area holds nothing about the topic, return the literal text NOTHING FOUND and, on the next line, the search you ran.
 

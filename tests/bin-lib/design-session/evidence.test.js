@@ -67,6 +67,31 @@ test('SOURCE_RE accepts exactly the four forms', () => {
   }
 });
 
+test('a path:line source may contain spaces (a plugin root under a spaced directory)', () => {
+  const posix = '/Users/John Smith/.claude/plugins/cache/m/claude-tweaks/6.180.0/bin/lib/policy-schema.js:12';
+  const win = 'C:\\Users\\John Smith\\.claude\\plugins\\cache\\m\\claude-tweaks\\6.180.0\\bin\\lib\\policy-schema.js:12';
+  const dir = '/Users/u/Code Workspaces/claude-tweaks/plugin/bin/lib/policy.js:52';
+  for (const ok of [posix, win, dir, `${posix}, #12`, `#12, ${win}`, `${posix}, ${win}, abcdef1`]) {
+    assert.ok(SOURCE_RE.test(ok), ok);
+    const text = ['# E', 'Status: done', `- a claim — source: ${ok}`].join('\n');
+    assert.deepStrictEqual(checkEvidence(text), { done: true, unsourced: [], unclosedFence: false }, ok);
+  }
+});
+
+test('a spaced source that is not a path:line, or whose path edges are blank, stays rejected', () => {
+  for (const bad of ['a b', 'John Smith/x', 'a b.js', 'a b.js:x', '/Users/John Smith/x.js', '#12, a b', 'a b.js:3,  #1', ',a b.js:3']) {
+    assert.ok(!SOURCE_RE.test(bad), bad);
+    const text = ['# E', 'Status: done', `- a claim — source: ${bad}`].join('\n');
+    assert.deepStrictEqual(checkEvidence(text).unsourced, [3], bad);
+  }
+});
+
+test('SOURCE_RE rejects a path with leading or trailing whitespace around a list item', () => {
+  for (const bad of [' /a b.js:3', '/a b.js:3 ', '#1,  /a b.js:3', '#1, /a b.js:3 ']) {
+    assert.ok(!SOURCE_RE.test(bad), JSON.stringify(bad));
+  }
+});
+
 test('SOURCE_RE accepts an absolute path:line under the plugin root, the settings schema source', () => {
   for (const ok of ['/Users/u/.claude/plugins/cache/m/claude-tweaks/6.180.0/bin/lib/policy-schema.js:42', 'C:\\Users\\u\\.claude\\plugins\\cache\\m\\claude-tweaks\\6.180.0\\bin\\lib\\policy-schema.js:42']) {
     assert.ok(SOURCE_RE.test(ok), ok);

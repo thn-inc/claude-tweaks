@@ -529,6 +529,7 @@ test('the named-repository worktree gate reads the legacy key and fails closed',
   pinFacts(sectionOf(SKILL, '## Session folder and resume'), [
     [/its `worktree-always:` line, or when that line is absent its legacy `worktree\.always:` line/, 'gate reads the legacy key'],
     [/a value other than `true` or `false` counts as `true`/, 'gate: unparseable is true'],
+    [/unlike the hook, which treats any value other than `true` as off,/, 'gate: states how it differs from the hook'],
   ]);
 });
 

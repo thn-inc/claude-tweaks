@@ -4,7 +4,12 @@
 'use strict';
 
 // One source: an issue/PR ref, a commit sha, a path:line, or a run folder.
-const ONE = '(?:#\\d+|[0-9a-f]{7,40}|\\S+\\.\\w+:\\d+|\\.claude-tweaks/pipelines/\\S+)';
+// The path of a path:line may contain spaces (a plugin root under "/Users/John
+// Smith/..."), so it may not contain ", " — that is the list separator, which keeps
+// every item boundary unambiguous — nor start or end with whitespace: it ends at
+// the ".ext:line" that closes it.
+const PATH = '[^\\s,](?:[^,]|,(?! ))*?\\.\\w+:\\d+';
+const ONE = `(?:#\\d+|[0-9a-f]{7,40}|${PATH}|\\.claude-tweaks/pipelines/\\S+)`;
 // A source list: one or more sources joined by ", ". Anchored.
 const SOURCE_RE = new RegExp(`^${ONE}(?:, ${ONE})*$`);
 
