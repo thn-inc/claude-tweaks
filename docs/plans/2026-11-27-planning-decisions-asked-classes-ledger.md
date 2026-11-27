@@ -3,3 +3,5 @@
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
 | 1 | ops | Pre-flight branch divergence: origin/main was 5 commits ahead of local main at run start; worktree caught up by merge | fixed | Post-creation catch-up merged origin/main into the worktree branch (0fdce3f to 3faabaa) |
+| 2 | build | AC2: quote the decisions.md of the first dispatched build after merge that settles a plan-review gap outside the three classes, in a comment on #6350 | open | Defer-reason: blocked-external — needs a future dispatched build after this PR merges; unblocks at the first such run |
+| 3 | build | Deliverable 2 / AC3: two weeks after merge, post on #6350's parent the share of dispatched builds that stopped at plan review (decisions.md plan-review stops) against 12 of 15 | open | Defer-reason: blocked-external — needs two weeks of dispatched builds after merge; unblocks two weeks after the merge date |
