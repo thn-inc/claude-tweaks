@@ -219,3 +219,52 @@ test('fix5: a non-text storyboard is checked, not read', (t) => {
   assert.strictEqual(composeBrief({ folder, reader: 'user', round: 1, briefsText: BRIEFS }, spy).ok, true);
   assert.ok(!reads.includes('board.png'));
 });
+
+const CAN_CHMOD = process.platform !== 'win32' && typeof process.getuid === 'function' && process.getuid() !== 0;
+
+test('fix2.1: an unreadable design.md, notes file or storyboard is an IO error, never "missing"', { skip: !CAN_CHMOD }, (t) => {
+  const locked = (folder, name) => { const f = path.join(folder, name); fs.chmodSync(f, 0o000); t.after(() => { try { fs.chmodSync(f, 0o644); } catch { /* folder already removed */ } }); };
+  const a = folderWith(t, {});
+  locked(a, 'design.md');
+  assert.throws(() => compose(a, 'user', 1), /EACCES/);
+  assert.throws(() => compose(a, 'builder'), /EACCES/);
+  const b = folderWith(t, { 'design.md': design({ boardRound: 2 }), 'notes-round-1.md': notesFile(1) });
+  locked(b, 'notes-round-1.md');
+  assert.throws(() => compose(b, 'user', 2), /EACCES/);
+  const c = folderWith(t, { 'notes-round-1.md': notesFile(1) });
+  locked(c, 'notes-round-1.md');
+  assert.throws(() => compose(c, 'builder'), /EACCES/);
+  const d = folderWith(t, {});
+  locked(d, 'storyboard.md');
+  assert.throws(() => compose(d, 'user', 1), /EACCES/);
+});
+
+test('fix2.2: a directory named notes-round-N.md never counts as a clean round', (t) => {
+  const last = folderWith(t, {});
+  fs.mkdirSync(path.join(last, 'notes-round-1.md'));
+  for (const reader of ['builder', 'pre-mortem']) {
+    const r = compose(last, reader);
+    assert.strictEqual(r.ok, false, reader);
+    assert.strictEqual(r.reason, 'pending-outcomes', reader);
+    assert.ok(/not a regular file/.test(r.detail), r.detail);
+  }
+  const prev = folderWith(t, { 'design.md': design({ boardRound: 2 }) });
+  fs.mkdirSync(path.join(prev, 'notes-round-1.md'));
+  const p = compose(prev, 'user', 2);
+  assert.strictEqual(p.reason, 'pending-outcomes');
+  assert.ok(/not a regular file/.test(p.detail) && !/is missing/.test(p.detail), p.detail);
+});
+
+test('fix3: the leaf is opened with O_NOFOLLOW, not trusted from an earlier lstat', { skip: process.platform === 'win32' }, (t) => {
+  const outside = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'design-race-')), 'x.md');
+  t.after(() => fs.rmSync(path.dirname(outside), { recursive: true, force: true }));
+  fs.writeFileSync(outside, 'OUTSIDE-CONTENT');
+  const folder = folderWith(t, {});
+  fs.rmSync(path.join(folder, 'storyboard.md'));
+  fs.symlinkSync(outside, path.join(folder, 'storyboard.md'));
+  // an lstat that reports a regular file, as a leaf swapped after the check would
+  const lying = { ...fs, lstatSync: (p, ...a) => (String(p).endsWith('storyboard.md') ? fs.statSync(p, ...a) : fs.lstatSync(p, ...a)) };
+  const r = composeBrief({ folder, reader: 'user', round: 1, briefsText: BRIEFS }, lying);
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.reason, 'symlink');
+});

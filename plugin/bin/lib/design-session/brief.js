@@ -45,17 +45,35 @@ function readBlocks(briefsText) {
 
 // A session file read with its leaf checked first: a symlink is never followed
 // (it could carry text from outside the folder into a reader's prompt).
-// -> { state: 'ok', text } | { state: 'missing' | 'symlink' | 'other' }
+// -> { state: 'ok', text } | { state: 'missing' | 'symlink' | 'other' }; any
+// other IO error (EACCES, ...) throws, so it is never read as "missing".
+// O_NOFOLLOW makes the open itself refuse a symlinked leaf (ELOOP), so no swap
+// between a check and the read can slip one in; where the platform defines none
+// (win32) the leaf is lstat-checked first, as plugin/bin/shadow-dup-proposal.js does.
 function readLeaf(file, fsImpl) {
-  const t = lstatType(file, { fsImpl });
-  if (t.type === 'missing') return { state: 'missing' };
-  if (t.type === 'symlink') return { state: 'symlink' };
-  if (t.type !== 'file') return { state: 'other' };
+  const { O_RDONLY, O_NOFOLLOW } = (fsImpl.constants || fs.constants);
+  const nofollow = typeof O_NOFOLLOW === 'number';
+  if (!nofollow) {
+    const t = lstatType(file, { fsImpl });
+    if (t.type === 'missing') return { state: 'missing' };
+    if (t.type === 'symlink') return { state: 'symlink' };
+    if (t.type === 'unreadable') throw new Error(`cannot inspect ${file} (${t.code})`);
+    if (t.type !== 'file') return { state: 'other' };
+  }
+  let fd;
   try {
-    return { state: 'ok', text: fsImpl.readFileSync(file, 'utf8') };
+    fd = fsImpl.openSync(file, nofollow ? O_RDONLY | O_NOFOLLOW : O_RDONLY);
   } catch (err) {
-    if (err && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) return { state: 'missing' };
+    const code = err && err.code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return { state: 'missing' };
+    if (code === 'ELOOP') return { state: 'symlink' };
     throw err;
+  }
+  try {
+    if (!fsImpl.fstatSync(fd).isFile()) return { state: 'other' };
+    return { state: 'ok', text: fsImpl.readFileSync(fd, 'utf8') };
+  } finally {
+    fsImpl.closeSync(fd);
   }
 }
 
@@ -86,6 +104,7 @@ const refuse = (reason, detail) => ({ ok: false, reason, detail });
 function pendingRefusal(folder, n, fsImpl) {
   const notes = readLeaf(path.join(folder, `notes-round-${n}.md`), fsImpl);
   if (notes.state === 'symlink') return symlinkRefusal(`notes-round-${n}.md`);
+  if (notes.state === 'other') return refuse('pending-outcomes', `notes-round-${n}.md is not a regular file`);
   if (notes.state !== 'ok') return refuse('pending-outcomes', `notes-round-${n}.md is missing`);
   const c = checkNotes(notes.text, n);
   if (c.ok) return null;
@@ -119,6 +138,7 @@ function storyboardPiece(folder, file, fsImpl) {
     return r.state === 'ok' ? { state: 'ok', text: r.text.trim() } : r;
   }
   const t = lstatType(abs, { fsImpl });
+  if (t.type === 'unreadable') throw new Error(`cannot inspect ${abs} (${t.code})`);
   if (t.type !== 'file') return { state: t.type === 'symlink' ? 'symlink' : 'missing' };
   return { state: 'ok', text: `Storyboard file: ${abs}\nRead this file.` };
 }
@@ -146,6 +166,7 @@ function composeBrief({ folder, reader, round, briefsText }, fsImpl = fs) {
     if (last > 0) {
       const notes = readLeaf(path.join(folder, `notes-round-${last}.md`), fsImpl);
       if (notes.state === 'symlink') return symlinkRefusal(`notes-round-${last}.md`);
+      if (notes.state === 'other') return refuse('pending-outcomes', `notes-round-${last}.md is not a regular file`);
       const c = checkNotes(notes.state === 'ok' ? notes.text : '', last);
       if (c.pending.length) {
         return refuse('pending-outcomes', `round ${last} is not settled — pending: ${c.pending.join(', ')}`);
@@ -155,7 +176,7 @@ function composeBrief({ folder, reader, round, briefsText }, fsImpl = fs) {
 
   const designFile = readLeaf(path.join(folder, 'design.md'), fsImpl);
   if (designFile.state === 'symlink') return symlinkRefusal('design.md');
-  if (designFile.state !== 'ok') return refuse('no-frame', 'design.md is missing');
+  if (designFile.state !== 'ok') return refuse('no-frame', 'design.md is missing or not a regular file');
   const design = designFile.text;
   if (!isPerspective) return { ok: true, text: [blocks.get(reader), withoutDecisions(design)].join('\n\n') };
 
