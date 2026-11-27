@@ -468,6 +468,15 @@ test('AC6.1: --exception other exits 1 naming design-reader', () => {
   assert.deepStrictEqual(tallyLines(s), []);
 });
 
+test('--exception other in a project with a malformed policy.yml exits 1 naming design-reader, not the policy', () => {
+  const dir = tmpProject('frontier-run-cap: soon\n');
+  const s = sessionIn(dir);
+  const r = call(['frontier', '--exception', 'other', '--session-dir', s], dir);
+  assert.strictEqual(r.code, 1);
+  assert.match(r.stderr, /unknown exception "other".*"design-reader"/);
+  assert.doesNotMatch(r.stderr, /soon/);
+});
+
 test('--exception with a profile other than frontier exits 1, nothing written', () => {
   const dir = tmpProject(null);
   const s = sessionIn(dir);
@@ -477,6 +486,8 @@ test('--exception with a profile other than frontier exits 1, nothing written', 
   assert.deepStrictEqual(tallyLines(s), []);
 });
 
+// The CLI refuses `--stance bogus` at its pre-call, so the re-throw-inside-the-lock path is
+// covered by exception-tally.test.js's decide-throws unit test.
 test('--exception with --stance bogus exits 1 naming the stance and leaves the tally unchanged', () => {
   const dir = tmpProject(null);
   const s = sessionIn(dir);

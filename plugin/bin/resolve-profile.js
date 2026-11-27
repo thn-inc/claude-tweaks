@@ -83,8 +83,8 @@ function insidePipelinesDir(p) {
 // is tallied per design session under a fail-closed lock instead of by the run's cap. Exit 0
 // resolved, 3 step-down (`{"stepDown":{"reason":…}}` on stdout, nothing else), 1 refusal.
 function runException({ profile, exception, sessionDirArg, stance, unattended, policy, deps, fail }) {
-  // Every refusal resolve() owns (unknown exception, non-frontier profile, unattended, an
-  // unknown stance/model-ceiling/effort) fires here, before any tally I/O.
+  // With the policy in hand, the refusals that need it (an unknown stance, model-ceiling or
+  // effort) fire here, before any tally I/O.
   try {
     resolve(profile, { policy, stance, unattended, exception, exceptionUsed: 0 });
   } catch (e) {
@@ -190,6 +190,16 @@ function run(argv, deps) {
   if (runDir !== undefined) {
     const message = anchoredOrOutsideMessage(runDir, deps.cwd(), '--run-dir');
     if (message) return fail(message);
+  }
+
+  // The exception-name, profile and unattended refusals need no policy: resolve() owns their
+  // messages, so they fire ahead of the policy read (a malformed policy.yml reports after them).
+  if (exception !== undefined) {
+    try {
+      resolve(profile, { unattended, exception, exceptionUsed: 0 });
+    } catch (e) {
+      return fail(e.message);
+    }
   }
 
   let policy;
