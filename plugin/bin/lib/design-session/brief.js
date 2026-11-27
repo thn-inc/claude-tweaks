@@ -6,11 +6,11 @@
 
 const fs = require('fs');
 const path = require('path');
-const { MAX_ROUNDS, PERSPECTIVES, STATUS_RE, checkNotes, splitLines } = require('./notes');
-const { sectionLines, sectionField } = require('./status');
+const { MAX_ROUNDS, PERSPECTIVES, STATUS_RE, roundSettled, lastNotesRound, splitLines } = require('./notes');
+const { H2_RE, sectionLines, sectionField } = require('./design-md');
+const { fencedLineMask } = require('../markdown-blocks');
 const { lstatType } = require('../path-guard');
 
-const NOTES_FILE_RE = /^notes-round-(\d+)\.md$/;
 const INLINE_EXT = new Set(['.md', '.txt', '.html']);
 const PROCESS_READERS = ['pre-mortem', 'builder'];
 const START_RE = /^<!-- brief:([a-z0-9-]+):start -->$/;
@@ -90,35 +90,38 @@ const symlinkRefusal = (name) => ({
 // top-level heading outside a fence, or the end).
 function withoutDecisions(text) {
   const out = [];
-  let fenced = false;
   let skipping = false;
-  for (const line of splitLines(text)) {
-    if (/^\s*```/.test(line)) fenced = !fenced;
-    const h2 = !fenced && /^##\s/.test(line);
+  const lines = splitLines(text);
+  const fenced = fencedLineMask(lines);
+  lines.forEach((line, i) => {
+    const h2 = !fenced[i] && H2_RE.test(line);
     if (h2) skipping = line.replace(/^##\s+/, '').trim() === 'Decisions';
     if (!skipping) out.push(line);
-  }
+  });
   return out.join('\n').trim();
 }
 
 const refuse = (reason, detail) => ({ ok: false, reason, detail });
 
-// The first pending-outcome id list of `notes-round-{n}.md`, or a refusal.
-function pendingRefusal(folder, n, fsImpl) {
+// null when `notes-round-{n}.md` is settled (notes.js's roundSettled, the rule
+// status.js resumes by), else a refusal naming what is open. `missing` is the
+// detail for an absent file.
+function pendingRefusal(folder, n, fsImpl, missing = 'is missing') {
   const notes = readLeaf(path.join(folder, `notes-round-${n}.md`), fsImpl);
   if (notes.state === 'symlink') return symlinkRefusal(`notes-round-${n}.md`);
   if (notes.state === 'other') return refuse('pending-outcomes', `notes-round-${n}.md is not a regular file`);
-  if (notes.state !== 'ok') return refuse('pending-outcomes', `notes-round-${n}.md is missing`);
-  const c = checkNotes(notes.text, n);
-  if (c.ok) return null;
+  if (notes.state !== 'ok') return refuse('pending-outcomes', `notes-round-${n}.md ${missing}`);
+  const c = roundSettled(notes.text, n);
+  if (c.settled) return null;
   const parts = [];
   if (c.pending.length) parts.push(`pending: ${c.pending.join(', ')}`);
   if (c.missingPerspectives.length) parts.push(`missing perspectives: ${c.missingPerspectives.join(', ')}`);
   if (c.malformed.length) parts.push(`malformed: ${c.malformed.join('; ')}`);
+  if (!c.done) parts.push('not marked Status: done');
   return refuse('pending-outcomes', `round ${n} is not settled — ${parts.join(' | ')}`);
 }
 
-function lastNotesRound(folder, fsImpl) {
+function listNotesRound(folder, fsImpl) {
   let names;
   try {
     names = fsImpl.readdirSync(folder);
@@ -126,10 +129,7 @@ function lastNotesRound(folder, fsImpl) {
     if (!err || err.code !== 'ENOENT') throw err;
     return 0;
   }
-  // Same window as status.js: a file past the cap is never a round.
-  const rounds = names.map((n) => NOTES_FILE_RE.exec(n)).filter(Boolean).map((m) => Number(m[1]))
-    .filter((n) => n >= 1 && n <= MAX_ROUNDS);
-  return rounds.length ? Math.max(...rounds) : 0;
+  return lastNotesRound(names);
 }
 
 // -> { state: 'ok', text } | { state: 'missing' | 'symlink' | 'other' }. A
@@ -176,16 +176,13 @@ function composeBrief({ folder, reader, round, briefsText }, fsImpl = fs) {
       if (r) return r;
     }
   } else {
-    const last = lastNotesRound(folder, fsImpl);
+    // Same gate as the next round's perspective brief: every note has an outcome
+    // before the next round or step starts, so a half-written, malformed or
+    // still in-progress last round refuses the pre-mortem and builder too.
+    const last = listNotesRound(folder, fsImpl);
     if (last > 0) {
-      const notes = readLeaf(path.join(folder, `notes-round-${last}.md`), fsImpl);
-      if (notes.state === 'symlink') return symlinkRefusal(`notes-round-${last}.md`);
-      if (notes.state === 'other') return refuse('pending-outcomes', `notes-round-${last}.md is not a regular file`);
-      if (notes.state !== 'ok') return refuse('pending-outcomes', `notes-round-${last}.md vanished after it was listed`);
-      const c = checkNotes(notes.text, last);
-      if (c.pending.length) {
-        return refuse('pending-outcomes', `round ${last} is not settled — pending: ${c.pending.join(', ')}`);
-      }
+      const r = pendingRefusal(folder, last, fsImpl, 'vanished after it was listed');
+      if (r) return r;
     }
   }
 
@@ -213,6 +210,7 @@ function composeBrief({ folder, reader, round, briefsText }, fsImpl = fs) {
   if (!boardPiece.ok) return boardPiece;
   const board = boardPiece.text;
   const boardRound = Number(sectionField(design, 'Storyboard', 'Round'));
+  // Deliberately !(>=), not <: a missing or non-numeric Round: is NaN, which compares false, so it refuses too.
   if (!(boardRound >= round)) {
     return refuse('stale-storyboard', `the storyboard is at round ${Number.isNaN(boardRound) ? 'none' : boardRound}, this brief is for round ${round}`);
   }

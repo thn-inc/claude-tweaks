@@ -5,30 +5,17 @@
 const fs = require('fs');
 const path = require('path');
 const { checkEvidence } = require('./evidence');
-const { MAX_ROUNDS, STATUS_RE, checkNotes, parseNotes, splitLines } = require('./notes');
+const { MAX_ROUNDS, STATUS_RE, roundSettled, lastNotesRound } = require('./notes');
+const { sectionLines, sectionField } = require('./design-md');
 
-// design.md section headings by step number (steps 2-7; step 1 is evidence.md).
+// design.md section headings by step number; step 1 is evidence.md. Adding a
+// step is one row here: STEPS and the per-step loop below derive from it.
 const SECTIONS = { 2: 'Frame', 3: 'Storyboard', 4: 'Perspectives', 5: 'Approaches', 6: 'Pre-mortem', 7: 'Builder check' };
-const NOTES_FILE_RE = /^notes-round-(\d+)\.md$/;
-
-// Lines of the `## {heading}` section, heading excluded, up to the next `## `
-// line outside a fence; null when the heading is absent.
-function sectionLines(designText, heading) {
-  const lines = splitLines(designText);
-  let fenced = false;
-  let body = null;
-  for (const line of lines) {
-    if (/^\s*```/.test(line)) fenced = !fenced;
-    const h2 = !fenced && /^##\s/.test(line);
-    if (body) {
-      if (h2) break;
-      body.push(line);
-    } else if (h2 && line.replace(/^##\s+/, '').trim() === heading) {
-      body = [];
-    }
-  }
-  return body;
-}
+const EVIDENCE_STEP = 1;
+const STEPS = [EVIDENCE_STEP, ...Object.keys(SECTIONS).map(Number)];
+// The two steps of the storyboard <-> perspectives loop.
+const STORYBOARD_STEP = 3;
+const PERSPECTIVES_STEP = 4;
 
 // 'done' | 'partial' (in-progress, or no status line) | 'missing'.
 function sectionStatus(designText, heading) {
@@ -39,22 +26,24 @@ function sectionStatus(designText, heading) {
   return m && m[1].toLowerCase() === 'done' ? 'done' : 'partial';
 }
 
-// First `{key}: value` line in the section, trimmed; null when absent.
-function sectionField(designText, heading, key) {
-  const re = new RegExp(`^\\s*${key}:\\s*(.*?)\\s*$`, 'i');
-  for (const line of sectionLines(designText, heading) || []) {
-    const m = re.exec(line);
-    if (m) return m[1];
-  }
-  return null;
-}
-
+// The file's text, or null when it is absent or not a regular file (a
+// directory, a FIFO), the way brief.js's readLeaf never counts one as present.
+// O_NONBLOCK keeps a FIFO with no writer from blocking the open; any other IO
+// error throws.
 function readOrNull(file, fsImpl) {
+  const { O_RDONLY, O_NONBLOCK } = fsImpl.constants || fs.constants;
+  let fd;
   try {
-    return fsImpl.readFileSync(file, 'utf8');
+    fd = fsImpl.openSync(file, O_RDONLY | (O_NONBLOCK || 0));
   } catch (err) {
-    if (!err || err.code !== 'ENOENT') throw err;
-    return null;
+    const code = err && err.code;
+    if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'EISDIR') return null;
+    throw err;
+  }
+  try {
+    return fsImpl.fstatSync(fd).isFile() ? fsImpl.readFileSync(fd, 'utf8') : null;
+  } finally {
+    fsImpl.closeSync(fd);
   }
 }
 
@@ -76,67 +65,80 @@ function readStatus(folder, fsImpl = fs) {
   const steps = {};
 
   const evidence = readOrNull(path.join(folder, 'evidence.md'), fsImpl);
-  if (evidence === null) steps[1] = 'missing';
+  if (evidence === null) steps[EVIDENCE_STEP] = 'missing';
   else {
     const e = checkEvidence(evidence);
-    steps[1] = e.done && e.unsourced.length === 0 ? 'done' : 'partial';
+    steps[EVIDENCE_STEP] = e.done && e.unsourced.length === 0 ? 'done' : 'partial';
   }
 
   const designText = readOrNull(path.join(folder, 'design.md'), fsImpl);
-  for (const n of [2, 3, 4, 5, 6, 7]) {
+  for (const n of STEPS.filter((s) => s !== EVIDENCE_STEP)) {
     steps[n] = designText === null ? 'missing' : sectionStatus(designText, SECTIONS[n]);
   }
 
-  // Step 3 also needs the storyboard file it names, a plain name in the folder.
-  if (steps[3] === 'done') {
-    const file = sectionField(designText, 'Storyboard', 'File');
+  // The storyboard step also needs the file it names, a plain name in the folder.
+  if (steps[STORYBOARD_STEP] === 'done') {
+    const file = sectionField(designText, SECTIONS[STORYBOARD_STEP], 'File');
     const present = file && path.basename(file) === file
       && readOrNull(path.join(folder, file), fsImpl) !== null;
-    if (!present) steps[3] = 'partial';
+    if (!present) steps[STORYBOARD_STEP] = 'partial';
   }
 
   // R = highest notes round within the cap; a file past the cap is never a
   // round to resume.
-  const rounds = listOrEmpty(folder, fsImpl)
-    .map((name) => NOTES_FILE_RE.exec(name))
-    .filter(Boolean)
-    .map((m) => Number(m[1]))
-    .filter((n) => n >= 1 && n <= MAX_ROUNDS);
-  const R = rounds.length ? Math.max(...rounds) : 0;
+  const R = lastNotesRound(listOrEmpty(folder, fsImpl));
   const notesText = R ? readOrNull(path.join(folder, `notes-round-${R}.md`), fsImpl) || '' : '';
-  const check = checkNotes(notesText, R);
-  const roundDone = R > 0 && check.ok && parseNotes(notesText, R).done;
+  const check = roundSettled(notesText, R);
+  const roundDone = R > 0 && check.settled;
 
   // A `done` Perspectives section counts only when the loop really closed:
   // the last round is complete and has no serious note, or the cap was reached.
-  if (steps[4] === 'done' && !(roundDone && (check.serious.length === 0 || R >= MAX_ROUNDS))) {
-    steps[4] = 'partial';
+  if (steps[PERSPECTIVES_STEP] === 'done' && !(roundDone && (check.serious.length === 0 || R >= MAX_ROUNDS))) {
+    steps[PERSPECTIVES_STEP] = 'partial';
   }
 
-  const first = [1, 2, 3, 4, 5, 6, 7].find((n) => steps[n] !== 'done');
+  const first = STEPS.find((n) => steps[n] !== 'done');
   if (first === undefined) return { steps, resumeAt: 'complete', round: null, action: null, openSerious: [] };
-  if (first > 4 || first < 3 || steps[4] === 'done') return { steps, ...plain(first, steps[first]) };
+  // Loop-exit guard: outside the storyboard/perspectives pair, or once Perspectives
+  // is really closed, resume is a plain start/continue of the first open step.
+  if (first > PERSPECTIVES_STEP || first < STORYBOARD_STEP || steps[PERSPECTIVES_STEP] === 'done') {
+    return { steps, ...plain(first, steps[first]) };
+  }
 
-  // The 3<->4 loop.
+  // The storyboard <-> perspectives loop. Its action vocabulary is defined in
+  // plugin/skills/design/step-4-perspectives.md (and step-3-storyboard.md); each
+  // branch below returns one action, in this order:
+  //   - no round yet: the storyboard step (start/continue) until it is done, then
+  //     start-round 1;
+  //   - finish-round: round R is not settled (an outcome pending, a perspective
+  //     missing, a malformed entry, or its Status: not done);
+  //   - close-perspectives: round R is settled with no serious note;
+  //   - cap-reached: round R is the cap and still has serious notes (openSerious
+  //     names them; a round past the cap is never started);
+  //   - start-round R+1: the storyboard is done and its Round: is already past R,
+  //     i.e. it was revised for the next round — so boardRound > R picks
+  //     start-round over revise-storyboard;
+  //   - revise-storyboard R+1: otherwise (a serious note, and the storyboard not
+  //     yet revised past R, half-revised, or with no numeric Round:).
   if (R === 0) {
-    if (steps[3] !== 'done') return { steps, ...plain(3, steps[3]), round: 1 };
-    return { steps, resumeAt: 4, round: 1, action: 'start-round', openSerious: [] };
+    if (steps[STORYBOARD_STEP] !== 'done') return { steps, ...plain(STORYBOARD_STEP, steps[STORYBOARD_STEP]), round: 1 };
+    return { steps, resumeAt: PERSPECTIVES_STEP, round: 1, action: 'start-round', openSerious: [] };
   }
 
   if (!roundDone) {
-    return { steps, resumeAt: 4, round: R, action: 'finish-round', openSerious: [] };
+    return { steps, resumeAt: PERSPECTIVES_STEP, round: R, action: 'finish-round', openSerious: [] };
   }
   if (check.serious.length === 0) {
-    return { steps, resumeAt: 4, round: R, action: 'close-perspectives', openSerious: [] };
+    return { steps, resumeAt: PERSPECTIVES_STEP, round: R, action: 'close-perspectives', openSerious: [] };
   }
   if (R >= MAX_ROUNDS) {
-    return { steps, resumeAt: 4, round: MAX_ROUNDS, action: 'cap-reached', openSerious: check.serious };
+    return { steps, resumeAt: PERSPECTIVES_STEP, round: MAX_ROUNDS, action: 'cap-reached', openSerious: check.serious };
   }
-  const boardRound = Number(sectionField(designText, 'Storyboard', 'Round'));
-  if (steps[3] === 'done' && Number.isInteger(boardRound) && boardRound > R) {
-    return { steps, resumeAt: 4, round: R + 1, action: 'start-round', openSerious: [] };
+  const boardRound = Number(sectionField(designText, SECTIONS[STORYBOARD_STEP], 'Round'));
+  if (steps[STORYBOARD_STEP] === 'done' && Number.isInteger(boardRound) && boardRound > R) {
+    return { steps, resumeAt: PERSPECTIVES_STEP, round: R + 1, action: 'start-round', openSerious: [] };
   }
-  return { steps, resumeAt: 3, round: R + 1, action: 'revise-storyboard', openSerious: [] };
+  return { steps, resumeAt: STORYBOARD_STEP, round: R + 1, action: 'revise-storyboard', openSerious: [] };
 }
 
-module.exports = { sectionStatus, sectionLines, sectionField, readStatus };
+module.exports = { sectionStatus, readStatus };

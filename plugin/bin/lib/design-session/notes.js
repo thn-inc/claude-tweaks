@@ -3,13 +3,15 @@
 // outcome and every perspective being recorded.
 'use strict';
 
+const { fencedLineMask } = require('../markdown-blocks');
+
 const MAX_ROUNDS = 4;
 const PERSPECTIVES = ['user', 'smallest', 'ownership', 'token-cost', 'introduction'];
 const OUTCOMES = ['changed', 'declined', 'accepted-risk'];
 
-// Shared with status.js: a `Status:` line, whitespace- and case-tolerant.
+// Shared with status.js and evidence.js: a `Status:` line, whitespace- and case-tolerant.
 const STATUS_RE = /^\s*status:\s*(done|in-progress)\s*$/i;
-const FENCE_RE = /^\s*```/;
+const NOTES_FILE_RE = /^notes-round-(\d+)\.md$/;
 const H2_RE = /^##\s/;
 const ENTRY_RE = /^##\s+(\d+\.\d+)\s+[—–]\s+(\S+)\s+[—–]\s+(serious|minor|none)\s*$/i;
 const ROUND_H1_RE = /^#\s+perspective notes\s+[—–]\s+round\s+(\d+)\s*$/i;
@@ -50,10 +52,9 @@ function parseNotes(text, expectedRound) {
   }
   const ids = new Set();
   let current = null;
-  let fenced = false;
+  const fenced = fencedLineMask(lines);
   lines.forEach((line, idx) => {
-    if (FENCE_RE.test(line)) { fenced = !fenced; return; }
-    if (fenced) return;
+    if (fenced[idx]) return;
     if (H2_RE.test(line)) {
       const m = ENTRY_RE.exec(line);
       const perspective = m && m[2].toLowerCase();
@@ -105,6 +106,24 @@ function checkNotes(text, expectedRound) {
   };
 }
 
+// The one "round is settled" rule both the brief gate (brief.js) and resume
+// (status.js) apply: checkNotes is ok and the round's own Status: line says done.
+// -> checkNotes's result plus { done, settled }.
+function roundSettled(text, expectedRound) {
+  const check = checkNotes(text, expectedRound);
+  const done = parseNotes(text, expectedRound).done;
+  return { ...check, done, settled: check.ok && done };
+}
+
+// Folder entry names -> the highest notes-round-N.md N within 1..MAX_ROUNDS, or 0.
+// A file past the cap is never a round.
+function lastNotesRound(names) {
+  const rounds = names.map((n) => NOTES_FILE_RE.exec(n)).filter(Boolean).map((m) => Number(m[1]))
+    .filter((n) => n >= 1 && n <= MAX_ROUNDS);
+  return rounds.length ? Math.max(...rounds) : 0;
+}
+
 module.exports = {
-  MAX_ROUNDS, PERSPECTIVES, OUTCOMES, STATUS_RE, parseNotes, checkNotes, leadingStatus, splitLines,
+  MAX_ROUNDS, PERSPECTIVES, OUTCOMES, STATUS_RE, parseNotes, checkNotes, roundSettled, lastNotesRound,
+  leadingStatus, splitLines,
 };

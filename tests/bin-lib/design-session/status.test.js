@@ -287,6 +287,38 @@ test('status line is whitespace- and case-tolerant', () => {
   assert.strictEqual(sectionStatus(text, 'Builder check'), 'missing');
 });
 
+test('a directory named notes-round-N.md or by the storyboard File: resumes, never crashes', (t) => {
+  const notesDir = folderWith(t, { ...LOOP_BASE, 'design.md': design(...UP_TO_STORYBOARD) });
+  fs.mkdirSync(path.join(notesDir, 'notes-round-1.md'));
+  assert.deepStrictEqual(triple(readStatus(notesDir)), [4, 1, 'finish-round']);
+
+  const boardDir = folderWith(t, { 'evidence.md': EVIDENCE, 'design.md': design(...UP_TO_STORYBOARD) });
+  fs.mkdirSync(path.join(boardDir, 'storyboard.md'));
+  const s = readStatus(boardDir);
+  assert.strictEqual(s.steps[3], 'partial');
+  assert.deepStrictEqual(triple(s), [3, 1, 'continue']);
+});
+
+test('a storyboard File that is not a bare name in the folder leaves step 3 partial', (t) => {
+  for (const file of ['../storyboard.md', 'sub/storyboard.md']) {
+    const dir = folderWith(t, {
+      ...LOOP_BASE, 'design.md': design(section('Frame', 'done'), section('Storyboard', 'done', ['Round: 1', `File: ${file}`])),
+    });
+    fs.mkdirSync(path.join(dir, 'sub'));
+    fs.writeFileSync(path.join(dir, 'sub', 'storyboard.md'), 'x');
+    assert.strictEqual(readStatus(dir).steps[3], 'partial', file);
+  }
+});
+
+test('a heading inside a tilde or longer backtick fence does not start a section', () => {
+  for (const [open, inner, close] of [['~~~', null, '~~~'], ['````', '```', '````']]) {
+    const quoted = [open, inner, '## Approaches', 'Status: done', inner, close].filter((l) => l !== null);
+    const text = ['## Frame', 'Status: done', ...quoted, '## Approaches', 'Status: in-progress'].join('\n');
+    assert.strictEqual(sectionStatus(text, 'Approaches'), 'partial', open);
+    assert.strictEqual(sectionStatus(text, 'Frame'), 'done', open);
+  }
+});
+
 test('sectionStatus slices at the next ## heading, not at ### or fenced lines', () => {
   const text = ['## Frame', 'Status: in-progress', '```', '## Approaches', 'Status: in-progress', '```', '### sub',
     '## Approaches', 'Status: done'].join('\n');

@@ -27,8 +27,8 @@ function design({ boardRound = 1, file = 'storyboard.md', frame = true, board = 
   return parts.join('\n');
 }
 
-function notesFile(n, { pending = false } = {}) {
-  const lines = [`# Perspective notes — round ${n}`, '', 'Status: done', ''];
+function notesFile(n, { pending = false, status = 'done' } = {}) {
+  const lines = [`# Perspective notes — round ${n}`, '', `Status: ${status}`, ''];
   PERSPECTIVES.forEach((p, i) => {
     lines.push(`## ${n}.${i + 1} — ${p} — ${i === 0 ? 'minor' : 'none'}`);
     if (i === 0) lines.push('> a note', pending ? 'Outcome: pending' : 'Outcome: changed — fixed');
@@ -167,6 +167,70 @@ test('pre-mortem and builder refuse while the last notes round has a pending out
   }
   const clean = folderWith(t, { 'notes-round-1.md': notesFile(1) });
   assert.strictEqual(compose(clean, 'builder').ok, true);
+});
+
+test('pre-mortem and builder refuse an empty, malformed or perspective-short last notes round', (t) => {
+  const full = notesFile(1);
+  const cases = {
+    empty: '',
+    'bad heading': `${full}\n## 1.6 user serious\nx\nOutcome: changed — y\n`,
+    'unclosed fence': full.replace('## 1.5 — introduction — none', '```\n## 1.5 — introduction — none'),
+    'missing perspective': full.replace('## 1.5 — introduction — none', ''),
+  };
+  for (const [name, text] of Object.entries(cases)) {
+    assert.notStrictEqual(text, full, name);
+    const folder = folderWith(t, { 'notes-round-1.md': text });
+    for (const reader of ['pre-mortem', 'builder']) {
+      const r = compose(folder, reader);
+      assert.strictEqual(r.ok, false, `${name} / ${reader}`);
+      assert.strictEqual(r.reason, 'pending-outcomes', `${name} / ${reader}`);
+    }
+  }
+});
+
+test('a round still marked in-progress gates the next round and step, as status.js does', (t) => {
+  const open = notesFile(1, { status: 'in-progress' });
+  const r = compose(folderWith(t, { 'design.md': design({ boardRound: 2 }), 'notes-round-1.md': open }), 'user', 2);
+  assert.strictEqual(r.reason, 'pending-outcomes');
+  assert.ok(/Status: done/.test(r.detail), r.detail);
+  for (const reader of ['pre-mortem', 'builder']) {
+    assert.strictEqual(compose(folderWith(t, { 'notes-round-1.md': open }), reader).reason, 'pending-outcomes', reader);
+  }
+});
+
+test('a symlinked non-text storyboard is refused as a symlink', (t) => {
+  const outside = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'design-png-')), 'x.png');
+  t.after(() => fs.rmSync(path.dirname(outside), { recursive: true, force: true }));
+  fs.writeFileSync(outside, 'PNGDATA');
+  const folder = folderWith(t, { 'design.md': design({ file: 'board.png' }) });
+  fs.symlinkSync(outside, path.join(folder, 'board.png'));
+  for (const [reader, round] of [['user', 1], ['pre-mortem', undefined]]) {
+    const r = compose(folder, reader, round);
+    assert.strictEqual(r.reason, 'symlink', reader);
+  }
+});
+
+test('a storyboard File that is not a bare name in the folder is refused', (t) => {
+  for (const file of ['../storyboard.md', 'sub/storyboard.md']) {
+    const folder = folderWith(t, { 'design.md': design({ file }) });
+    fs.mkdirSync(path.join(folder, 'sub'));
+    fs.writeFileSync(path.join(folder, 'sub', 'storyboard.md'), BOARD_TEXT);
+    for (const [reader, round] of [['user', 1], ['pre-mortem', undefined]]) {
+      assert.strictEqual(compose(folder, reader, round).reason, 'no-storyboard', `${file} / ${reader}`);
+    }
+  }
+});
+
+test('a ## Decisions line inside a tilde or longer backtick fence is kept', (t) => {
+  for (const [open, inner, close] of [['~~~', '', '~~~'], ['````', '```', '````']]) {
+    const quoted = [open, inner, '## Decisions', 'KEPT-QUOTE', inner, close].filter((l) => l !== '').join('\n');
+    const text = design().replace('## Perspectives', `${quoted}\n\n## Perspectives`);
+    const r = compose(folderWith(t, { 'design.md': text }), 'builder');
+    assert.strictEqual(r.ok, true, JSON.stringify(r));
+    assert.ok(r.text.includes('KEPT-QUOTE'), open);
+    assert.ok(r.text.includes('## Perspectives'), open);
+    assert.ok(!r.text.includes(DECISIONS_SENTINEL), open);
+  }
 });
 
 test('R3: a storyboard older than the round is stale', (t) => {

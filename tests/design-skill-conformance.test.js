@@ -533,6 +533,24 @@ test('the named-repository worktree gate reads the legacy key and fails closed',
   ]);
 });
 
+test('the session model check runs before the frame and lets the maintainer decide', () => {
+  pinFacts(sectionOf(SKILL, '## Model'), [
+    [/At every start \(item 5 of the list in `## Session folder and resume`\), so always before the frame \(step 2\)/, 'Model: the check runs at every start, before the frame'],
+    [/compare its printed `model` with the session's own model family/, 'Model: compares the session model with the resolved top tier'],
+    [/When the session's is lower, say so and ask with one `AskUserQuestion`: `Switch to the top tier and resume \(Recommended\)`/, 'Model: a lower session says so and asks, recommending the switch'],
+    [/or `Continue on this model`/, 'Model: the maintainer may continue on the lower model'],
+    [/A choice to continue goes into `## Decisions` \(`by: maintainer`\)/, 'Model: a choice to continue is logged to Decisions'],
+  ]);
+});
+
+test('interim ending: after step 7 the skill names /claude-tweaks:specify {design.md path} as the next command', () => {
+  // Interim by design: the next record changes this ending, and this pin changes with it.
+  pinFacts(sectionOf(SKILL, '## Next Actions'), [
+    [/After step 7, or when `status` prints `resumeAt: 'complete'`, render as plain markdown/, 'Next Actions: rendered after step 7 or on complete'],
+    [/^\*\*`\/claude-tweaks:specify \{design\.md path\}`\*\* — shape the design into records \(recommended\)$/m, 'Next Actions: names specify on the design.md path (interim ending)'],
+  ]);
+});
+
 test('the pre-mortem reader gets the storyboard; the builder gets design.md alone', () => {
   pinFacts(sectionOf(STEP6, '## 1. Brief, resolve, dispatch'), [[/Compose the brief — `design\.md` without its `## Decisions` list, followed by the storyboard/, 'step-6 brief carries the storyboard']]);
   pinFacts(sectionOf(STEP7, '## 1. Brief, resolve, dispatch'), [[/Compose the brief — `design\.md` without its `## Decisions` list, so the reader plans from the design/, 'step-7 brief is design.md alone']]);

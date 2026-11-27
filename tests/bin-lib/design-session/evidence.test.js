@@ -31,6 +31,18 @@ test('bullets inside a fenced code block are not claims', () => {
   assert.deepStrictEqual(checkEvidence(text), { done: true, unsourced: [], unclosedFence: false });
 });
 
+test('a tilde or longer backtick fence hides its bullets too', () => {
+  for (const [open, inner, close] of [['~~~', null, '~~~'], ['````', '```', '````']]) {
+    const text = ['# E', 'Status: done', '- a — source: #1', open, inner, '- example bullet', inner, close].filter((l) => l !== null).join('\n');
+    assert.deepStrictEqual(checkEvidence(text), { done: true, unsourced: [], unclosedFence: false }, open);
+  }
+});
+
+test('the Status line parses as notes.js parses it: indented, and with no H1', () => {
+  assert.strictEqual(checkEvidence('# E\n\n  status:  DONE \n- a — source: #1\n').done, true);
+  assert.strictEqual(checkEvidence('Status: done\n- a — source: #1\n').done, true);
+});
+
 test('a fence that is never closed leaves the evidence not done', () => {
   const only = ['# E', 'Status: done', '```', '- a — source: #1'].join('\n');
   assert.strictEqual(checkEvidence(only).done, false);

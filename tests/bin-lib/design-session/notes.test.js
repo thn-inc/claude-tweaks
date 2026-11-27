@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const {
-  MAX_ROUNDS, PERSPECTIVES, OUTCOMES, parseNotes, checkNotes,
+  MAX_ROUNDS, PERSPECTIVES, OUTCOMES, parseNotes, checkNotes, lastNotesRound, roundSettled,
 } = require('../../../plugin/bin/lib/design-session/notes');
 
 function round(n, status, entries) {
@@ -133,6 +133,28 @@ test('headings and outcomes inside a fence are note text', () => {
   const r = parseNotes(text);
   assert.strictEqual(r.notes.length, 5);
   assert.strictEqual(r.notes[0].outcome, 'changed');
+});
+
+test('a tilde or longer backtick fence hides an entry heading too', () => {
+  for (const [open, inner, close] of [['~~~', null, '~~~'], ['````', '```', '````']]) {
+    const quoted = [open, inner, '## 1.9 — user — serious', 'Outcome: pending', inner, close].filter((l) => l !== null);
+    const r = checkNotes(round(1, 'done', [...ALL_FIVE.slice(0, 3), ...quoted, '', ...ALL_FIVE.slice(3)]), 1);
+    assert.deepStrictEqual([r.ok, r.malformed, r.pending], [true, [], []], open);
+  }
+});
+
+test('lastNotesRound picks the highest round inside the cap', () => {
+  assert.strictEqual(lastNotesRound([]), 0);
+  assert.strictEqual(lastNotesRound(['notes-round-1.md', 'notes-round-3.md', 'design.md', 'notes-round-2.md']), 3);
+  assert.strictEqual(lastNotesRound(['notes-round-0.md', `notes-round-${MAX_ROUNDS + 1}.md`, 'notes-round-x.md']), 0);
+  assert.strictEqual(lastNotesRound(['notes-round-2.md', 'notes-round-9.md']), 2);
+});
+
+test('roundSettled needs checkNotes ok and the round marked done', () => {
+  assert.strictEqual(roundSettled(round(1, 'done', ALL_FIVE), 1).settled, true);
+  const open = roundSettled(round(1, 'in-progress', ALL_FIVE), 1);
+  assert.deepStrictEqual([open.settled, open.ok, open.done], [false, true, false]);
+  assert.strictEqual(roundSettled(round(1, 'done', ALL_FIVE.slice(0, 12)), 1).settled, false);
 });
 
 test('status line and severity are whitespace- and case-tolerant', () => {

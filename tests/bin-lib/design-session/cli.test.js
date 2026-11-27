@@ -12,6 +12,9 @@ const { PERSPECTIVES } = require('../../../plugin/bin/lib/design-session/notes')
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'design-session.js');
 const NOW = new Date(2026, 10, 27, 12);
+// Strings absent from the reader-brief prose, so the printed prompt carries them only when the session's frame and storyboard do.
+const FRAME_SENTINEL = 'FRAME-SENTINEL-7f3a';
+const BOARD_SENTINEL = 'BOARD-SENTINEL-9c1d';
 
 function scratch(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'design-cli-'));
@@ -33,8 +36,8 @@ function notes(n, { pending = false } = {}) {
 
 function session(t, files = {}) {
   const dir = scratch(t);
-  const design = '# T — design\n\n## Frame\n\nStatus: done\n\nthe frame\n\n## Storyboard\n\nStatus: done\n\nRound: 1\nFile: storyboard.md\n';
-  const all = { 'design.md': design, 'storyboard.md': 'board', 'evidence.md': '# Evidence\n\nStatus: done\n\n- a claim — source: #6352\n', ...files };
+  const design = `# T — design\n\n## Frame\n\nStatus: done\n\n${FRAME_SENTINEL}\n\n## Storyboard\n\nStatus: done\n\nRound: 1\nFile: storyboard.md\n`;
+  const all = { 'design.md': design, 'storyboard.md': BOARD_SENTINEL, 'evidence.md': '# Evidence\n\nStatus: done\n\n- a claim — source: #6352\n', ...files };
   for (const [n, text] of Object.entries(all)) fs.writeFileSync(path.join(dir, n), text);
   return dir;
 }
@@ -120,7 +123,8 @@ test('brief prints the prompt, and a refusal exits 1 with its reason on stdout',
   const dir = session(t);
   const ok = call(['brief', '--folder', dir, '--reader', 'user', '--round', '1'], '/');
   assert.strictEqual(ok.code, 0);
-  assert.ok(ok.stdout.includes('the frame') && ok.stdout.includes('board'));
+  assert.ok(ok.stdout.includes(FRAME_SENTINEL), 'the session frame is in the printed prompt');
+  assert.ok(ok.stdout.includes(BOARD_SENTINEL), 'the session storyboard is in the printed prompt');
 
   const builder = call(['brief', '--folder', dir, '--reader', 'builder'], '/');
   assert.strictEqual(builder.code, 0);
