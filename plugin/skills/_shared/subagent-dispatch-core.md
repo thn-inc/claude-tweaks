@@ -1,17 +1,6 @@
 # Subagent Dispatch Core — Working Directory, Foreground Execution, Read-only Reviewers, Model Selection, Template A, Retrieval, Fan-Out
 
-Extracted from `_shared/subagent-output-contract.md` (#2019) — the dispatch-facing sections a
-review/test call site actually needs to compose as a lean bundle, without also paying for
-that file's remaining content (Input Discipline, HARD-GATE Marker Convention, Waiting for
-Dispatched Agents, Implementer Status Protocol, Templates B/C, the third-party exemption,
-re-prompt-on-violation, and Anti-Patterns), none of which any of this file's call sites cite.
-`subagent-output-contract.md` remains the canonical parent contract and single source of truth
-for everything not reproduced here — cited from there, never restated independently; a change to
-one of the sections below lands here first, exactly as `subagent-output-contract.md` itself
-states at its own top ("This file is the single source of truth"). The Foreground Execution
-Discipline (#2271) and Read-only Reviewer Discipline (#3001) sections below are the two
-exceptions to "extracted" — they originate here, directly, since no equivalent content exists
-in the parent file to move from.
+The dispatch-facing sections of `_shared/subagent-output-contract.md` (#2019), composed as a lean bundle; that file stays the canonical parent contract, so a section changes here first. The Foreground Execution (#2271) and Read-only Reviewer (#3001) Disciplines originate here.
 
 ## Working Directory Discipline
 
@@ -219,7 +208,7 @@ Match the profile to the work. A **work profile** names the kind of work; this t
 | Fast | haiku | — | No effort dial (Haiku ignores effort) |
 | Standard | sonnet | high | — |
 | Capable | opus | high | — |
-| Frontier | fable | high | Singleton-only; degrades to Capable |
+| Frontier | fable | high | Singleton-only (one named exception, below); degrades to Capable |
 
 This table is pinned to `bin/lib/model-profiles/profiles.js` by test — change them together. Models are family aliases, never versioned IDs. The effort scale is ordered `low < medium < high < xhigh < max`.
 
@@ -229,9 +218,9 @@ This table is pinned to `bin/lib/model-profiles/profiles.js` by test — change 
 
 **Selection and upgrade.** Default to the cheapest profile that can do the job. Upgrade one profile when the agent comes back `BLOCKED` for reasoning reasons (not for context reasons). Capable→Frontier upgrades are valid only at the singleton slots enumerated in this section.
 
-**Frontier is singleton-only.** Profiles govern *dispatches*; inline steps ride the session model by design. Frontier is never valid in a parallel fan-out — one agent whose judgment is the bottleneck, at an enumerated slot only. Preconditions (all enforced by the resolver): interactive context, stance at `default` or above, and the per-run cap (`frontier-run-cap`, default 3, tallied in the run dir's `frontier-tally.log`; standalone skill invocations get 1 per invocation, enforced by the calling skill). Any miss degrades to Capable with the reason in the resolution's `source`. A harness usage-limit warning observed in-session, or a dispatched agent's own credit/usage-exhaustion failure, is recorded via `record-failure` (see Dispatching above) and degrades that specific model to the next viable tier for the remainder of the session — the *avoidance* is a real mechanism (#763); noticing the failure and recording it remains a best-effort agent step.
+**Frontier is singleton-only.** Profiles govern *dispatches*; inline steps ride the session model by design. Frontier is never valid in a parallel fan-out except the one named exception (enumerated slots) — one agent whose judgment is the bottleneck, at an enumerated slot only. Preconditions (all enforced by the resolver): interactive context, stance at `default` or above, and the per-run cap (`frontier-run-cap`, default 3, tallied in the run dir's `frontier-tally.log`; standalone skill invocations get 1 per invocation, enforced by the calling skill). Any miss degrades to Capable with the reason in the resolution's `source`. A harness usage-limit warning observed in-session, or a dispatched agent's own credit/usage-exhaustion failure, is recorded via `record-failure` (see Dispatching above) and degrades that specific model to the next viable tier for the remainder of the session — the *avoidance* is a real mechanism (#763); noticing the failure and recording it remains a best-effort agent step.
 
-**The enumerated slots.** Two categories, each a deliberate, singleton-shaped dispatch site — degradation to Capable via the preconditions above is always the fallback, never a separate code path:
+**The enumerated slots.** Two categories of deliberate, singleton-shaped dispatch site, plus the one named fan-out exception — for the two categories, degradation to Capable via the preconditions above is always the fallback, never a separate code path:
 
 | Category | Slot | Shape |
 |---|---|---|
@@ -242,6 +231,7 @@ This table is pinned to `bin/lib/model-profiles/profiles.js` by test — change 
 | Self-improvement (#221) | `/reflect`'s lens procedure, standalone invocations only (`reflect/SKILL.md` Step 2) | Single agent running every lens. Component-invoked runs (a `/review`- or `/wrap-up`-owned run dir, or an explicit `--source`) never dispatch this — main-thread only. |
 | Self-improvement (#221) | `/feedback`'s session-evaluation judge (`feedback/session-evaluation.md`) | Single agent per invocation — the standalone-invocation cap (no `--run-dir` in the common case). The Step 6 scrub this slot previously named now resolves Capable (record #221's entry knowingly superseded). |
 | Self-improvement (#221) | `/init`'s CLAUDE.md generation/patch synthesis (`init/claude-md-template.md`) | Single agent; `--unattended` in headless (scheduled Routine) contexts. |
+| Named fan-out exception (#6351) | `/claude-tweaks:design`'s readers: `frontier --exception design-reader --session-dir {design folder}` | The one fan-out use of Frontier: up to 22 per design session; any step-down exits 3 and the skill stops and asks, never lowering the tier itself. Full rules: `_shared/frontier-exception.md`. |
 
 **`/challenge` is excluded from the verdict-gate category.** Its `framing-check` mode is inline-only by that skill's own Component-Skill Contract — dispatching it as a Task agent is a named anti-pattern there. Profiles govern dispatches only; an inline step rides the session model by design and has no profile to carry, so `framing-check` is never a candidate for this enumeration regardless of how singleton-shaped its judgment is.
 
@@ -314,7 +304,7 @@ In a Form B blockquote:
 
 ```
 > **Parallel execution:** Dispatch {scope} as parallel Task agents — each runs independently and returns findings in Template A format. Assemble results after all agents complete.
-> **Contract:** Each agent follows the Subagent Contract — minimal input (scope + path + output template, no conversation), Template A, then one of {DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED} as a labeled trailing line — `STATUS: {WORD}`, the reply's last non-empty line, after the output template (WRONG: "Based on my review, DONE" as the first line). Pick the cheapest work profile that fits ({Fast | Standard | Capable} — Frontier never rides a fan-out; singleton slots only, §Model Selection) and resolve it per §Model Selection. Inline the template literally; reject and re-prompt on format violations.
+> **Contract:** Each agent follows the Subagent Contract — minimal input (scope + path + output template, no conversation), Template A, then one of {DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED} as a labeled trailing line — `STATUS: {WORD}`, the reply's last non-empty line, after the output template (WRONG: "Based on my review, DONE" as the first line). Pick the cheapest work profile that fits ({Fast | Standard | Capable} — Frontier only at singleton slots or the one named exception, §Model Selection) and resolve it per §Model Selection. Inline the template literally; reject and re-prompt on format violations.
 ```
 
 In the actual `Task()` call, the prompt body must contain the literal template — not a reference to it. Concrete example:
