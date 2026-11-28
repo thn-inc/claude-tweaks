@@ -1,7 +1,7 @@
 'use strict';
 // Shared literal-aware comment stripper for the source-scan conformance tests
 // (#3536, #3585). The tests that call it per file, by test-file stem: `accept-label-reader`, `accept-monotonic`, `backfill-cli`,
-// `below-floor-parent-close`, `ci-health-skill-agnostic`, `cli`, `cli-entry`, `evaluate-maturation-build-label`, `exit-code`, `fixture-identity-config-scan`, `gate-fragments`, `gh-host-seam`, `git-status-optional-locks`, `hooks-event-env`, `hooks-event-process-ceiling`, `hooks-harness-refusal`, `hooks-pre-tool-use`, `lens-reply`, `markdown-blocks`, `merge`, `owner-pid-probe`,
+// `below-floor-parent-close`, `blocker-lines`,`ci-health-skill-agnostic`, `cli`, `cli-entry`, `evaluate-maturation-build-label`, `exit-code`, `fixture-identity-config-scan`, `gate-fragments`, `gh-host-seam`, `git-status-optional-locks`, `hooks-event-env`, `hooks-event-process-ceiling`, `hooks-harness-refusal`, `hooks-pre-tool-use`, `lens-reply`, `markdown-blocks`, `merge`, `owner-pid-probe`,
 // `path-containment`, `path-guard`, `phase-exit-call-sites`, `plan-line-writer`, `porcelain-cwd-compare`, `post-merge`, `precondition`, `raw-markdown-read`, `recording-no-embed`, `relaunch`, `release-notes`, `report-only-constant`, `risk-flags-writer`, `run`, `run-header`, `run-liveness-callers`, `settle`, `staged-id-producers`,
 // `station-literal`, `statusline-no-shell`, `step-yield-report-shared-count`, `subprocess-timing`, `timeout-source`, `tmp-dir-cleanup`, `trust-policy-keys`, `wall-clock-budget`, `windows-hide-spawn` and `wrap-up-learned-skills-pr`. tests/strip-comments-callers-twin.test.js
 // pins this list to the tree. `raw-markdown-read` and `wall-clock-budget` (#3491),
