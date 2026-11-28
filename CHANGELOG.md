@@ -53,6 +53,26 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.181.0](https://github.com/thn-inc/claude-tweaks/compare/v6.180.0...v6.181.0) (2026-11-28)
+
+
+### Features
+
+* Add `/claude-tweaks:design`: evidence, frame… ([#6352](https://github.com/thn-inc/claude-tweaks/issues/6352)) ([6aea2dd](https://github.com/thn-inc/claude-tweaks/commit/6aea2ddfe1452b9fd6ba1db0c78e0d8c436a0e65))
+* Finish `/claude-tweaks:design`: parts and estimate… ([#6353](https://github.com/thn-inc/claude-tweaks/issues/6353)) ([4d73812](https://github.com/thn-inc/claude-tweaks/commit/4d73812bc8ce7da8bc591c42da63d6c38c5fd483))
+* Let the design skill's readers use the top model tier… ([#6351](https://github.com/thn-inc/claude-tweaks/issues/6351)) ([014fe65](https://github.com/thn-inc/claude-tweaks/commit/014fe653bfae383019a2c6391fde7e67427865d3))
+* Record each role's model and effort in the run manifest ([#6010](https://github.com/thn-inc/claude-tweaks/issues/6010)) ([dad29e7](https://github.com/thn-inc/claude-tweaks/commit/dad29e7198a2f98da4708be1ca1a26b2aa8f17dc))
+
+
+### Bug Fixes
+
+* A pull_request workflow run not yet created still leaves… ([#3468](https://github.com/thn-inc/claude-tweaks/issues/3468)) ([b70f1b1](https://github.com/thn-inc/claude-tweaks/commit/b70f1b1961264a8db699e91878634f91701c9b45))
+* Merge-verification classifies a cancelled or… ([#3467](https://github.com/thn-inc/claude-tweaks/issues/3467)) ([421b19b](https://github.com/thn-inc/claude-tweaks/commit/421b19be564691fbc6d019ef67aa6df4ee5e7686))
+* Parse the three Blocked by forms in one module and keep… ([#6374](https://github.com/thn-inc/claude-tweaks/issues/6374)) ([ecc2740](https://github.com/thn-inc/claude-tweaks/commit/ecc2740a384d62aa425a49160de3dd7c3b7a0112))
+* Plan-review needs-human stops have no answer path, no… ([#5053](https://github.com/thn-inc/claude-tweaks/issues/5053)) ([afaaec5](https://github.com/thn-inc/claude-tweaks/commit/afaaec5920a146a31affe77700d9e9277dcd0896))
+* Read the left-for blocker line under Original request, and make the steps after the ready gate agree ([#6378](https://github.com/thn-inc/claude-tweaks/issues/6378)) ([efb21a0](https://github.com/thn-inc/claude-tweaks/commit/efb21a0268e037cae4a38235594c5c4e9e70fed2)), closes [#6374](https://github.com/thn-inc/claude-tweaks/issues/6374)
+* Windows regression: 1 test file(s) newly failing after… ([#6332](https://github.com/thn-inc/claude-tweaks/issues/6332)) ([e62d71c](https://github.com/thn-inc/claude-tweaks/commit/e62d71c7b0de9263c230013f5da4cf71b609b68b))
+
 ## [6.180.0](https://github.com/thn-inc/claude-tweaks/compare/v6.179.0...v6.180.0) (2026-11-26)
 
 
