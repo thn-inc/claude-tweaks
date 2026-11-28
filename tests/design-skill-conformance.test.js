@@ -308,7 +308,7 @@ test('AC8.1: no write outside the folder, no issue, no commit', () => {
   }
   // prose may name them: the same literal outside a code region is not an offender
   assertNoBannedInCode({ ...DESIGN_MD, 'step-7-builder-check.md': `${STEP7}\n\nNever run gh issue create here.\n` }, banned, 'no outside write');
-  const row = lineStartingWith(SKILL, '| Writing outside the folder, creating a worktree or a branch, creating an issue, committing, or starting to build, outside step 10 |');
+  const row = lineStartingWith(SKILL, '| Writing outside the folder, creating a worktree or a branch, creating an issue or committing outside step 10, or starting to build |');
   assert.notEqual(row, '', 'anti-pattern row missing');
   assert.throws(() => assertHas(mutate(SKILL, row, ''), row, 'anti-pattern row for outside writes missing'), { message: 'anti-pattern row for outside writes missing' });
 });
@@ -642,5 +642,7 @@ test('SKILL.md states the new boundary: filing in step 10, the section order, sp
     [/Step 10 invokes `\/claude-tweaks:specify`/, 'SKILL: component contract names the specify invocation'],
     [/^\| Changing the frame, approach or parts after approval without a new approval \|/m, 'SKILL: anti-pattern row for changing after approval'],
     [/parts and estimate, approval, filing\./, 'SKILL: the opening paragraph names the new steps'],
+    [/To change an approved frame, approach or part, first run step 9's approval rule \(`step-9-approve\.md`\): set the Approval section back to `Status: in-progress` and remove its `Approved:` line/, 'SKILL: the always-loaded pointer to step 9\'s approval rule'],
+    [/creating an issue or committing outside step 10, or starting to build \|/, 'SKILL: only issues and commits are carved out to step 10; building stays banned'],
   ]);
 });

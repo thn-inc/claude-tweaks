@@ -110,6 +110,8 @@ Load only the sub-file of the step `status` resumes at, from this skill's direct
 | 9. Approval | `step-9-approve.md` | `## Approval` | its `Status: done`, and `check-approval` exits 0 |
 | 10. Filing | `step-10-file.md` | `## Filing`, issue marks | its `Status: done`, and every part marked |
 
+To change an approved frame, approach or part, first run step 9's approval rule (`step-9-approve.md`): set the Approval section back to `Status: in-progress` and remove its `Approved:` line, make the change, then run step 9 again.
+
 The readers' briefs live in `reader-briefs.md`; the `brief` command composes each reader's prompt from it and the folder's files.
 
 ## Next Actions
@@ -134,4 +136,4 @@ When the session stops early (a step-down, a stop at the round cap, the worktree
 | Passing conversation, evidence or decisions to a reader | A reader that inherits the session's framing confirms it; the `brief` output is its whole prompt |
 | Changing the frame, approach or parts after approval without a new approval | The filed issues stop matching what the maintainer approved — the problem this step exists to close |
 | Going on while a note has no outcome | An undecided note is a design question left for the builder to guess |
-| Writing outside the folder, creating a worktree or a branch, creating an issue, committing, or starting to build, outside step 10 | The session owns one folder and nothing else; shaping, filing and building are later skills' work |
+| Writing outside the folder, creating a worktree or a branch, creating an issue or committing outside step 10, or starting to build | The session owns one folder and nothing else; shaping, filing and building are later skills' work |
