@@ -75,6 +75,11 @@ function parsePlanLine(line) {
 
 function excluded(line) {
   return SPEC_HASH_EXCLUDED_PREFIXES.some((p) => line.startsWith(p))
+    // isBlockerLine matches all three forms, the symbolic `Blocked by: {part} (left for owner/name)`
+    // included: a later run rewrites that line to `owner/name#N` without changing what the spec
+    // builds (record-body-line-addition's plan-line row), so it stays out of the hash. A `Plan:`
+    // hash stamped before #6374 over a body whose hashed range held a symbolic line (they exist
+    // only since #6353) now reads as stale and re-plans once, the safe direction.
     || isBlockerLine(line)
     || parsePlanLine(line).ok
     || FP_RE_WORK.test(line)

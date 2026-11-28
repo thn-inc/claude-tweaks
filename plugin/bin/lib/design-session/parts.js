@@ -50,7 +50,7 @@ const crypto = require('node:crypto');
 const { fencedLineMask } = require('../markdown-blocks');
 const { STATUS_RE, splitLines } = require('./notes');
 const { sectionLines, sectionRange } = require('./design-md');
-const { symbolicBlockerRef } = require('../issues/blocker-lines');
+const { symbolicBlockerRef, REPO } = require('../issues/blocker-lines');
 
 const PARTS_HEADING = 'Parts';
 const APPROVAL_HEADING = 'Approval';
@@ -64,7 +64,7 @@ const SIZES = ['size:low', 'size:medium', 'size:high'];
 const ISSUE_COL = TABLE_HEADER.indexOf('Issue');
 const ESTIMATE_BASIS = 'v6 records no per-size token use in its timing or model-profile data.';
 
-const REPO = '[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+';
+// REPO (the owner/name pattern source) is imported from blocker-lines.js: one definition.
 const REPO_RE = new RegExp(`^${REPO}$`);
 // GitHub owner/name is case-insensitive: the one comparison of two repositories.
 const sameRepository = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();

@@ -148,6 +148,19 @@ test('AC1.1: the three line regexes equal the ones they replace, and the old mod
   assert.deepEqual(parseCrossRepoDependencies('Blocked by a/b#7'), ['a/b#7']);
 });
 
+test('the owner/name pattern is defined once: parts.js imports REPO from blocker-lines.js', () => {
+  const { REPO } = require('../../../plugin/bin/lib/issues/blocker-lines');
+  assert.equal(typeof REPO, 'string');
+  assert.equal(REPO, '[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+');
+  const text = readText(path.join(__dirname, '../../../plugin/bin/lib/design-session/parts.js'));
+  const code = stripComments(text);
+  assert.equal(stripperVerdict(text, code), 'ok');
+  assert.match(code, /const \{[^}]*\bREPO\b[^}]*\} = require\('\.\.\/issues\/blocker-lines'\)/, 'parts.js imports REPO');
+  assert.doesNotMatch(code, /(?:const|let|var)\s+REPO\s*=/, 'parts.js does not redefine REPO');
+  assert.doesNotMatch(code, /\[A-Za-z0-9_\.-\]\+\\\\\/\[A-Za-z0-9_\.-\]\+/, 'parts.js holds no second copy of the pattern');
+  assert.equal(blockedByRegexScan(text).defines, false, 'importing REPO adds no Blocked by regex site to parts.js');
+});
+
 test('symbolicBlockers reads the part and repository, bullets and indent allowed', () => {
   assert.deepEqual(symbolicBlockers('- Blocked by: Skill steps (left for Thn-Inc/Other)'), [{ part: 'Skill steps', repository: 'Thn-Inc/Other' }]);
   assert.deepEqual(symbolicBlockers('  * Blocked by: Skill steps (left for thn-inc/other)  '), [{ part: 'Skill steps', repository: 'thn-inc/other' }]);

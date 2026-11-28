@@ -5,6 +5,11 @@
 //   Blocked by: {part} (left for owner/name)        (a part not yet filed)
 // Every parser (record-dependencies.js, cross-repo-refs.js, plan-line.js,
 // design-session/parts.js, ambiguity-resolve.js) imports its regex from here.
+// Two read scopes, on purpose: the symbolic form is read through authoredText (fences and code
+// spans stripped, stopping at `## Original request`), as readyRestorable always read it; the `#N`
+// and `owner/name#N` forms keep the raw-body grammar they had before #6374 (parseDependencies and
+// cross-repo-refs.js apply LOCAL_/FOREIGN_BLOCKER_LINE_RE to the raw body). So a fenced
+// `Blocked by #N` still holds a record, and a fenced symbolic line does not.
 // No network. Requires only ./materialize-format (for authoredText); keep it that way —
 // record-payload.js loads materialize-format at load time, so it must never
 // require this file at top level.
@@ -74,5 +79,5 @@ const hasSymbolicBlocker = (body) => symbolicBlockers(body).length > 0;
 
 module.exports = {
   LOCAL_BLOCKER_LINE_RE, LOCAL_BLOCKER_ASSUMPTION_RE, FOREIGN_BLOCKER_LINE_RE, SYMBOLIC_BLOCKER_LINE_RE,
-  isBlockerLine, symbolicBlockerRef, symbolicBlockers, symbolicBlockerRefs, hasSymbolicBlocker,
+  REPO, isBlockerLine, symbolicBlockerRef, symbolicBlockers, symbolicBlockerRefs, hasSymbolicBlocker,
 };
