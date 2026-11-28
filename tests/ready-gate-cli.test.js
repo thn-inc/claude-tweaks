@@ -20,6 +20,15 @@ test('a symbolic blocker keeps ready off: exit 1 and the reason', () => {
   assert.deepEqual(JSON.parse(r.stdout), { ready: false, reasons: ['symbolic-blocker: ' + SYMBOLIC_REF] });
 });
 
+test('a shaped body whose symbolic line moved into ## Original request still keeps ready off: exit 1', () => {
+  // Shaping rewrites the authored sections and keeps the sub-issue's original body, line included,
+  // only under `## Original request`.
+  const shaped = `${symbolicBody().replace(`${SYMBOLIC_LINE}\n`, '')}\n## Original request\n\nSkill steps\n\n- ${SYMBOLIC_LINE}\n`;
+  const r = runCliSync(BIN, [write('shaped.md', shaped)]);
+  assert.equal(r.code, 1);
+  assert.deepEqual(JSON.parse(r.stdout), { ready: false, reasons: ['symbolic-blocker: ' + SYMBOLIC_REF] });
+});
+
 test('a rewritten blocker line may carry ready: exit 0', () => {
   const r = runCliSync(BIN, [write('ok.md', symbolicBody().replace(SYMBOLIC_LINE, 'Blocked by thn-inc/other#7004'))]);
   assert.equal(r.code, 0);

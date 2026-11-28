@@ -172,10 +172,13 @@ test('symbolicBlockers dedupes one blocker spelled twice, case-insensitively on 
   assert.equal(symbolicBlockers('Blocked by: A (left for x/y)\nBlocked by: B (left for x/y)').length, 2);
 });
 
-test('symbolicBlockers ignores a code span, a fence and the Original request', () => {
+test('symbolicBlockers ignores a code span and a fence, and reads the Original request', () => {
   assert.deepEqual(symbolicBlockers(`Text \`${SYMBOLIC_LINE}\` more`), []);
   assert.deepEqual(symbolicBlockers(`\`\`\`\n${SYMBOLIC_LINE}\n\`\`\`\n`), []);
-  assert.deepEqual(symbolicBlockers(`## Deliverables\n\nx\n\n## Original request\n\n${SYMBOLIC_LINE}\n`), []);
+  // Shaping moves a sub-issue's original body, symbolic line and all, into `## Original request`:
+  // the line still blocks there.
+  assert.equal(symbolicBlockers(`## Deliverables\n\nx\n\n## Original request\n\n${SYMBOLIC_LINE}\n`).length, 1);
+  assert.deepEqual(symbolicBlockers(`## Deliverables\n\nx\n\n## Original request\n\n\`\`\`\n${SYMBOLIC_LINE}\n\`\`\`\n`), []);
   assert.deepEqual(symbolicBlockers(undefined), []);
   assert.deepEqual(symbolicBlockers(''), []);
   assert.equal(hasSymbolicBlocker(symbolicBody()), true);

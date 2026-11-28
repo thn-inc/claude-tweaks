@@ -44,7 +44,7 @@ const REGIONS = [
   ['planning-answer (d)', region(ANSWER, '- **(d) Ready.**'), [
     [/--add-label ready/, 'the region holds the write that adds ready'],
     [/`node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/ready-gate\.js" "\{body\}"` exits 0/, 'it adds ready only when ready-gate.js exits 0 on the body'],
-    [/on exit 1 add nothing and name the printed `reasons` in the outcome/, 'exit 1 adds nothing and names the reasons in the outcome'],
+    [/on exit 1 add nothing \(the read-back expects `ready` absent then, and its outcome names the gate's `reasons`\)/, 'exit 1 adds nothing; the read-back expects ready absent and names the reasons'],
   ]],
   ['decomposition-mode-closeout Step 4 write-back', region(CLOSE, "**Approved parts list (Step 2's approved branch) — write back"), [
     [/--add-label ready/, 'the region holds the write that adds ready'],
@@ -159,7 +159,6 @@ const READY_PATH_ROSTER = {
   'bin/lib/issues/record-payload.js': 'defines the gate: withholds ready',
   'bin/lib/issues/ambiguity-resolve.js': 'defines the gate: readyRestorable',
   'bin/resolve-ambiguity.js': 'reports the gate: prints readyRestorable',
-  'bin/lib/issues/blocker-lines.js': 'not a ready path: a comment names readyRestorable',
   'bin/lib/issues/build-authority.js': 'not a ready path: reads the label',
   'bin/lib/issues/record-vocabulary.js': 'not a ready path: names the label',
   'bin/lib/station-events/stations.js': 'not a ready path: names the label',

@@ -371,9 +371,10 @@ test('AC2.1: the read-back names the CLI and states no per-branch label assertio
   for (const n of RETIRED_READBACK) assert.deepEqual(retiredIn(`${region}\n${n}`), [n]);
 });
 
-// Twin: Next Actions' bullet labels and readBack's `next` values name the same four routes.
+// Twin: Next Actions' bullet labels and readBack's `next` values name the same five routes.
 const NEXT_LABELS = {
   '`ready`': 'ready',
+  'Ready withheld': 'ready-withheld',
   'Still needs:decision': 'still-needs-decision',
   'Kept needs:decision': 'kept-needs-decision',
   'Held or failed': 'held-or-failed',
