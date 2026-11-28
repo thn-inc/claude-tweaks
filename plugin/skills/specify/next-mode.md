@@ -137,7 +137,7 @@ label predicate; the additional exclusion happens after the fetch returns.
 Per `_shared/record-queue-fetch.md`'s `work-backend: github-issues` fetch:
 open records carrying none of `ready`, any `needs:*`-prefixed label
 (`_shared/work-record.md`'s worklist rule), `parked`, `parent-issue`,
-`digest`, and `bot:in-progress`. The last is a cheap label-based
+`digest`, `shaped:headless`, and `bot:in-progress`. The last is a cheap label-based
 pre-filter, the identical posture `dispatch/SKILL.md` Step 2 already takes
 for its own `bot:*` exclusion ("labels are projection, not truth... the
 authoritative unclaimed check is `/flow`'s Step 2.8 atomic claim
@@ -151,7 +151,12 @@ a decomposition summary, never itself a shaping target
 same reason — an issue carrying it is the materiality floor's rolling
 container (`_shared/materiality-floor.md`), never a work record at all, the
 same exemption `/tidy`'s Shape 1 already gives a `parent-issue`-labeled
-parent (`tidy/step-1-records.md`). That exclusion is
+parent (`tidy/step-1-records.md`). `shaped:headless` marks a record an
+earlier bare drain already shaped: it usually carries `ready` too, but
+`shaping-mode-stamping.md`'s Ready gate stamps it without `ready` when the
+body must not carry it (a `Blocked by: … (left for …)` line, an Open
+Questions section), and re-shaping that record on every firing changes
+nothing. That exclusion is
 label-only and selection-time; an unlabeled legacy parent (a
 `## Leaves`-table body with no `parent-issue` label) passes it —
 `SKILL.md` case 1's parent-record guard is the shaping-time backstop that
@@ -191,7 +196,7 @@ if [ "$RAW_COUNT" -ge 500 ]; then
 fi
 node -e "
   const records = require('$RAW');
-  const EXCLUDE = new Set(['ready', 'parked', 'parent-issue', 'bot:in-progress', 'digest']);
+  const EXCLUDE = new Set(['ready', 'parked', 'parent-issue', 'bot:in-progress', 'digest', 'shaped:headless']);
   const MARKER = /^<!-- digest-rollover-of: (\d+) -->\s*$/m;
   const namedBy = new Map();
   for (const r of records) {
@@ -327,7 +332,7 @@ gh issue view {n} --json labels -q '[.labels[].name]'
 ```
 
 If the re-read shows the record no longer eligible (now carries `ready`,
-any `needs:*`-prefixed label, `parked`, `parent-issue`, `digest`, or `bot:in-progress`),
+any `needs:*`-prefixed label, `parked`, `parent-issue`, `digest`, `shaped:headless`, or `bot:in-progress`),
 or the claim write below is contested — either is a **lost claim race**: it
 consumes no `--budget` unit, and the loop normally retries immediately,
 exactly as if the record had never appeared, against a fresh Eligibility

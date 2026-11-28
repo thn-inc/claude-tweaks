@@ -24,7 +24,9 @@ function hold(questionLines = Q2) {
 }
 
 const PLAN = 'Plan: refs/claude-tweaks/plans/7 ' + 'a'.repeat(40) + ' spec-sha256:' + 'b'.repeat(64);
-const body = (planLines = [PLAN]) => 'Overview text\n' + planLines.join('\n') + '\n\n## Overview\nx\n';
+// Spec-shaped, as a held record's body is, so the ready gate (d) runs passes it.
+const SHAPED = '## Current State\n\nx\n\n## Deliverables\n\n- y\n\n## Acceptance Criteria\n\n- z\n\n## Release Note\n\nr\n\n';
+const body = (planLines = [PLAN]) => 'Overview text\n' + planLines.join('\n') + '\n\n' + SHAPED + '## Overview\nx\n';
 const resolvedHold = () => ({
   id: 'IC_h',
   body: '**Resolved:** answered via /claude-tweaks:specify — 2026-11-23\n<!-- needs-decision: specify -->\nold',
@@ -61,6 +63,7 @@ const keptInput = (overrides = {}) => {
 
 const T = {
   ready: 'answered — {k} planning question(s), ready (Plan: {short commit})',
+  withheld: 'answered — {k} planning question(s); ready withheld ({reasons}) (Plan: {short commit})',
   still: 'answered — {k} planning question(s); still needs:decision ({m} other decision comment(s))',
   kept: 'answered — {k} planning question(s); needs:decision kept (decision comments could not be re-read)',
   reheld: 'held — {j} answered, {k} re-held',
@@ -75,6 +78,22 @@ test('AC1.1: answered → ready', () => {
   assert.equal(r.outcome, 'answered — 2 planning question(s), ready (Plan: aaaaaaa)');
   assert.equal(r.next, 'ready');
   assert.deepEqual(r.assertions.map((a) => a.id), ['labels', 'resolved', 'plan-line', 'plan-check']);
+});
+
+test('answered while the ready gate fails (a left-for line under Original request) → ready withheld', () => {
+  const leftFor = `${body()}\n## Original request\n\n- Blocked by: Billing page (left for o/web)\n`;
+  const r = readBack(base({ labels: [], body: leftFor }));
+  assert.equal(r.ok, true);
+  assert.equal(r.outcome, 'answered — 2 planning question(s); ready withheld (symbolic-blocker: Billing page (left for o/web)) (Plan: aaaaaaa)');
+  assert.equal(r.next, 'ready-withheld');
+  // a ready label that (d) should not have added fails the read-back
+  const stamped = readBack(base({ body: leftFor }));
+  assert.deepEqual(stamped.failed, ['labels']);
+  assert.match(stamped.assertions[0].detail, /the ready gate keeps ready off/);
+  // once the other repository's run rewrites the line, ready is expected again
+  const rewritten = readBack(base({ body: leftFor.replace('- Blocked by: Billing page (left for o/web)', 'Blocked by o/web#42') }));
+  assert.equal(rewritten.ok, true);
+  assert.equal(rewritten.next, 'ready');
 });
 
 test('AC1.1: answered with other unresolved → still needs:decision', () => {
@@ -114,7 +133,7 @@ test('AC1.1: each assertion mis-decided goes red', () => {
     ['hold comment not resolved', base({ comments: [{ ...resolvedHold(), body: '<!-- needs-decision: specify -->\nold' }] }), ['resolved']],
     ['no resolved ids', base({ resolvedIds: [] }), ['resolved']],
     ['two Plan lines', base({ body: body([PLAN, PLAN]) }), ['plan-line']],
-    ['zero Plan lines', base({ body: 'Overview text\n\n## Overview\nx\n' }), ['plan-line']],
+    ['zero Plan lines', base({ body: 'Overview text\n\n' + SHAPED + '## Overview\nx\n' }), ['plan-line']],
     ['body commit differs', base({ body: body([PLAN.replace('a'.repeat(40), 'c'.repeat(40))]) }), ['plan-line']],
     ['unparseable plan line', base({ planLine: 'Plan: nonsense', body: body(['Plan: nonsense']) }), ['plan-line']],
     ['plan-check invalid', base({ planCheck: { valid: false, failed: 'hash' } }), ['plan-check']],
@@ -139,7 +158,7 @@ test('AC1.1: failed outcome keys its guidance on the branch', () => {
   const h = readBack(reheld({ reheldQuestions: ['Other?'] }));
   assert.equal(h.outcome, 'failed — read-back (rehold); re-run /claude-tweaks:specify #7');
   assert.equal(h.next, 'held-or-failed');
-  const two = readBack(base({ labels: [], body: 'no plan\n' }));
+  const two = readBack(base({ labels: [], body: 'no plan\n\n' + SHAPED }));
   assert.deepEqual(two.failed, ['labels', 'plan-line']);
   assert.match(two.outcome, /^failed — read-back \(labels, plan-line\);/);
 });
@@ -180,6 +199,6 @@ test('input validation throws TypeError', () => {
 
 test('OUTCOME_TEMPLATES and NEXT_ACTIONS are the documented constants', () => {
   assert.deepEqual(OUTCOME_TEMPLATES, T);
-  assert.deepEqual(NEXT_ACTIONS, ['ready', 'still-needs-decision', 'kept-needs-decision', 'held-or-failed']);
+  assert.deepEqual(NEXT_ACTIONS, ['ready', 'ready-withheld', 'still-needs-decision', 'kept-needs-decision', 'held-or-failed']);
   assert.deepEqual(READBACK_BRANCHES, ['answered', 'kept', 're-held']);
 });

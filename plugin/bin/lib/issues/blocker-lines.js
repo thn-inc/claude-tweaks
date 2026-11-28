@@ -5,17 +5,18 @@
 //   Blocked by: {part} (left for owner/name)        (a part not yet filed)
 // Every parser (record-dependencies.js, cross-repo-refs.js, plan-line.js,
 // design-session/parts.js, ambiguity-resolve.js) imports its regex from here.
-// Two read scopes, on purpose: the symbolic form is read through authoredText (fences and code
-// spans stripped, stopping at `## Original request`), as readyRestorable always read it; the `#N`
+// Two read scopes, on purpose: the symbolic form is read over the whole body with fences and code
+// spans stripped (stripCodeSpans), `## Original request` included, because shaping moves a
+// sub-issue's original body there, symbolic line and all, and that line still blocks; the `#N`
 // and `owner/name#N` forms keep the raw-body grammar they had before #6374 (parseDependencies and
 // cross-repo-refs.js apply LOCAL_/FOREIGN_BLOCKER_LINE_RE to the raw body). So a fenced
 // `Blocked by #N` still holds a record, and a fenced symbolic line does not.
-// No network. Requires only ./materialize-format (for authoredText); keep it that way —
+// No network. Requires only ./materialize-format (for stripCodeSpans); keep it that way —
 // record-payload.js loads materialize-format at load time, so it must never
 // require this file at top level.
 'use strict';
 
-const { authoredText } = require('./materialize-format');
+const { stripCodeSpans } = require('./materialize-format');
 
 // The four exported *_LINE_RE / *_ASSUMPTION_RE regexes are `g`/`m`-flagged, so they carry
 // `lastIndex` state: use them with `matchAll` / `String.prototype.match` only, never `.test()` or
@@ -57,14 +58,14 @@ function symbolicBlockerRef({ part, repository }) {
   return `${part} (left for ${repository})`;
 }
 
-// The symbolic blockers of a body, read from its authored text only (before
-// `## Original request`, code spans and fences stripped), in first-appearance
-// order, deduplicated on part plus case-insensitive repository.
+// The symbolic blockers of a body, read from the whole body (`## Original request`
+// included) with code spans and fences stripped, in first-appearance order,
+// deduplicated on part plus case-insensitive repository.
 function symbolicBlockers(body) {
   if (typeof body !== 'string' || body === '') return [];
   const seen = new Set();
   const out = [];
-  for (const m of authoredText(body).matchAll(SYMBOLIC_BLOCKER_LINE_RE)) {
+  for (const m of stripCodeSpans(body).matchAll(SYMBOLIC_BLOCKER_LINE_RE)) {
     const key = `${m[1]}\u0000${m[2].toLowerCase()}`;
     if (seen.has(key)) continue;
     seen.add(key);

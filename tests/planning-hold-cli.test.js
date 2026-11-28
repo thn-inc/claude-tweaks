@@ -126,7 +126,8 @@ const resolvedHold = {
   authorAssociation: 'OWNER',
   createdAt: '2026-11-23T10:00:00Z',
 };
-const recBody = `Overview text\n${PLAN}\n\n## Overview\nx\n`;
+// Spec-shaped, as a held record's body is, so the ready gate the read-back mirrors passes it.
+const recBody = `Overview text\n${PLAN}\n\n## Current State\n\nx\n\n## Deliverables\n\n- y\n\n## Acceptance Criteria\n\n- z\n\n## Release Note\n\nr\n\n## Overview\nx\n`;
 
 // A passing answered-branch fixture; each key overrides the matching file or flag.
 function rbArgs(o = {}) {

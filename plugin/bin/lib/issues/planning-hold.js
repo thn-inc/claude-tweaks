@@ -35,6 +35,7 @@
 const { isTrustedComment, untrustedSkipNote } = require('./comment-trust');
 const { parsePlanLine } = require('./plan-line');
 const { fencedLineMask } = require('../markdown-blocks');
+const { readyGate } = require('./ambiguity-resolve');
 
 const HELD_BY_LINE = 'Held-by: specify-planning';
 const BLOCK_START = '<!-- held-questions:start -->';
@@ -143,9 +144,10 @@ function readPlanningHold(comments) {
 }
 
 const READBACK_BRANCHES = ['answered', 'kept', 're-held'];
-const NEXT_ACTIONS = ['ready', 'still-needs-decision', 'kept-needs-decision', 'held-or-failed'];
+const NEXT_ACTIONS = ['ready', 'ready-withheld', 'still-needs-decision', 'kept-needs-decision', 'held-or-failed'];
 const OUTCOME_TEMPLATES = {
   ready: 'answered — {k} planning question(s), ready (Plan: {short commit})',
+  withheld: 'answered — {k} planning question(s); ready withheld ({reasons}) (Plan: {short commit})',
   still: 'answered — {k} planning question(s); still needs:decision ({m} other decision comment(s))',
   kept: 'answered — {k} planning question(s); needs:decision kept (decision comments could not be re-read)',
   reheld: 'held — {j} answered, {k} re-held',
@@ -177,12 +179,18 @@ function validateReadBack(input) {
 
 const sortedTrim = (arr) => arr.map((q) => q.trim()).sort();
 
+// Why the re-read body must not carry `ready`: planning-answer.md's (d) Ready runs bin/ready-gate.js on
+// the body it wrote and adds `ready` only on exit 0, so the read-back expects what that gate decides.
+const withheldReasons = (input) => readyGate(input.body).reasons;
+
 function labelsAssertion(input) {
   const ready = input.labels.includes('ready');
   const needs = input.labels.includes('needs:decision');
-  const wantReady = input.branch === 'answered' && input.otherUnresolved === 0;
-  const pass = wantReady ? ready && !needs : needs && !ready;
-  const expected = wantReady ? 'ready present, needs:decision absent' : 'needs:decision present, ready absent';
+  const resolved = input.branch === 'answered' && input.otherUnresolved === 0;
+  const withheld = resolved && withheldReasons(input).length > 0;
+  const pass = withheld ? !ready && !needs : resolved ? ready && !needs : needs && !ready;
+  const expected = withheld ? 'ready and needs:decision absent (the ready gate keeps ready off)'
+    : resolved ? 'ready present, needs:decision absent' : 'needs:decision present, ready absent';
   return { id: 'labels', pass, detail: `expected ${expected}; got [${input.labels.join(', ')}]` };
 }
 
@@ -240,7 +248,7 @@ function planCheckAssertion(input) {
   return { id: 'plan-check', pass, detail: pass ? 'plan-check valid' : `expected plan-check valid === true; got ${JSON.stringify(pc)}` };
 }
 
-const render = (tpl, vars) => tpl.replace(/\{(k|m|j|n|what|short commit)\}/g, (_, key) => String(vars[key]));
+const render = (tpl, vars) => tpl.replace(/\{(k|m|j|n|what|reasons|short commit)\}/g, (_, key) => String(vars[key]));
 
 // input: field list and checks: `validateReadBack` above. -> { ok, branch, assertions, failed, outcome, next }.
 function readBack(input) {
@@ -269,8 +277,12 @@ function readBack(input) {
     outcome = render(T.kept, { k: answered });
     next = 'kept-needs-decision';
   } else if (input.otherUnresolved === 0) {
-    outcome = render(T.ready, { k: answered, 'short commit': parsePlanLine(input.planLine).commit.slice(0, 7) });
-    next = 'ready';
+    const short = parsePlanLine(input.planLine).commit.slice(0, 7);
+    const reasons = withheldReasons(input);
+    outcome = reasons.length > 0
+      ? render(T.withheld, { k: answered, reasons: reasons.join('; '), 'short commit': short })
+      : render(T.ready, { k: answered, 'short commit': short });
+    next = reasons.length > 0 ? 'ready-withheld' : 'ready';
   } else {
     outcome = render(T.still, { k: answered, m: input.otherUnresolved });
     next = 'still-needs-decision';
