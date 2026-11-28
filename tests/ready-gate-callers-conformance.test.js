@@ -275,7 +275,7 @@ function accumulateFence(text) {
   assert.ok(m, 'no bash fence follows the Accumulate paragraph');
   return m[1];
 }
-function runAccumulate(env) {
+function runAccumulate(env, shell = 'bash') {
   const dir = scratchDir('ready-gate-accumulate-');
   const sessionId = 'ready-gate-accumulate-test';
   const manifest = sessionTmpPath(sessionId, 'specify-decomp-manifest.json', { tmpdir: dir });
@@ -286,7 +286,7 @@ function runAccumulate(env) {
     ...process.env, TMPDIR: dir, TMP: dir, TEMP: dir, CLAUDE_CODE_SESSION_ID: sessionId, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT,
     SPECIFY_SUB_ISSUE_BODY: bodyPath, SUB_ISSUE_TITLE: 'Unit A', SUB_ISSUE_CEREMONY: 'standard', SUB_ISSUE_NUM: '', SUB_ISSUE_ID: '', ...env,
   };
-  const r = spawnSync('bash', ['-c', accumulateFence(SUB)], { cwd: dir, env: full, encoding: 'utf8' });
+  const r = spawnSync(shell, ['-c', accumulateFence(SUB)], { cwd: dir, env: full, encoding: 'utf8' });
   return { r, manifest: JSON.parse(fs.readFileSync(manifest, 'utf8')) };
 }
 
@@ -303,3 +303,16 @@ test('run: the Accumulate fence appends a unit that has a number and skips one t
     assert.match(failed.r.stderr, /create failed for "Unit A": no record number, not accumulated/);
   }
 });
+
+// echo reads a backslash sequence in its argument in zsh and not in bash, so a title holding one
+// printed two different messages. The fence prints through printf with the title as an argument.
+const hasShell = (shell) => spawnSync(shell, ['-c', 'exit 0']).status === 0;
+for (const shell of ['bash', 'zsh']) {
+  test(`run: the Accumulate fence prints a failed create with a backslash in the title exactly, under ${shell}`, { skip: process.platform === 'win32' ? 'shell fence' : !hasShell(shell) && `no ${shell}` }, () => {
+    for (const title of ['Unit \\n A', 'Unit \\\\ B', 'Unit \\c C', '-n']) {
+      const failed = runAccumulate({ SUB_ISSUE_TITLE: title }, shell);
+      assert.deepEqual(failed.manifest, [], title);
+      assert.equal(failed.r.stderr, `create failed for "${title}": no record number, not accumulated\n`, `${shell}: ${title}`);
+    }
+  });
+}

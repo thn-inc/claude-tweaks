@@ -206,7 +206,7 @@ if [ -n "${SUB_ISSUE_NUM:-$SUB_ISSUE_ID}" ]; then
     list.push(entry);
     fs.writeFileSync(path, JSON.stringify(list))" -- "$SPECIFY_DECOMP_MANIFEST" "$SUB_ISSUE_TITLE" "${SUB_ISSUE_NUM:-$SUB_ISSUE_ID}" "$SPECIFY_SUB_ISSUE_BODY" "$SUB_ISSUE_CEREMONY"
 else
-  echo "create failed for \"$SUB_ISSUE_TITLE\": no record number, not accumulated" >&2
+  printf 'create failed for "%s": no record number, not accumulated\n' "$SUB_ISSUE_TITLE" >&2
 fi
 ```
 

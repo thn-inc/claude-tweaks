@@ -34,6 +34,11 @@ const factsFor = ({ name, vars }) => [
   [new RegExp(`runs the Create row's command with \`--title "\\$${vars}_TITLE"\`, \`--body-file "\\$${vars}_BODY_FILE"\` and one \`--label\` per entry of \`payload\\.labels\``), 'the call passes the title variable, the body file and one label per payload label'],
   [/`payload\.labels` never carries the type, so this step always applies it/, 'the type is still applied by the type branch'],
   [/omit `ready`, `risk:\*` and `size:\*` entirely/, 'the headless D5 exception still omits ready'],
+  // The label set the sweep says it emits names the withhold: `ready` is not unconditional any more.
+  [/the emitted label set is exactly [^.]*`ready` unless `recordPayload` withholds it/, 'the emitted label set qualifies ready'],
+  ...(name === 'harness-health'
+    ? [[/`by:harness-health`\/`ready` \(unless `recordPayload` withholds it\)\/`harness-health:new-skill`/, 'the new-skill label set qualifies ready']]
+    : []),
 ];
 
 // A create call that types a label `recordPayload` already decides: `ready`, a scoring tier, or the
