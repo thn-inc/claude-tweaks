@@ -4,7 +4,7 @@
 // The mechanical half of /claude-tweaks:design: where a session's folder is,
 // which step it resumes at, whether its evidence and a notes round are
 // complete, and the exact text each reader is handed. A thin shell over
-// bin/lib/design-session/{folder,status,evidence,notes,brief}.js; no judgement
+// bin/lib/design-session/{folder,status,evidence,notes,brief,parts}.js; no judgement
 // lives here. Zero runtime npm deps. The entry contract is
 // .claude/skills/gh-api-module-pattern/cli-wrapper-contract.md.
 //

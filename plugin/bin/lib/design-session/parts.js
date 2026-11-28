@@ -31,7 +31,8 @@
 // outside a fence; none, or more than one, is not approved.
 // The digest is sha256 over three blocks joined with `\n`: `## Frame` and
 // `## Approaches` (each its heading line, then its section lines without
-// `Status:` lines) and `## Parts` (its heading line, then each data row's first
+// `Status:` lines, which flip from in-progress to done as steps finish after
+// approval, so including them would invalidate every approval) and `## Parts` (its heading line, then each data row's first
 // five cells, trimmed, joined with ` | `); every line is right-trimmed. Issue
 // marks and the Estimate line are outside it, so filing never invalidates it.
 //
@@ -46,8 +47,8 @@
 
 const crypto = require('node:crypto');
 const { fencedLineMask } = require('../markdown-blocks');
-const { H2_RE, STATUS_RE, splitLines } = require('./notes');
-const { sectionLines } = require('./design-md');
+const { STATUS_RE, splitLines } = require('./notes');
+const { sectionLines, sectionRange } = require('./design-md');
 
 const PARTS_HEADING = 'Parts';
 const APPROVAL_HEADING = 'Approval';
@@ -92,11 +93,11 @@ function cellsOf(line) {
 // `fenced` marking those inside a fence] } for `## {heading}`, or null when
 // the section is absent. The section's bounds are sectionLines'.
 function sectionIndices(designText, heading) {
+  const range = sectionRange(designText, heading);
+  if (!range) return null;
   const lines = splitLines(designText);
-  const body = sectionLines(designText, heading);
-  if (!body) return null;
   const fenced = fencedLineMask(lines);
-  const start = lines.findIndex((l, i) => !fenced[i] && H2_RE.test(l) && l.replace(/^##\s+/, '').trim() === heading);
+  const { start, body } = range;
   const indices = [];
   for (let i = start + 1; i <= start + body.length; i++) indices.push(i);
   return { lines, indices, fenced };
@@ -268,7 +269,7 @@ function estimate(parts) {
 // Rewrites only the Issue cell of each named row: an empty cell, a `left for …`
 // cell, or one already holding the same mark. A cell holding anything else, or
 // a mark naming another repository than the row's, is a conflict and stays as
-// it is.
+// it is, as is a row whose cell count differs from the table's columns.
 function markFiled(designText, marks) {
   const { lines, rows } = locateTable(designText);
   const eol = String(designText).includes('\r\n') ? '\r\n' : '\n';
@@ -284,6 +285,10 @@ function markFiled(designText, marks) {
     const i = byName.get(name);
     if (i === undefined) {
       unknown.push(name);
+      continue;
+    }
+    if (cellsOf(lines[i]).length !== TABLE_HEADER.length) {
+      conflicts.push(name);
       continue;
     }
     const segs = lines[i].split('|');

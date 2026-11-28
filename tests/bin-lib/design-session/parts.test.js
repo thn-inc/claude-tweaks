@@ -86,6 +86,17 @@ test('AC7.1/AC7.4: the digest covers frame, approach and parts; editing one cell
   assert.notEqual(cell, APPROVED_FOUR);
   assert.equal(checkApproval(cell).reason, 'digest-mismatch');
   assert.equal(checkApproval(cell).approved, false);
+  const edits = [
+    [row(4, 'Docs and help', 'size:low', REPO, 'Decomposition branch, Skill steps'),
+      row(4, 'Docs and helps', 'size:low', REPO, 'Decomposition branch, Skill steps')],
+    [row(3, 'Skill steps', 'size:medium', REPO, 'Parser'), row(3, 'Skill steps', 'size:medium', OTHER, 'Parser')],
+    [row(3, 'Skill steps', 'size:medium', REPO, 'Parser'), row(3, 'Skill steps', 'size:medium', REPO, '—')],
+  ];
+  for (const [from, to] of edits) {
+    const edited = APPROVED_FOUR.replace(from, to);
+    assert.notEqual(edited, APPROVED_FOUR);
+    assert.equal(checkApproval(edited).reason, 'digest-mismatch', to);
+  }
   const frame = APPROVED_FOUR.replace('Problem: orders are filed by hand', 'Problem: orders are filed by mail');
   assert.equal(checkApproval(frame).reason, 'digest-mismatch');
   const approach = APPROVED_FOUR.replace('Chosen: A — file from', 'Chosen: B — file from');
@@ -130,6 +141,17 @@ test('markFiled conflicts', () => {
   assert.deepEqual(unknown.unknown, ['Nope']);
   assert.equal(unknown.text, APPROVED_FOUR);
   assert.throws(() => markFiled(APPROVED_FOUR, { Parser: '#7001' }), /mark/);
+});
+
+test('markFiled leaves a row whose cell count is not the table\'s as a conflict', () => {
+  const full = row(1, 'Parser', 'size:low', REPO, '—');
+  for (const bad of [`| 1 | Parser | size:low | ${REPO} |`, `| 1 | Parser | size:low | ${REPO} | —`]) {
+    const text = designWith(FOUR_ROWS).replace(full, bad);
+    assert.notEqual(text, designWith(FOUR_ROWS));
+    const r = markFiled(text, { Parser: `${REPO}#7001` });
+    assert.deepEqual([r.marked, r.unknown, r.conflicts], [[], [], ['Parser']], bad);
+    assert.equal(r.text, text);
+  }
 });
 
 test('markFiled keeps CRLF line endings', () => {
@@ -259,6 +281,11 @@ test('a missing Frame or Approaches section is invalid-parts', () => {
   const c = checkApproval(noFrame);
   assert.equal(c.reason, 'invalid-parts');
   assert.ok(c.errors.some((e) => e.includes('Frame')), c.errors.join('; '));
+  const noApproaches = designWith(FOUR_ROWS).replace('## Approaches', '## Alternatives');
+  assert.equal(partsDigest(noApproaches), null);
+  const a = checkApproval(noApproaches);
+  assert.equal(a.reason, 'invalid-parts');
+  assert.ok(a.errors.some((e) => e.includes('Approaches')), a.errors.join('; '));
 });
 
 test('invalid-parts', () => {
@@ -275,6 +302,9 @@ test('invalid-parts', () => {
     assert.match(p.errors[0], re);
     assert.equal(checkApproval(text).reason, 'invalid-parts');
   }
+});
+
+test('the allowed size labels', () => {
   assert.deepEqual(SIZES, ['size:low', 'size:medium', 'size:high']);
 });
 
@@ -327,6 +357,20 @@ test('fences', () => {
   const text = ['# Design', '', ...FRAME.slice(0, -1), ...fencedParts, ...APPROACHES].join('\n');
   assert.equal(parseParts(text).present, false);
   assert.equal(checkApproval(text).reason, 'no-parts');
+});
+
+test('a fenced example table inside the Parts section is ignored', () => {
+  const fake = ['```', '| Fake | Header |', '|---|---|', row(1, 'Fake', 'size:low', REPO, '—'), '```', ''];
+  const plain = designWith(FOUR_ROWS);
+  const before = plain.replace(`\n${HEADER}\n`, `\n${fake.join('\n')}\n${HEADER}\n`);
+  const after = plain.replace('\nEstimate: ', `\n${fake.join('\n')}\nEstimate: `);
+  for (const text of [before, after]) {
+    assert.notEqual(text, plain);
+    const p = parseParts(text);
+    assert.deepEqual(p.errors, []);
+    assert.deepEqual(p.parts.map((x) => x.name), ['Parser', 'Decomposition branch', 'Skill steps', 'Docs and help']);
+    assert.equal(partsDigest(text), partsDigest(plain));
+  }
 });
 
 test('a malformed Issue cell is a row error, never a part missing from the filing plan', () => {
