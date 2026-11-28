@@ -125,7 +125,7 @@ test('composeOrderBlob: states the blob field list once', () => {
     computedAt: '2026-08-30T00:00:00Z', runId: 'spec-1571', freshnessSignal: { issues: [] }, groups: [], excluded: [],
   });
   assert.deepStrictEqual(blob, {
-    computedAt: '2026-08-30T00:00:00Z', runId: 'spec-1571', freshnessSignal: { issues: [] }, groups: [], excluded: [], grouping: 'per-record',
+    computedAt: '2026-08-30T00:00:00Z', runId: 'spec-1571', freshnessSignal: { issues: [] }, groups: [], excluded: [], grouping: 'per-record', blockerRules: 1,
   });
 });
 
@@ -134,7 +134,7 @@ test('composeOrderBlob: carries an optional bundles field through unchanged', ()
     computedAt: '2026-09-11T00:00:00Z', runId: 'spec-2066', freshnessSignal: { issues: [] }, groups: [], excluded: [], bundles: [{ records: [10, 11] }],
   });
   assert.deepStrictEqual(blob, {
-    computedAt: '2026-09-11T00:00:00Z', runId: 'spec-2066', freshnessSignal: { issues: [] }, groups: [], excluded: [], bundles: [{ records: [10, 11] }], grouping: 'per-record',
+    computedAt: '2026-09-11T00:00:00Z', runId: 'spec-2066', freshnessSignal: { issues: [] }, groups: [], excluded: [], bundles: [{ records: [10, 11] }], grouping: 'per-record', blockerRules: 1,
   });
 });
 
@@ -270,7 +270,7 @@ test('#6062 AC4: a blob with no fingerprint is never reused, and a new blob keep
 
 test('composeOrderBlob ignores unknown properties, so a policy object can be spread into it', () => {
   const blob = composeOrderBlob({ computedAt: 'x', runId: 'y', freshnessSignal: SIGNAL, groups: [], excluded: [], grouping: STAMP, fingerprint: 'fp', enabled: true, extra: 1 });
-  assert.deepStrictEqual(Object.keys(blob).sort(), ['computedAt', 'excluded', 'fingerprint', 'freshnessSignal', 'grouping', 'groups', 'runId']);
+  assert.deepStrictEqual(Object.keys(blob).sort(), ['blockerRules', 'computedAt', 'excluded', 'fingerprint', 'freshnessSignal', 'grouping', 'groups', 'runId']);
 });
 
 // #4793: a foreign issue closing changes nothing in the freshness signal, so a hit would replay a
@@ -291,6 +291,26 @@ test('#4793: the same queue is a cache hit without a qualified foreign Blocked b
   const mixed = [...queue(''), { number: 2, updatedAt: 'b', state: 'OPEN', body: 'Blocked by acme/x#2' }];
   assert.deepStrictEqual(buildFreshnessSignal(mixed).foreignDeclared, true);
   assert.equal('foreignDeclared' in buildFreshnessSignal(queue('')), false, 'absent when no body declares one');
+});
+
+// A blob written before the symbolic-blocker rule (#6374) holds a record the old rule left eligible,
+// and the freshness signal cannot see a rule change: the blob carries `blockerRules`, and a blob
+// without it (or with another value) is a miss once. A new blob adds one field an older build's
+// cacheUsable never reads, so the older build still hits on it.
+test('#6374: a blob with no blockerRules stamp is a cache miss, and a fresh blob hits', () => {
+  const fresh = composeOrderBlob({ computedAt: 'x', runId: 'y', freshnessSignal: SIGNAL, groups: [], excluded: [], fingerprint: 'fp' });
+  assert.equal(fresh.blockerRules, 1);
+  assert.equal(cacheUsable(fresh, SIGNAL, KEY), true);
+  const { blockerRules, ...older } = fresh;
+  assert.equal(blockerRules, 1);
+  assert.equal('blockerRules' in older, false);
+  assert.equal(signalsMatch(older.freshnessSignal, SIGNAL), true, 'control: every other check passes');
+  assert.equal(cacheUsable(older, SIGNAL, KEY), false);
+  assert.equal(cacheUsable({ ...fresh, blockerRules: 0 }, SIGNAL, KEY), false, 'another value is a miss too');
+  assert.equal(cacheUsable({ ...fresh, blockerRules: '1' }, SIGNAL, KEY), false, 'the stamp is a number');
+  // expand-contract: the grouping stamp is still the mode label, untouched by the new field
+  assert.equal(fresh.grouping, GROUPING_MODE);
+  assert.equal(GROUPING_MODE, 'per-record');
 });
 
 test('a symbolic line rewritten to owner/name#N is a cache miss', () => {
