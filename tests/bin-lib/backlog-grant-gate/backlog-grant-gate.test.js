@@ -441,3 +441,10 @@ test('#4577: the runner wrapper bounds the association batch with GH_BATCH_TIMEO
   const view = calls.find((c) => c.args[0] === 'repo');
   assert.deepStrictEqual(view.opts, { timeout: GH_TIMEOUT_MS });
 });
+
+test('AC2.4: filterCandidates drops a candidate whose body carries a symbolic blocker', () => {
+  const { symbolicBody } = require('../../helpers/symbolic-blocker-fixture');
+  const issues = [issue(7, { labels: FOREIGN_LABELS, body: symbolicBody() }), issue(8, { labels: FOREIGN_LABELS, body: 'Surface: infra\n' })];
+  assert.deepStrictEqual(filterCandidates(issues, new Set(), new Map()).map((c) => c.number), [8]);
+  assert.throws(() => filterCandidates(issues, new Set()), { name: 'TypeError', message: /foreignByRecord must be a Map/ });
+});

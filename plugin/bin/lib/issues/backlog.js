@@ -20,6 +20,7 @@ const { LARGE_MAX_BUFFER_BYTES } = require('../shared-primitives');
 const { splitLogZ } = require('../git-z');
 const { PRIORITIES, TIERS, parseRecordFacets, parseDependencies, foreignBlockerBlocks, foreignBlockerRef, withoutUnreadableSuffix } = require('./record');
 const { parseCrossRepoRef, crossRepoKey } = require('./cross-repo-refs');
+const { symbolicBlockerRefs } = require('./blocker-lines');
 const { blockersOf } = require('./ranking');
 const { evaluateGrantGate } = require('./grant-gate');
 const { describeMixedReasons } = require('./trust.js');
@@ -183,18 +184,21 @@ function foreignLookupSet(records) {
 // ' (state unreadable)' suffix is ignored for the key). A record with neither tier gets
 // `blockedBy: [...parseDependencies(body), ...refs]`, so `blockersOf`'s body-text
 // fallback result survives. An `unsynced` record, and a record absent from the map, is
-// returned as is. Returns a new array of shallow copies; never mutates its input.
+// returned as is, except that a symbolic `Blocked by: {part} (left for owner/name)` line (#6374)
+// is appended, once, to either tier or the fallback. Returns a new array of shallow copies; never mutates its input.
 function attachBodyForeignBlockers(records, foreignByRecord) {
   return records.map((r) => {
-    const entries = foreignByRecord.get(r.number ?? r.id);
-    if (!entries || entries.length === 0 || (r.facets && r.facets.unsynced === true)) return r;
+    const entries = (!(r.facets && r.facets.unsynced === true) && foreignByRecord.get(r.number ?? r.id)) || [];
+    // A symbolic blocker needs no state lookup and always holds (#6374); it is appended as authored text, never keyed.
+    const symbolic = symbolicBlockerRefs(r.body || '');
+    if (entries.length === 0 && symbolic.length === 0) return r;
     const refs = entries.filter(foreignBlockerBlocks);
     const tier = Array.isArray(r.blockedBy) ? r.blockedBy : r.facets && Array.isArray(r.facets.blockedBy) ? r.facets.blockedBy : null;
-    if (!tier) return { ...r, blockedBy: [...parseDependencies(r.body || ''), ...refs.map(foreignBlockerRef)] };
+    if (!tier) return { ...r, blockedBy: [...parseDependencies(r.body || ''), ...refs.map(foreignBlockerRef), ...symbolic] };
     const known = new Set(
       tier.map((b) => (typeof b === 'string' ? parseCrossRepoRef(withoutUnreadableSuffix(b)) : null)).filter(Boolean).map(crossRepoKey),
     );
-    const added = refs.filter((e) => !known.has(crossRepoKey(e))).map(foreignBlockerRef);
+    const added = [...refs.filter((e) => !known.has(crossRepoKey(e))).map(foreignBlockerRef), ...symbolic.filter((x) => !tier.includes(x))];
     if (added.length === 0) return r;
     const merged = [...tier, ...added];
     return Array.isArray(r.blockedBy) ? { ...r, blockedBy: merged } : { ...r, facets: { ...r.facets, blockedBy: merged } };

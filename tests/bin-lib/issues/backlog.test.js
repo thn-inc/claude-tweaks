@@ -796,3 +796,39 @@ test('refusedKeyCounts sorts descending by count, breaks ties by key ascending, 
   assert.deepStrictEqual(refusedKeyCounts({}), { counts: [], total: 0 });
   assert.deepStrictEqual(refusedKeyCounts(undefined), { counts: [], total: 0 });
 });
+
+// --- #6374: a symbolic `Blocked by: {part} (left for owner/name)` line counts as a blocker ---
+
+const { SYMBOLIC_REF, symbolicBody } = require('../../helpers/symbolic-blocker-fixture');
+
+test('AC2.3: attachBodyForeignBlockers attaches a symbolic blocker with no foreign entry, so funnelBuckets files the record under granted, not dispatchable', () => {
+  const g = { stage: 'ready', grants: { build: true, merge: false } };
+  const records = [rec(1, g, { body: symbolicBody() }), rec(2, g, { body: 'Surface: infra\n' }), rec(3, g, { body: `Blocked by #3\n${symbolicBody()}` })];
+  const out = attachBodyForeignBlockers(records, new Map());
+  assert.deepStrictEqual(out[0].blockedBy, [SYMBOLIC_REF]);
+  assert.equal(out[1], records[1], 'a record with no blocker is returned as is');
+  assert.deepStrictEqual(out[2].blockedBy, [3, SYMBOLIC_REF], 'the numbered fallback survives beside it');
+  const b = funnelBuckets(out);
+  assert.deepEqual(b.granted.map((r) => r.number).sort(), [1, 3]);
+  assert.deepEqual(b.dispatchable.map((r) => r.number), [2]);
+});
+
+test('AC2.3: attachBodyForeignBlockers merges a symbolic blocker into an already-attached tier once, across two passes', () => {
+  const g = { stage: 'ready', grants: { build: true, merge: false } };
+  const body = symbolicBody(['Blocked by other/repo#5']);
+  const open5 = { number: 5, repository: 'other/repo', state: 'OPEN' };
+  const records = [rec(1, g, { body, blockedBy: [9] }), rec(2, { ...g, blockedBy: [9] }, { body })];
+  const foreign = new Map([[1, [open5]], [2, [open5]]]);
+  const once = attachBodyForeignBlockers(records, foreign);
+  assert.deepStrictEqual(once[0].blockedBy, [9, 'other/repo#5', SYMBOLIC_REF]);
+  assert.deepStrictEqual(once[1].facets.blockedBy, [9, 'other/repo#5', SYMBOLIC_REF]);
+  const twice = attachBodyForeignBlockers(once, foreign);
+  assert.deepStrictEqual(twice[0].blockedBy, [9, 'other/repo#5', SYMBOLIC_REF]);
+  assert.deepStrictEqual(twice[1].facets.blockedBy, [9, 'other/repo#5', SYMBOLIC_REF]);
+});
+
+test('AC2.3: an unsynced record with a symbolic blocker is held without a state lookup', () => {
+  const g = { stage: 'ready', grants: { build: true, merge: false }, unsynced: true };
+  const out = attachBodyForeignBlockers([rec(6, g, { body: symbolicBody() })], new Map());
+  assert.deepStrictEqual(out[0].blockedBy, [SYMBOLIC_REF]);
+});
