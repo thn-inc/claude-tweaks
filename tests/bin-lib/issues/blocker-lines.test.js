@@ -6,11 +6,23 @@ const {
   LOCAL_BLOCKER_LINE_RE, LOCAL_BLOCKER_ASSUMPTION_RE, FOREIGN_BLOCKER_LINE_RE, SYMBOLIC_BLOCKER_LINE_RE,
   isBlockerLine, symbolicBlockerRef, symbolicBlockers, symbolicBlockerRefs, hasSymbolicBlocker,
 } = require('../../../plugin/bin/lib/issues/blocker-lines');
-const { SYMBOLIC_LINE, SYMBOLIC_REF, symbolicBody } = require('../../helpers/symbolic-blocker-fixture');
+const { readText } = require('../../helpers/read-skill');
+const { SYMBOLIC_LINE,SYMBOLIC_REF, symbolicBody } = require('../../helpers/symbolic-blocker-fixture');
 const { parseDependencies, parseDependencyAssumptions } = require('../../../plugin/bin/lib/issues/record');
 const { parseCrossRepoDependencies } = require('../../../plugin/bin/lib/issues/cross-repo-refs');
 const { parseParts, planFiling, TABLE_HEADER } = require('../../../plugin/bin/lib/design-session/parts');
 const { readyRestorable } = require('../../../plugin/bin/lib/issues/ambiguity-resolve');
+
+// A regex literal (or new RegExp string) whose pattern starts at `^` and reaches `Blocked by` on
+// one line; a `//` comment line never counts.
+const definesBlockedByRegex = (text) => /(?<![/\w])\/\^[^\n]*?Blocked by|new RegExp\(\s*[`'"]\^[^\n]*?Blocked by/.test(text);
+
+test('the literal detector flags a regex literal and a RegExp string, never a comment', () => {
+  assert.equal(definesBlockedByRegex('const A = /^\\s*Blocked by #(\\d+)/gm;'), true);
+  assert.equal(definesBlockedByRegex('const B = /^(?:- )?Blocked by: x/m;'), true);
+  assert.equal(definesBlockedByRegex("const C = new RegExp(`^[ ]*Blocked by: ${x}`, 'm');"), true);
+  assert.equal(definesBlockedByRegex('// Blocked by lines are parsed in blocker-lines.js'), false);
+});
 
 test('AC1.1: the three line regexes equal the ones they replace, and the old modules import them', () => {
   assert.equal(LOCAL_BLOCKER_LINE_RE.source, '^Blocked by #(\\d+)\\b');
@@ -21,13 +33,12 @@ test('AC1.1: the three line regexes equal the ones they replace, and the old mod
   assert.equal(FOREIGN_BLOCKER_LINE_RE.flags, 'gm');
   assert.equal(SYMBOLIC_BLOCKER_LINE_RE.flags, 'gm');
   // the old modules import them: each requires blocker-lines and defines no `Blocked by` regex literal
-  const fs = require('node:fs');
   const path = require('node:path');
   const lib = path.join(__dirname, '../../../plugin/bin/lib');
   for (const f of ['issues/record-dependencies.js', 'issues/cross-repo-refs.js', 'issues/plan-line.js', 'issues/ambiguity-resolve.js', 'design-session/parts.js']) {
-    const text = fs.readFileSync(path.join(lib, f), 'utf8');
+    const text = readText(path.join(lib, f));
     assert.match(text, /require\('(?:\.\.\/issues|\.)\/blocker-lines'\)/, `${f} requires blocker-lines`);
-    assert.doesNotMatch(text, /\/\^?[ \\t(?:\-*\]\[]*Blocked by|RegExp\([^)]*Blocked by/, `${f} defines no Blocked by regex of its own`);
+    assert.equal(definesBlockedByRegex(text), false, `${f} defines no Blocked by regex of its own`);
   }
   // the importing parsers behave as before
   assert.deepEqual(parseDependencies('Blocked by #7\nBlocked by #9: needs the api'), [7, 9]);
