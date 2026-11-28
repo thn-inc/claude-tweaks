@@ -6,7 +6,7 @@ With Step 2's work-unit list final and Implicit Dependency Detection's overlap/d
 
 **The unit set counted here is Step 2's own design-doc-derived work-unit list for this run** — per `phase-N` scope when the run is phase-scoped, so a multi-phase doc decomposed one phase at a time counts each phase's units on their own and may legitimately keep a parent for one phase and collapse another. A unit a prior partial run already created still counts as exactly that one unit, never double-counted as both a work unit and an open record — Step 2's input-set assembly (above) excludes fingerprint-matched records for exactly this reason, so a resumed run re-derives the same verdict as the run it resumes.
 
-**An approved parts list fixes the decision.** Two or more approved parts always keep the parent, whatever the signals below say; one approved part collapses as below.
+**An approved parts list fixes the decision.** Two or more approved parts always keep the parent, whatever the signals below say; one approved part collapses as below. The count is `check-approval`'s `parts`, the whole approved list across every repository, never `filing.file`: an approved order of two or more parts keeps a parent in every repository's run, even one that files a single part here.
 
 **1 work unit — always collapses.** No parent is created. The single unit becomes a standalone ready record (or, when `$ORIGIN_RECORD_NUM` is set, the origin record is shaped in place as that unit's create — see Step 3, `record-creation-subissues.md`'s Sub-issues section, #1346's split of `record-creation.md`).
 

@@ -129,7 +129,7 @@ When the design doc is a `design.md` that holds a `## Parts` section, run this b
 node "${CLAUDE_PLUGIN_ROOT}/bin/design-session.js" check-approval --folder "{folder}"
 ```
 
-It prints JSON on exit 0 and exit 1. `{argument}` below is its `designSlug` with each `-` written as a space, which resumes the same design folder.
+It prints JSON on exit 0 and exit 1. `{argument}` below is its `designSlug` with each `-` written as a space, which slugs back to the same folder slug and so resumes the same design folder.
 
 - **Exit 0.** The parts in `filing.file` are the work units, in table order: each unit's title is the part's `name`, its `size:` label the part's `size`, its unit slug the part's `slug`, and its blockers the part's resolved `blockers` — `sibling` → that sibling sub-issue's link in Step 4, `issue` → the `owner/name#N` ref as written, `symbolic` → the line `Blocked by: {part name} (left for {owner/name})`. Skip `### Sizing Guidelines`, `### Decomposition Heuristics` (its rewrite-signal check included) and `--granularity`. Overlap Analysis, Implicit Dependency Detection with its file-overlap check, Step 2.6 and Steps 3 to 9 run as today, under the rule below.
 - **Other repositories' parts.** Parts in `filing.leftFor` are not filed: Step 9's summary lists each as left for that repository's run, which rewrites its own `symbolic` blockers. Parts in `filing.skipped` are already filed, by a sibling repository's earlier run, and are never filed again.

@@ -149,30 +149,67 @@ test('the six facts are stated in the planned order', () => {
   assert.throws(() => chain(swapped), { message: /facts 3-4: order violated/ });
 });
 
+// --- decomposition-mode.md: the Implicit Dependency Detection clause ---------------------------
+
+const IDD = (text) => between(text, '### Implicit Dependency Detection', '## Step 2.6: Collapse Decision', 'Implicit Dependency Detection');
+const IDD_FACTS = [
+  [/On an approved parts list, a flagged link that the part's own `blockers` do not carry would change an approved part, so `### Approved parts list \(checked first\)`'s rule asks before Step 4 writes it\./, 'I1 a new implicit link goes to the approved-part rule'],
+];
+const missingIdd = missingFactsOf(IDD_FACTS);
+
+test('Implicit Dependency Detection sends a link an approved part lacks to the approved-part rule', () => {
+  const region = IDD(DM);
+  assert.deepEqual(missingIdd(region), []);
+  assertEachPatternGoesRed(region, IDD_FACTS, missingIdd);
+  // Move-out control: the clause moved into the approved-parts branch leaves this section red.
+  const clause = DM.match(IDD_FACTS[0][0])[0];
+  const moved = DM.replace(`\n\n${clause}`, '').replace(SIZING_HEADING, () => `\n${clause}\n${SIZING_HEADING}`);
+  assert.notEqual(moved, DM);
+  assert.ok(moved.includes(clause), 'the move must keep the clause in the file');
+  assert.deepEqual(missingIdd(IDD(moved)), ['I1 a new implicit link goes to the approved-part rule']);
+});
+
 // --- collapse-decision.md ---------------------------------------------------------------------
 
-const COLLAPSE_PARA = '**An approved parts list fixes the decision.** Two or more approved parts always keep the parent, whatever the signals below say; one approved part collapses as below.';
+const COLLAPSE_HEAD = '**An approved parts list fixes the decision.** Two or more approved parts always keep the parent, whatever the signals below say; one approved part collapses as below.';
+const COUNT_CLAUSE = "The count is `check-approval`'s `parts`, the whole approved list across every repository, never `filing.file`: an approved order of two or more parts keeps a parent in every repository's run, even one that files a single part here.";
 const UNIT_SET = '**The unit set counted here';
 const ONE_UNIT = '**1 work unit — always collapses.**';
 const THREE_UNITS = '**3+ work units — never collapses.**';
+const collapseParaOf = (text) => text.split('\n').find((l) => l.startsWith('**An approved parts list fixes the decision.**')) || '';
 
 function assertCollapsePara(text) {
-  assert.equal(text.split(COLLAPSE_PARA).length - 1, 1, 'approved-parts collapse paragraph must appear exactly once');
-  requireOrder(text, UNIT_SET, COLLAPSE_PARA, 'collapse paragraph after the unit-set paragraph');
-  requireOrder(text, COLLAPSE_PARA, ONE_UNIT, 'collapse paragraph before the 1-unit rule');
+  assert.equal(text.split(COLLAPSE_HEAD).length - 1, 1, 'approved-parts collapse paragraph must appear exactly once');
+  requireOrder(text, UNIT_SET, COLLAPSE_HEAD, 'collapse paragraph after the unit-set paragraph');
+  requireOrder(text, COLLAPSE_HEAD, ONE_UNIT, 'collapse paragraph before the 1-unit rule');
+  assert.ok(collapseParaOf(text).includes(COUNT_CLAUSE), 'collapse count must be the whole approved list, not filing.file');
 }
 
 test('AC2.1: two or more approved parts keep the parent', () => {
   assertCollapsePara(COLLAPSE);
+  const para = collapseParaOf(COLLAPSE);
   // Deletion control.
-  const deleted = COLLAPSE.replace(`${COLLAPSE_PARA}\n\n`, '');
+  const deleted = COLLAPSE.replace(`${para}\n\n`, '');
   assert.notEqual(deleted, COLLAPSE);
   assert.throws(() => assertCollapsePara(deleted), { message: /must appear exactly once/ });
   // Move-out control: the paragraph moved below the 3+ rule stays in the file but out of place.
   const threeLine = COLLAPSE.split('\n').find((l) => l.startsWith(THREE_UNITS));
-  const moved = deleted.replace(threeLine, () => `${threeLine}\n\n${COLLAPSE_PARA}`);
+  const moved = deleted.replace(threeLine, () => `${threeLine}\n\n${para}`);
   assert.notEqual(moved, deleted);
   assert.throws(() => assertCollapsePara(moved), { message: /collapse paragraph before the 1-unit rule: order violated/ });
+});
+
+test('the collapse count is the whole approved list across repositories, never filing.file', () => {
+  assertCollapsePara(COLLAPSE);
+  // Mutation control: the count narrowed to this run's filing.file goes red on its own message.
+  const narrowed = COLLAPSE.replace("`parts`, the whole approved list across every repository, never `filing.file`", '`filing.file`, the parts this run files');
+  assert.notEqual(narrowed, COLLAPSE);
+  assert.throws(() => assertCollapsePara(narrowed), { message: /collapse count must be the whole approved list, not filing\.file/ });
+  // Move-out control: the count clause moved to its own paragraph, still in the file, goes red too.
+  const split = COLLAPSE.replace(` ${COUNT_CLAUSE}`, '').replace(THREE_UNITS, () => `${COUNT_CLAUSE}\n\n${THREE_UNITS}`);
+  assert.notEqual(split, COLLAPSE);
+  assert.ok(split.includes(COUNT_CLAUSE));
+  assert.throws(() => assertCollapsePara(split), { message: /collapse count must be the whole approved list, not filing\.file/ });
 });
 
 // --- record-creation.md -----------------------------------------------------------------------
