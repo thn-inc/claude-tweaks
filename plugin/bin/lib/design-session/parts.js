@@ -62,6 +62,8 @@ const ESTIMATE_BASIS = 'v6 records no per-size token use in its timing or model-
 
 const REPO = '[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+';
 const REPO_RE = new RegExp(`^${REPO}$`);
+// GitHub owner/name is case-insensitive: the one comparison of two repositories.
+const sameRepository = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
 const FILED_RE = new RegExp(`^(${REPO})#\\d+$`);
 const LEFT_RE = new RegExp(`^left for (${REPO})$`);
 const EXTERNAL_RE = new RegExp(`^(?:${REPO})?#\\d+$`);
@@ -128,7 +130,7 @@ function issueProblem(issue, repository) {
   if (noneValue(issue)) return null;
   const repo = markRepository(issue);
   if (repo === null) return `Issue '${issue}' is not empty, 'owner/name#N' or 'left for owner/name'`;
-  if (repo !== repository) return `Issue '${issue}' names another repository than the part's own '${repository}'`;
+  if (!sameRepository(repo, repository)) return `Issue '${issue}' names another repository than the part's own '${repository}'`;
   return null;
 }
 
@@ -279,8 +281,8 @@ function markFiled(designText, marks) {
     }
     const segs = lines[i].split('|');
     const current = (segs[ISSUE_COL + 1] || '').trim();
-    if (current === mark) continue;
-    if ((!noneValue(current) && !LEFT_RE.test(current)) || markRepo !== cellsOf(lines[i])[3]) {
+    if (sameRepository(current, mark)) continue;
+    if ((!noneValue(current) && !LEFT_RE.test(current)) || !sameRepository(markRepo, cellsOf(lines[i])[3])) {
       conflicts.push(name);
       continue;
     }
@@ -295,12 +297,11 @@ function markFiled(designText, marks) {
 // parts from a parse with no errors; a Waits for name matching no part, or a
 // this-repository part that is neither fileable nor filed, throws.
 function planFiling(parts, thisRepository) {
-  const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
-  const filed = (p) => p.issue !== null && FILED_RE.test(p.issue) && markRepository(p.issue) === p.repository;
-  const file = parts.filter((p) => same(p.repository, thisRepository)
-    && (p.issue === null || (LEFT_RE.test(p.issue) && same(markRepository(p.issue), thisRepository))));
+  const filed = (p) => p.issue !== null && FILED_RE.test(p.issue) && sameRepository(markRepository(p.issue), p.repository);
+  const file = parts.filter((p) => sameRepository(p.repository, thisRepository)
+    && (p.issue === null || (LEFT_RE.test(p.issue) && sameRepository(markRepository(p.issue), thisRepository))));
   for (const p of parts) {
-    if (same(p.repository, thisRepository) && !file.includes(p) && !filed(p)) {
+    if (sameRepository(p.repository, thisRepository) && !file.includes(p) && !filed(p)) {
       throw new Error(`planFiling: part '${p.name}' of ${thisRepository} is neither fileable nor filed (Issue '${p.issue}')`);
     }
   }
@@ -316,13 +317,13 @@ function planFiling(parts, thisRepository) {
   };
   const writeBack = [];
   for (const p of parts) {
-    if (same(p.repository, thisRepository) || !filed(p)) continue;
+    if (sameRepository(p.repository, thisRepository) || !filed(p)) continue;
     for (const w of p.waitsFor) if (fileNames.has(w)) writeBack.push({ issue: p.issue, waitsOn: w });
   }
   return {
     file: file.map((p) => ({ ...p, blockers: p.waitsFor.map(blocker) })),
     skipped: parts.filter(filed).map((p) => p.name),
-    leftFor: parts.filter((p) => !same(p.repository, thisRepository) && !filed(p))
+    leftFor: parts.filter((p) => !sameRepository(p.repository, thisRepository) && !filed(p))
       .map((p) => ({ name: p.name, repository: p.repository })),
     writeBack,
   };
@@ -330,7 +331,7 @@ function planFiling(parts, thisRepository) {
 
 module.exports = {
   PARTS_HEADING, APPROVAL_HEADING, FILING_HEADING, FRAME_HEADING, APPROACHES_HEADING, WORTH_IT_HEADING,
-  MEASURE_KEY, TABLE_HEADER, SIZES,
+  MEASURE_KEY, TABLE_HEADER, SIZES, REPO_RE, sameRepository,
   markRepository, parseParts, partsDigest, approvalLine, checkApproval, estimate, measure, unitSlug, designSlug, markFiled,
   planFiling,
 };

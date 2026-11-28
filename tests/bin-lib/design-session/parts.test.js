@@ -148,6 +148,41 @@ test('planFiling compares the repository case-insensitively and keeps each cell\
   assert.deepEqual(planFiling(left, REPO.toUpperCase()).file.map((p) => p.name), ['Parser', 'Docs and help']);
 });
 
+test('every repository comparison ignores case: a differently-cased mark parses, marks and counts as filed', () => {
+  const MIXED = 'Thn-Inc/Claude-Tweaks';
+  const rows = (issue1, issue3 = '') => [
+    row(1, 'Parser', 'size:low', MIXED, '—', issue1),
+    row(2, 'Skill steps', 'size:medium', OTHER, 'Parser'),
+    row(3, 'Docs and help', 'size:low', MIXED, 'Parser', issue3),
+  ];
+  // the mark names the lower-cased origin spelling of the row's own repository
+  const filed = parseParts(designWith(rows(`${REPO}#7001`)));
+  assert.deepEqual(filed.errors, []);
+  const left = parseParts(designWith(rows('', `left for ${REPO}`)));
+  assert.deepEqual(left.errors, []);
+  const other = parseParts(designWith(rows(`${OTHER}#7001`)));
+  assert.equal(other.errors.length, 1);
+
+  // markFiled writes the mark with the caller's spelling, with no conflict, over empty and left-for cells
+  const text = designWith(rows('', `left for ${REPO}`));
+  const r = markFiled(text, { Parser: `${REPO}#7001`, 'Docs and help': `${REPO}#7002` });
+  assert.deepEqual([r.marked, r.unknown, r.conflicts], [['Parser', 'Docs and help'], [], []]);
+  assert.deepEqual(parseParts(r.text).errors, []);
+  assert.deepEqual(parseParts(r.text).parts.map((p) => p.issue), [`${REPO}#7001`, null, `${REPO}#7002`]);
+  // the same mark in the other case is already there, not a conflict
+  const again = markFiled(r.text, { Parser: `${MIXED}#7001` });
+  assert.deepEqual([again.marked, again.conflicts], [[], []]);
+  assert.equal(again.text, r.text);
+
+  // a differently-cased filed mark counts as filed, and a differently-cased left-for as fileable
+  const plan = planFiling(parseParts(r.text).parts, OTHER.toUpperCase());
+  assert.deepEqual(plan.skipped, ['Parser', 'Docs and help']);
+  assert.deepEqual(plan.file.map((p) => p.name), ['Skill steps']);
+  assert.deepEqual(plan.file[0].blockers, [{ kind: 'issue', ref: `${REPO}#7001` }]);
+  const leftPlan = planFiling(left.parts, REPO.toUpperCase());
+  assert.deepEqual(leftPlan.file.map((p) => p.name), ['Parser', 'Docs and help']);
+});
+
 test('markFiled reports the names it changed', () => {
   const text = designWith(TWO_REPO_ROWS());
   const first = markFiled(text, { Parser: `${REPO}#7001` });

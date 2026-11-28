@@ -63,7 +63,7 @@ const { checkEvidence } = require('./lib/design-session/evidence');
 const { PERSPECTIVES, checkNotes } = require('./lib/design-session/notes');
 const { composeBrief } = require('./lib/design-session/brief');
 const {
-  parseParts, partsDigest, checkApproval, estimate, markFiled, markRepository, planFiling, designSlug,
+  parseParts, partsDigest, checkApproval, estimate, markFiled, markRepository, REPO_RE, planFiling, designSlug,
 } = require('./lib/design-session/parts');
 const { remoteUrl, gateOriginRepo } = require('./lib/repo-resolve');
 
@@ -104,7 +104,6 @@ const USAGE = [
 const VALUE_FLAGS = new Set(['--topic', '--root', '--folder', '--round', '--reader', '--marks', '--repository']);
 const BOOL_FLAGS = new Set(['--create']);
 const VERBS = new Set(['folder', 'status', 'check-evidence', 'check-notes', 'brief', 'parts', 'digest', 'check-approval', 'mark-filed']);
-const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
 class UsageError extends Error {}
 
@@ -265,7 +264,7 @@ function runPartsVerb(verb, folder, flags, deps) {
 function runVerb(verb, flags, deps) {
   if (flags['--repository'] !== undefined) {
     if (verb !== 'check-approval') throw new UsageError('--repository applies only to the check-approval verb');
-    if (!REPOSITORY_RE.test(flags['--repository'])) throw new UsageError('--repository must be owner/name');
+    if (!REPO_RE.test(flags['--repository'])) throw new UsageError('--repository must be owner/name');
   }
   if (flags['--create'] && verb !== 'folder') throw new UsageError('--create applies only to the folder verb');
   if (verb === 'folder') {
