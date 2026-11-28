@@ -39,93 +39,149 @@ function requireOrder(text, first, second, label) {
   assert.ok(a < b, `${label}: order violated`);
 }
 
-// --- decomposition-mode.md: the approved-parts branch, one region -------------------------------
+// --- decomposition-mode.md: the approval check (Step 1), the units (Step 2), Overlap Analysis -----
 
-const BRANCH_HEADING = '### Approved parts list (checked first)';
+// Heading lines, not the backticked mentions of them elsewhere in the file.
+const CHECK_HEADING = '\n### Approved parts list (checked first)\n';
+const READS_HEADING = '\n### Landscape reads\n';
+const UNITS_HEADING = '\n### Approved parts as work units\n';
 const SIZING_HEADING = '\n### Sizing Guidelines\n'; // the heading line, not the branch's own mention of it
-const branchOf = (text) => between(text, BRANCH_HEADING, SIZING_HEADING, 'approved-parts branch');
+const OVERLAP_HEADING = '\n### Overlap Analysis\n';
+const STEP1 = '## Step 1: Understand the Landscape';
+const STEP2 = '## Step 2: Decompose into Work Units';
+const REGIONS = {
+  check: (text) => between(text, CHECK_HEADING, READS_HEADING, 'approval check'),
+  units: (text) => between(text, UNITS_HEADING, SIZING_HEADING, 'approved units'),
+  overlap: (text) => between(text, OVERLAP_HEADING, `\n${STEP2}`, 'Overlap Analysis'),
+};
 
 const CLI_CALL = /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/design-session\.js" check-approval --folder "\{folder\}"/;
 
-const DM_FACTS = [
-  [/When the design doc is a `design\.md` that holds a `## Parts` section, run this before anything else in Step 2/, 'F1 run check-approval first'],
-  [CLI_CALL, 'CLI check-approval call'],
-  [/The parts in `filing\.file` are the work units, in table order/, 'F2a filing.file parts are the units, in order'],
-  [/each unit's title is the part's `name`, its `size:` label the part's `size`, its unit slug the part's `slug`, and its blockers the part's resolved `blockers`/, 'F2b name, size, slug, blockers taken'],
-  [/`sibling` → that sibling sub-issue's link in Step 4, `issue` → the `owner\/name#N` ref as written, `symbolic` → the line `Blocked by: \{part name\} \(left for \{owner\/name\}\)`/, 'F2c blocker kinds'],
-  [/Skip `### Sizing Guidelines`, `### Decomposition Heuristics` \(its rewrite-signal check included\) and `--granularity`/, 'F2d skips sizing, heuristics, granularity'],
-  [/Overlap Analysis, Implicit Dependency Detection with its file-overlap check, Step 2\.6 and Steps 3 to 9 run as today/, 'F2e the rest runs as today'],
-  [/Parts in `filing\.leftFor` are not filed: Step 9's summary lists each as left for that repository's run/, 'F3a leftFor not filed'],
-  [/Parts in `filing\.skipped` are already filed, by a sibling repository's earlier run, and are never filed again/, 'F3b skipped never filed again'],
-  [/\*\*No gate changes an approved part\.\*\* Any step from here to Step 9 whose outcome would change a part's name, size or blockers/, 'F4a no gate changes an approved part'],
-  [/an overlap resolution \(`overlap-resolution\.md`\), an implicit-dependency link, a red-team resolution, a scoring judgment/, 'F4b the gates named'],
-  [/stops and asks with one `AskUserQuestion`: `Keep the part as approved \(Recommended\)` \/ `Change it — the design goes back for a new approval`/, 'F4c the question'],
-  [/Choosing the change stops decomposition and names `\/claude-tweaks:design \{argument\}`/, 'F4d change stops decomposition'],
-  [/With no human reachable it stops all the same, before that part's record is written, and stages the question/, 'F4e headless stops before the write and stages'],
-  [/it never keeps going on its own/, 'F4f never keeps going'],
-  [/`no-parts` → the rest of Step 2 runs as today/, 'F5a no-parts falls through'],
-  [/when the session knows this checkout's `owner\/name` \(`gh repo view --json nameWithOwner -q \.nameWithOwner`, or the cloud session's repository\), run `check-approval` again with `--repository \{owner\/name\}`/, 'F5b no-repository reruns with --repository'],
-  [/otherwise stop: `This checkout has no origin remote naming owner\/name, so the parts' repositories cannot be matched\.`/, 'F5c no-repository stop message'],
-  [/Any other reason → stop before Step 3: `The design is not approved \(\{reason\}\) — run \/claude-tweaks:design \{argument\} to approve its parts, then decompose again\.`/, 'F5d not-approved stop message'],
-  [/\*\*Exit 2\*\* → stop and show stderr/, 'F5e exit 2 stops'],
-  [/carries `## Worth-it measure` followed by `measure` word for word/, 'F6 parent carries the measure'],
-];
-const missingDm = missingFactsOf(DM_FACTS);
-const factsNamed = (...prefixes) => DM_FACTS.filter(([, fact]) => prefixes.some((p) => fact.startsWith(p)));
+const FACTS = {
+  check: [
+    [/When the design doc is a `design\.md` that holds a `## Parts` section, run this before anything else in Step 1/, 'F1 run check-approval first'],
+    [CLI_CALL, 'CLI check-approval call'],
+    [/`no-parts` → Steps 1 and 2 run as today/, 'F5a no-parts falls through'],
+    [/when the session knows this checkout's `owner\/name` \(`gh repo view --json nameWithOwner -q \.nameWithOwner`, or the cloud session's repository\), run `check-approval` again with `--repository \{owner\/name\}`/, 'F5b no-repository reruns with --repository'],
+    [/otherwise stop: `This checkout has no origin remote naming owner\/name, so the parts' repositories cannot be matched\.`/, 'F5c no-repository stop message'],
+    [/Any other reason → stop before Step 1's reads: `The design is not approved \(\{reason\}\) — run \/claude-tweaks:design \{argument\} to approve its parts, then decompose again\.`/, 'F5d not-approved stop message'],
+    [/\*\*Exit 2\*\* → stop and show stderr/, 'F5e exit 2 stops'],
+    [/\*\*Exit 0\*\* → the parts are this run's work units \(Step 2's `### Approved parts as work units`\), and the rule below holds from here to Step 9/, 'F0 exit 0 hands the units to Step 2'],
+    [/\*\*No gate changes an approved part\.\*\* No step applies an outcome that would drop, merge, rename or re-size an approved part, or add or remove one of its blockers/, 'F4a no gate changes an approved part'],
+    [/an overlap resolution \(`overlap-resolution\.md`\), an implicit-dependency link, a red-team resolution, a scoring judgment/, 'F4b the gates named'],
+    [/Before that part's record is created, the step stops and asks with one `AskUserQuestion`: `Keep the part as approved \(Recommended\)` \/ `Change it — the design goes back for a new approval`/, 'F4c the question'],
+    [/Choosing the change stops decomposition and names `\/claude-tweaks:design \{argument\}`/, 'F4d change stops decomposition'],
+    [/With no human reachable it stops all the same, before that part's record is written, and stages the question/, 'F4e headless stops before the write and stages'],
+    [/it never keeps going on its own/, 'F4f never keeps going'],
+    [/At Steps 4 and 5, once the record exists, the part's name, size and blockers stay as approved and the record's `ready` is cleared/, 'F4g after the create the part stays and ready clears'],
+    [/the question is staged when a run directory resolved, or asked when a human is present, and with neither the finding's marker stays in the record and `ready` stays cleared/, 'F4h staged, asked, or marker kept'],
+    [/The change is never applied\./, 'F4i never applied'],
+  ],
+  units: [
+    [/When `### Approved parts list \(checked first\)` \(Step 1\) exited 0, its JSON decides the work units/, 'U0 Step 2 consumes the check'],
+    [/The parts in `filing\.file` are the work units, in table order/, 'F2a filing.file parts are the units, in order'],
+    [/each unit's title is the part's `name`, its `size:` label the part's `size`, its unit slug the part's `slug`, and its blockers the part's resolved `blockers`/, 'F2b name, size, slug, blockers taken'],
+    [/`sibling` → that sibling sub-issue's link in Step 4, `issue` → the `owner\/name#N` ref as written, `symbolic` → the line `Blocked by: \{part name\} \(left for \{owner\/name\}\)`/, 'F2c blocker kinds'],
+    [/Skip `### Sizing Guidelines`, `### Decomposition Heuristics` \(its rewrite-signal check included\) and `--granularity`/, 'F2d skips sizing, heuristics, granularity'],
+    [/Implicit Dependency Detection with its file-overlap check, Step 2\.6 and Steps 3 to 9 still run, each under Step 1's no-gate rule/, 'F2e the rest runs under the rule'],
+    [/Parts in `filing\.leftFor` are not filed: Step 9's summary lists each as left for that repository's run/, 'F3a leftFor not filed'],
+    [/Parts in `filing\.skipped` are already filed, by a sibling repository's earlier run, and are never filed again/, 'F3b skipped never filed again'],
+    [/carries `## Worth-it measure` followed by `measure` word for word/, 'F6 parent carries the measure'],
+  ],
+  overlap: [
+    [/On an approved parts list, each approved part is a design section here/, 'O1 parts are design sections'],
+    [/`skip` on a part, or a `companion` that adds a unit or a `Blocked by` link to a part — takes `### Approved parts list \(checked first\)`'s no-gate rule instead of auto-resolving/, 'O2 part-changing resolutions take the rule'],
+    [/a resolution that touches no part, such as a link written on the existing record's side only, runs as today/, 'O3 part-neutral resolutions run as today'],
+  ],
+};
+const missingIn = Object.fromEntries(Object.entries(FACTS).map(([k, f]) => [k, missingFactsOf(f)]));
 
-// Present in the branch, and each one alone goes red on the shared predicate.
-function pinBranchFacts(...prefixes) {
-  const branch = branchOf(DM);
-  const subset = factsNamed(...prefixes);
+// Present in its region, and each one alone goes red on that region's shared predicate.
+function pinFacts(region, ...prefixes) {
+  const text = REGIONS[region](DM);
+  const subset = FACTS[region].filter(([, fact]) => prefixes.some((p) => fact.startsWith(p)));
   assert.ok(subset.length > 0, `no facts named ${prefixes.join(', ')}`);
-  const missing = missingDm(branch).filter((f) => subset.some(([, s]) => s === f));
-  assert.deepEqual(missing, [], 'approved-parts branch is missing facts');
-  assertEachPatternGoesRed(branch, subset, missingDm);
+  const missing = missingIn[region](text).filter((f) => subset.some(([, s]) => s === f));
+  assert.deepEqual(missing, [], `${region} region is missing facts`);
+  assertEachPatternGoesRed(text, subset, missingIn[region]);
 }
 
-test('the approved-parts branch states every fact, each exactly once', () => {
-  assert.deepEqual(missingDm(branchOf(DM)), []);
-  assertEachPatternGoesRed(branchOf(DM), DM_FACTS, missingDm);
+test('every approved-parts region states every fact, each exactly once', () => {
+  for (const region of Object.keys(FACTS)) {
+    const text = REGIONS[region](DM);
+    assert.deepEqual(missingIn[region](text), [], region);
+    assertEachPatternGoesRed(text, FACTS[region], missingIn[region]);
+  }
 });
 
 test('AC1.1: an approved list\'s parts become the work units, in order, with their names and blockers', () => {
-  pinBranchFacts('F1', 'F2');
+  pinFacts('check', 'F1', 'F0');
+  pinFacts('units', 'U0', 'F2');
 });
 
 test('AC2.2: no gate changes an approved part\'s name, size or blockers without asking', () => {
-  pinBranchFacts('F4a', 'F4b', 'F4c', 'F4d');
+  pinFacts('check', 'F4a', 'F4b', 'F4c', 'F4d', 'F4g', 'F4i');
 });
 
 test('a headless gate still stops', () => {
-  pinBranchFacts('F4e', 'F4f');
+  pinFacts('check', 'F4e', 'F4f', 'F4h');
 });
 
 test('AC3.1: an unapproved parts section is refused with the not-approved message', () => {
-  pinBranchFacts('F5d', 'F5e');
+  pinFacts('check', 'F5d', 'F5e');
 });
 
 test('a no-repository verdict reruns with --repository when the session knows it, else stops', () => {
-  pinBranchFacts('F5b', 'F5c');
+  pinFacts('check', 'F5b', 'F5c');
 });
 
-test('AC4.1: no parts section falls through to today\'s Step 2', () => {
-  pinBranchFacts('F5a');
-  requireOrder(DM, BRANCH_HEADING, SIZING_HEADING, 'branch before Sizing Guidelines');
-  requireOrder(DM, '## Step 2: Decompose into Work Units', BRANCH_HEADING, 'branch inside Step 2');
-  // Permutation control: the branch moved below Sizing Guidelines goes red on the order check.
-  const branch = branchOf(DM);
-  const moved = DM.replace(branch, '').replace(SIZING_HEADING, () => `${SIZING_HEADING}\n\n${branch}`);
-  assert.notEqual(moved, DM);
-  assert.throws(() => requireOrder(moved, BRANCH_HEADING, SIZING_HEADING, 'branch before Sizing Guidelines'),
-    { message: /branch before Sizing Guidelines: order violated/ });
+test('Overlap Analysis treats approved parts as sections and sends part-changing resolutions to the rule', () => {
+  pinFacts('overlap', 'O');
+});
+
+// Every move goes red on its own pair's message.
+function moveBelow(text, block, anchor) {
+  const out = text.replace(block, '').replace(anchor, () => `${anchor}\n${block}\n`);
+  assert.notEqual(out, text);
+  return out;
+}
+
+test('AC4.1: the check runs before Step 1\'s reads and Overlap Analysis; no parts falls through', () => {
+  pinFacts('check', 'F5a');
+  const order = (text) => {
+    requireOrder(text, STEP1, CHECK_HEADING, 'check inside Step 1');
+    requireOrder(text, CHECK_HEADING, READS_HEADING, 'check before the reads');
+    requireOrder(text, CHECK_HEADING, OVERLAP_HEADING, 'check before Overlap Analysis');
+  };
+  order(DM);
+  const check = REGIONS.check(DM);
+  assert.throws(() => order(moveBelow(DM, check, OVERLAP_HEADING)), { message: /check before the reads: order violated/ });
+  // Overlap Analysis moved above the check: only the Overlap pair goes red.
+  const overlap = REGIONS.overlap(DM);
+  const overlapFirst = DM.replace(overlap, '').replace(CHECK_HEADING, () => `\n${overlap.trim()}\n${CHECK_HEADING}`);
+  assert.notEqual(overlapFirst, DM);
+  assert.throws(() => order(overlapFirst), { message: /check before Overlap Analysis: order violated/ });
+});
+
+test('Step 2 opens with the approved units, under a lead-in that sits above what it introduces', () => {
+  const LEAD = `${STEP2}\n\nBreak the design doc into self-contained work units, sized and shaped by the subsections below.\n${UNITS_HEADING}`;
+  const order = (text) => {
+    assert.ok(text.includes(LEAD), 'Step 2 lead-in must sit directly above the approved units');
+  };
+  order(DM);
+  const units = REGIONS.units(DM);
+  assert.throws(() => order(moveBelow(DM, units, SIZING_HEADING)), { message: /lead-in must sit directly above/ });
+  const dangling = DM.replace('work units, sized and shaped by the subsections below.', 'work units. Each work unit must be:');
+  assert.notEqual(dangling, DM);
+  assert.throws(() => order(dangling), { message: /lead-in must sit directly above/ });
 });
 
 test('a part for another repository is left for that repository\'s run', () => {
-  pinBranchFacts('F3');
+  pinFacts('units', 'F3');
 });
 
 test('the check-approval call is pinned, and its flags are ones the CLI accepts', () => {
-  pinBranchFacts('CLI');
+  pinFacts('check', 'CLI');
   const usage = execFileSync(process.execPath, [path.join(ROOT, 'plugin', 'bin', 'design-session.js'), '--help'], { encoding: 'utf8' });
   const accepted = (line) => line.split('\n').some((l) => l.includes('design-session.js check-approval --folder <dir> [--repository <owner/name>]'));
   assert.ok(accepted(usage), 'check-approval no longer takes --folder and --repository');
@@ -133,20 +189,32 @@ test('the check-approval call is pinned, and its flags are ones the CLI accepts'
   assert.equal(accepted(usage.replace('check-approval --folder', 'check-approval --dir')), false);
 });
 
-test('the six facts are stated in the planned order', () => {
-  const branch = branchOf(DM);
-  const anchors = ['Exit 0', 'Other repositories', 'No gate changes an approved part', '**Exit 1**', 'The parent'];
-  const chain = (text) => {
-    for (let i = 1; i < anchors.length; i++) requireOrder(text, anchors[i - 1], anchors[i], `facts ${i}-${i + 1}`);
+function chainOf(anchors, label) {
+  return (text) => {
+    for (let i = 1; i < anchors.length; i++) requireOrder(text, anchors[i - 1], anchors[i], `${label} ${i}-${i + 1}`);
   };
-  chain(branch);
-  // Permutation control: the gate bullet moved below the exit-1 bullet goes red on its own pair.
-  const gate = branch.split('\n').find((l) => l.startsWith('- **No gate changes an approved part.**'));
-  const exit1 = branch.split('\n').find((l) => l.startsWith('- **Exit 1**'));
-  assert.ok(gate && exit1, 'gate and exit-1 bullets must each be one line');
-  const swapped = branch.replace(gate, '\u0000').replace(exit1, gate).replace('\u0000', exit1);
-  assert.notEqual(swapped, branch);
-  assert.throws(() => chain(swapped), { message: /facts 3-4: order violated/ });
+}
+const swapLines = (text, a, b) => text.replace(a, '\u0000').replace(b, a).replace('\u0000', b);
+const bullet = (text, prefix) => {
+  const line = text.split('\n').find((l) => l.startsWith(prefix));
+  assert.ok(line, `bullet ${prefix} must be one line`);
+  return line;
+};
+
+test('the facts are stated in the planned order', () => {
+  const check = REGIONS.check(DM);
+  const checkChain = chainOf(['- **Exit 1**', '- **Exit 0**', '- **No gate changes an approved part.**'], 'check');
+  checkChain(check);
+  const swappedCheck = swapLines(check, bullet(check, '- **Exit 1**'), bullet(check, '- **No gate changes an approved part.**'));
+  assert.notEqual(swappedCheck, check);
+  assert.throws(() => checkChain(swappedCheck), { message: /check 1-2: order violated/ });
+
+  const units = REGIONS.units(DM);
+  const unitsChain = chainOf(['- **The units.**', '- **Other repositories\' parts.**', '- **The parent**'], 'units');
+  unitsChain(units);
+  const swappedUnits = swapLines(units, bullet(units, '- **The units.**'), bullet(units, '- **The parent**'));
+  assert.notEqual(swappedUnits, units);
+  assert.throws(() => unitsChain(swappedUnits), { message: /units 1-2: order violated/ });
 });
 
 // --- decomposition-mode.md: the Implicit Dependency Detection clause ---------------------------
@@ -173,6 +241,7 @@ test('Implicit Dependency Detection sends a link an approved part lacks to the a
 
 const COLLAPSE_HEAD = '**An approved parts list fixes the decision.** Two or more approved parts always keep the parent, whatever the signals below say; one approved part collapses as below.';
 const COUNT_CLAUSE = "The count is `check-approval`'s `parts`, the whole approved list across every repository, never `filing.file`: an approved order of two or more parts keeps a parent in every repository's run, even one that files a single part here.";
+const EMPTY_CLAUSE = "The whole-list count applies when this run files at least one part: an empty `filing.file`, every part left for another repository or already filed, creates nothing — no parent, no sub-issue — and Step 9's summary says nothing was filed here and lists the left and skipped parts.";
 const UNIT_SET = '**The unit set counted here';
 const ONE_UNIT = '**1 work unit — always collapses.**';
 const THREE_UNITS = '**3+ work units — never collapses.**';
@@ -183,7 +252,21 @@ function assertCollapsePara(text) {
   requireOrder(text, UNIT_SET, COLLAPSE_HEAD, 'collapse paragraph after the unit-set paragraph');
   requireOrder(text, COLLAPSE_HEAD, ONE_UNIT, 'collapse paragraph before the 1-unit rule');
   assert.ok(collapseParaOf(text).includes(COUNT_CLAUSE), 'collapse count must be the whole approved list, not filing.file');
+  assert.ok(collapseParaOf(text).includes(EMPTY_CLAUSE), 'an empty filing.file must create nothing');
 }
+
+test('an empty filing.file creates nothing and Step 9 says so', () => {
+  assertCollapsePara(COLLAPSE);
+  // Mutation control: an empty run that still keeps a parent goes red on its own message.
+  const keeps = COLLAPSE.replace('creates nothing — no parent, no sub-issue —', 'keeps the parent with no sub-issue,');
+  assert.notEqual(keeps, COLLAPSE);
+  assert.throws(() => assertCollapsePara(keeps), { message: /an empty filing\.file must create nothing/ });
+  // Move-out control: the clause moved to its own paragraph, still in the file.
+  const split = COLLAPSE.replace(` ${EMPTY_CLAUSE}`, '').replace(THREE_UNITS, () => `${EMPTY_CLAUSE}\n\n${THREE_UNITS}`);
+  assert.notEqual(split, COLLAPSE);
+  assert.ok(split.includes(EMPTY_CLAUSE));
+  assert.throws(() => assertCollapsePara(split), { message: /an empty filing\.file must create nothing/ });
+});
 
 test('AC2.1: two or more approved parts keep the parent', () => {
   assertCollapsePara(COLLAPSE);

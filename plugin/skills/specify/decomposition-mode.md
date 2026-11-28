@@ -31,6 +31,22 @@ return to `SKILL.md`'s `## Next Actions` block.
 
 ## Step 1: Understand the Landscape
 
+### Approved parts list (checked first)
+
+When the design doc is a `design.md` that holds a `## Parts` section, run this before anything else in Step 1, `{folder}` being the folder that holds that `design.md`:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/design-session.js" check-approval --folder "{folder}"
+```
+
+It prints JSON on exit 0 and exit 1. `{argument}` below is its `designSlug` with each `-` written as a space, which slugs back to the same folder slug and so resumes the same design folder.
+
+- **Exit 1**, by `reason`. `no-parts` → Steps 1 and 2 run as today. `no-repository` → when the session knows this checkout's `owner/name` (`gh repo view --json nameWithOwner -q .nameWithOwner`, or the cloud session's repository), run `check-approval` again with `--repository {owner/name}`; otherwise stop: `This checkout has no origin remote naming owner/name, so the parts' repositories cannot be matched.` Any other reason → stop before Step 1's reads: `The design is not approved ({reason}) — run /claude-tweaks:design {argument} to approve its parts, then decompose again.` **Exit 2** → stop and show stderr.
+- **Exit 0** → the parts are this run's work units (Step 2's `### Approved parts as work units`), and the rule below holds from here to Step 9.
+- **No gate changes an approved part.** No step applies an outcome that would drop, merge, rename or re-size an approved part, or add or remove one of its blockers — an overlap resolution (`overlap-resolution.md`), an implicit-dependency link, a red-team resolution, a scoring judgment. Before that part's record is created, the step stops and asks with one `AskUserQuestion`: `Keep the part as approved (Recommended)` / `Change it — the design goes back for a new approval`. Recommend keeping, because the maintainer approved exactly these parts. Keeping drops that outcome and the step goes on. Choosing the change stops decomposition and names `/claude-tweaks:design {argument}`. With no human reachable it stops all the same, before that part's record is written, and stages the question the way `red-team.md`'s write-back step 5 stages a decision-worthy finding; it never keeps going on its own. At Steps 4 and 5, once the record exists, the part's name, size and blockers stay as approved and the record's `ready` is cleared; the question is staged when a run directory resolved, or asked when a human is present, and with neither the finding's marker stays in the record and `ready` stays cleared. The change is never applied.
+
+### Landscape reads
+
 > **Parallel execution:** Use parallel tool calls aggressively — all reads and searches below are independent and should run concurrently. Front-load all I/O before analysis.
 
 1. **The design doc** — understand what was decided, the scope, and the technical approach
@@ -117,24 +133,18 @@ Read `overlap-resolution.md` in this skill's directory and resolve every overlap
 
 For **Gap** items, proceed directly to Step 2 (decompose into work units).
 
+On an approved parts list, each approved part is a design section here. A resolution whose outcome would drop, merge, rename or re-size an approved part, or add or remove one of its blockers — `skip` on a part, or a `companion` that adds a unit or a `Blocked by` link to a part — takes `### Approved parts list (checked first)`'s no-gate rule instead of auto-resolving; a resolution that touches no part, such as a link written on the existing record's side only, runs as today.
+
 ## Step 2: Decompose into Work Units
 
-Break the design doc into self-contained work units. Each work unit must be:
+Break the design doc into self-contained work units, sized and shaped by the subsections below.
 
-### Approved parts list (checked first)
+### Approved parts as work units
 
-When the design doc is a `design.md` that holds a `## Parts` section, run this before anything else in Step 2, `{folder}` being the folder that holds that `design.md`:
+When `### Approved parts list (checked first)` (Step 1) exited 0, its JSON decides the work units:
 
-```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/design-session.js" check-approval --folder "{folder}"
-```
-
-It prints JSON on exit 0 and exit 1. `{argument}` below is its `designSlug` with each `-` written as a space, which slugs back to the same folder slug and so resumes the same design folder.
-
-- **Exit 0.** The parts in `filing.file` are the work units, in table order: each unit's title is the part's `name`, its `size:` label the part's `size`, its unit slug the part's `slug`, and its blockers the part's resolved `blockers` — `sibling` → that sibling sub-issue's link in Step 4, `issue` → the `owner/name#N` ref as written, `symbolic` → the line `Blocked by: {part name} (left for {owner/name})`. Skip `### Sizing Guidelines`, `### Decomposition Heuristics` (its rewrite-signal check included) and `--granularity`. Overlap Analysis, Implicit Dependency Detection with its file-overlap check, Step 2.6 and Steps 3 to 9 run as today, under the rule below.
+- **The units.** The parts in `filing.file` are the work units, in table order: each unit's title is the part's `name`, its `size:` label the part's `size`, its unit slug the part's `slug`, and its blockers the part's resolved `blockers` — `sibling` → that sibling sub-issue's link in Step 4, `issue` → the `owner/name#N` ref as written, `symbolic` → the line `Blocked by: {part name} (left for {owner/name})`. Skip `### Sizing Guidelines`, `### Decomposition Heuristics` (its rewrite-signal check included) and `--granularity`. Implicit Dependency Detection with its file-overlap check, Step 2.6 and Steps 3 to 9 still run, each under Step 1's no-gate rule.
 - **Other repositories' parts.** Parts in `filing.leftFor` are not filed: Step 9's summary lists each as left for that repository's run, which rewrites its own `symbolic` blockers. Parts in `filing.skipped` are already filed, by a sibling repository's earlier run, and are never filed again.
-- **No gate changes an approved part.** Any step from here to Step 9 whose outcome would change a part's name, size or blockers — an overlap resolution (`overlap-resolution.md`), an implicit-dependency link, a red-team resolution, a scoring judgment — stops and asks with one `AskUserQuestion`: `Keep the part as approved (Recommended)` / `Change it — the design goes back for a new approval`. Recommend keeping, because the maintainer approved exactly these parts. Keeping drops that outcome and the step goes on. Choosing the change stops decomposition and names `/claude-tweaks:design {argument}`. With no human reachable it stops all the same, before that part's record is written, and stages the question the way `red-team.md`'s write-back step 5 stages a decision-worthy finding; it never keeps going on its own.
-- **Exit 1**, by `reason`. `no-parts` → the rest of Step 2 runs as today. `no-repository` → when the session knows this checkout's `owner/name` (`gh repo view --json nameWithOwner -q .nameWithOwner`, or the cloud session's repository), run `check-approval` again with `--repository {owner/name}`; otherwise stop: `This checkout has no origin remote naming owner/name, so the parts' repositories cannot be matched.` Any other reason → stop before Step 3: `The design is not approved ({reason}) — run /claude-tweaks:design {argument} to approve its parts, then decompose again.` **Exit 2** → stop and show stderr.
 - **The parent**, when Step 2.6 keeps one, carries `## Worth-it measure` followed by `measure` word for word (`record-creation.md`'s Parent record).
 
 ### Sizing Guidelines
