@@ -924,14 +924,18 @@ test('a body-declared OPEN foreign blocker refuses resume, named owner/name#N', 
   assert.equal(foreignCalls(env).length, 1);
 });
 
-test('AC2.2: a symbolic blocker refuses resume, named as written', () => {
-  const env = makeEnv();
-  env.cfg.issue.body = symbolicBody();
-  const r = exec(env);
-  assert.equal(r.code, 3);
-  assert.equal(r.json.reason, 'blocked-by');
-  assert.ok(r.json.line.includes(SYMBOLIC_REF), r.json.line);
-  assert.equal(env.calls.ghBatch.length, 0, 'a symbolic blocker has no state to look up');
+test('AC2.2: a symbolic blocker refuses resume under body-text and native, named as written', () => {
+  for (const workLinks of ['body-text', 'native']) {
+    const env = makeEnv();
+    env.cfg.workLinks = workLinks;
+    if (workLinks === 'native') env.cfg.native = new Map([[N, { blockedBy: [], openBlocker: false, openBlockerIds: [] }]]);
+    env.cfg.issue.body = symbolicBody();
+    const r = exec(env);
+    assert.equal(r.code, 3, workLinks);
+    assert.equal(r.json.reason, 'blocked-by', workLinks);
+    assert.ok(r.json.line.includes(SYMBOLIC_REF), r.json.line);
+    assert.equal(env.calls.ghBatch.length, 0, workLinks + ': a symbolic blocker has no state to look up');
+  }
 });
 
 test('a body-declared CLOSED foreign blocker does not block resume', () => {

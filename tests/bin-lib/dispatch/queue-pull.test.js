@@ -875,6 +875,17 @@ test('AC2.2: a symbolic Blocked-by line excludes the record from the queue under
   }
 });
 
+test('AC2.2: files transport: a symbolic Blocked-by line excludes the record, named in the exclusion, with no gh call', () => {
+  const r = pull(S1(), { transport: 'files', run: noGhOnFiles, prepare: (own) => ({ inputs: {
+    queueRaw: writeInput(own, 'queue.json', JSON.stringify([mcpRecord(9001, symbolicBody())])),
+    openNumbers: writeInput(own, 'open.json', '[{"number":9001}]'),
+    depFreshness: writeInput(own, 'dep.json', '[]'),
+    verifiedOpenDeps: writeInput(own, 'verified.txt', ''),
+  } }) });
+  assert.deepEqual(entriesOf(r, 'blocked'), [{ reason: 'blocked', records: [9001], detail: { blockedBy: [SYMBOLIC_REF] } }]);
+  assert.deepEqual(groupNumbers(r), []);
+});
+
 test('#5227 foreign blocker: a spawn error reaches the Warning as the library prints it; an unreadable states file adds its own fail-closed Warning and the CLI is still asked', () => {
   const failing = pull(foreignScenario(), { foreignSpawn: () => ({ status: null, signal: null, error: new Error('spawn node ETIMEDOUT'), stdout: '', stderr: '' }) });
   const w = failing.errs.filter((e) => e.startsWith('Warning:'));
