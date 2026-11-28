@@ -14,21 +14,35 @@ const { extractKeyFiles } = require('./grouping');
 const { tokenizeTitle, jaccard, DEFAULT_TITLE_SIMILARITY_THRESHOLD } = require('./near-duplicate');
 
 const PREDATES_CLAIM_RELEASE = 'predates-claim-release';
+const PREDATES_SHAPING = 'predates-shaping';
 
-// strong > weak > weak-that-predates-the-release > none. A plain weak outranks
-// a predating one because it can still be upgraded by the caller's key-files
-// probe, while a predating one can never reach strong (see predatesClaimRelease).
-function rankOf(tier, predatesRelease) {
+// strong > weak > weak-that-predates-a-later-event > none. A plain weak outranks
+// a downgraded one because it can still be upgraded by the caller's key-files
+// probe, while a downgraded one can never reach strong (see downgradedAfterMerge).
+function rankOf(tier, downgraded) {
   if (tier === 'strong') return 3;
-  if (tier === 'weak') return predatesRelease ? 1 : 2;
+  if (tier === 'weak') return downgraded ? 1 : 2;
   return 0;
 }
 
-// Whether a classifyShipped result carries the downgrade signal. The caller's
-// files probe skips such a result (it cannot become strong), and its log line
-// names the downgrade. One predicate, so no caller retypes the signal literal.
+function hasSignal(result, signal) {
+  return Boolean(result && Array.isArray(result.signals) && result.signals.includes(signal));
+}
+
+// Whether a classifyShipped result carries the claim-release downgrade signal.
+// One predicate, so no caller retypes the signal literal; a caller choosing the
+// claim-release wording asks this one, a caller that only needs "was downgraded"
+// asks downgradedAfterMerge.
 function predatesClaimRelease(result) {
-  return Boolean(result && Array.isArray(result.signals) && result.signals.includes(PREDATES_CLAIM_RELEASE));
+  return hasSignal(result, PREDATES_CLAIM_RELEASE);
+}
+
+// Whether a classifyShipped result was downgraded by ANY post-merge event: a
+// claim release (#4432) or a shaping/grant (#5722). The caller's files probe
+// skips such a result (it cannot become strong), and its log line names the
+// downgrade.
+function downgradedAfterMerge(result) {
+  return hasSignal(result, PREDATES_CLAIM_RELEASE) || hasSignal(result, PREDATES_SHAPING);
 }
 
 // record: { number, title, body, createdAt, labels }. mentions: the
@@ -76,8 +90,20 @@ function predatesClaimRelease(result) {
 // (`tests/build-already-shipped-exit.test.js`) still catches a truly shipped
 // record.
 //
+// opts.lastShapedAt: ISO time (or null) of the latest `ready` or `auto:build`
+// label event on the record (#5722), passed by the caller the same way. A
+// record shaped or granted AFTER the PR merged was seen by someone who looked
+// at that merge and kept the record open, so a mention whose `mergedAt` is
+// strictly earlier than `lastShapedAt` carries the `predates-shaping` signal
+// and rates `weak` at most, exactly like `predates-claim-release`. The same
+// instant comparison, and the same rule for a missing or unparseable time: it
+// never downgrades and never upgrades. Any actor's labeling counts, human or
+// automated; the safe direction is a downgrade, and the build's shipped-exit
+// check still catches a truly shipped record. Both signals can appear on one
+// mention.
+//
 // When more than one mention qualifies, `strong` always wins over `weak`, and
-// a `weak` without `predates-claim-release` wins over one with it; among
+// a `weak` without a downgrade signal wins over one with it; among
 // ties, the first qualifying mention in array order is reported — mentions is
 // small (dispatch fetches at most 20 per record) and the exact PR named
 // matters far less than the tier itself.
@@ -89,6 +115,7 @@ function classifyShipped(record, mentions, opts = {}) {
   const recordTokens = tokenizeTitle(record && record.title);
   // A falsy value must be NaN, never `new Date(null)` (epoch 0).
   const lastReleasedAtMs = opts.lastReleasedAt ? new Date(opts.lastReleasedAt).getTime() : NaN;
+  const lastShapedAtMs = opts.lastShapedAt ? new Date(opts.lastShapedAt).getTime() : NaN;
 
   let best = { tier: 'none', pr: null, signals: [] };
   let bestRank = rankOf('none', false);
@@ -117,9 +144,13 @@ function classifyShipped(record, mentions, opts = {}) {
     const predatesRelease = mergedAtMs < lastReleasedAtMs; // false when either side is NaN
     if (predatesRelease) signals.push(PREDATES_CLAIM_RELEASE);
 
-    const tier = ((titleMatch || filesCoverAll) && !predatesRelease) ? 'strong' : 'weak';
+    const predatesShaping = mergedAtMs < lastShapedAtMs; // false when either side is NaN
+    if (predatesShaping) signals.push(PREDATES_SHAPING);
 
-    const rank = rankOf(tier, predatesRelease);
+    const downgraded = predatesRelease || predatesShaping;
+    const tier = ((titleMatch || filesCoverAll) && !downgraded) ? 'strong' : 'weak';
+
+    const rank = rankOf(tier, downgraded);
     if (rank > bestRank) {
       best = { tier, pr: mention.number, signals };
       bestRank = rank;
@@ -129,4 +160,4 @@ function classifyShipped(record, mentions, opts = {}) {
   return best;
 }
 
-module.exports = { classifyShipped, predatesClaimRelease };
+module.exports = { classifyShipped, predatesClaimRelease, downgradedAfterMerge };

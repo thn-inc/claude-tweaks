@@ -190,9 +190,11 @@ test('AC2.2: no resolvable parent is a no-op for the post-merge Step 4.0b entry,
 });
 
 test('AC1.1: /demo no longer claims to be the only closer of a parent', () => {
-  const demo = read('demo/SKILL.md');
-  assert.ok(!collapse(demo).includes('nothing else in the system ever closes a parent'));
-  assert.match(demo, /Close the parent below the floor/);
+  // #4613 moved the Approve step's parent close from accept/SKILL.md into accept/verdict-interim.md.
+  const interim = read('accept/verdict-interim.md');
+  assert.ok(!collapse(read('accept/SKILL.md')).includes('nothing else in the system ever closes a parent'));
+  assert.ok(!collapse(interim).includes('nothing else in the system ever closes a parent'));
+  assert.match(interim, /Close the parent below the floor/);
 });
 
 // Go-red controls: the pre-change files carry the literals the absence assertions above reject, so
@@ -379,7 +381,7 @@ test('#4599: Step 4.0 says the reconciler\'s post-merge check runs the CLI for a
   const body = collapse(section(pm, '### Step 4.0:', STEP_40B));
   assert.ok(
     body.includes(
-      "An `armed` outcome never reaches this step in-session: the reconciler's `post-merge` check (`gh` only) runs the CLI for that run once GitHub has merged the PR for 10 minutes (the merge grace), with no settle poll and reopens bounded to 10 minutes after `mergedAt`; with `--keep-open` on the composer,",
+      "An `armed` outcome never reaches this step in-session: the reconciler's `post-merge` check (`gh` only) runs the CLI for that run once GitHub has merged the PR for 10 minutes (the merge grace), with no settle poll and reopens bounded to 10 minutes after `mergedAt`, so it also reopens a kept-open record (a `Refs` record, or one a Development-sidebar link names) that the merge closed (#4251).",
     ),
     'Step 4.0 names the reconciler\'s post-merge check, gh-only, the merge grace, no settle poll, and the 10-minute reopen bound',
   );
@@ -387,7 +389,7 @@ test('#4599: Step 4.0 says the reconciler\'s post-merge check runs the CLI for a
   const { MERGE_GRACE_MS } = require('../plugin/bin/lib/reconcile/post-merge');
   assert.equal(MERGE_GRACE_MS, 10 * 60 * 1000, 'the 10 minutes of merge grace the prose states is MERGE_GRACE_MS');
   assert.ok(!body.includes('the reconciler does not run the CLI'), 'the "reconciler does not run the CLI" claim is gone');
-  assert.ok(body.includes('only a Development-sidebar link can still close a kept-open record there'), 'the --keep-open clause is kept');
+  assert.ok(!body.includes("a gap tracked in the run's ledger"), 'the sidebar-link gap caveat is gone (#4251)');
   // The numbers the prose states are the module's.
   const { CLOSE_WINDOW_MS } = require('../plugin/bin/lib/reconcile/post-merge');
   assert.equal(CLOSE_WINDOW_MS, 10 * 60 * 1000, 'the 10 minutes the prose states is CLOSE_WINDOW_MS');
@@ -564,8 +566,8 @@ test('AC2.1: close-out step 7 and merge-mode step 3 run Step 4.0b on `merged`', 
   assert.ok(section(read('dispatch/close-out.md'), '7. **On `merged`', '\n## ').includes('Step 4.0b'), 'close-out step 7');
   const mergeStep = section(read('wrap-up/merge-mode.md'), '3. On `merged`:', '\n## ');
   assert.ok(
-    mergeStep.includes('run Step 4.0 (`_shared/pr-first-merge-post-merge.md`), then Step 4.0b (`{pr-number}` = `{pr}`), then Step 4.1.'),
-    'merge-mode step 3: one sequence, Step 4.0 then Step 4.0b then Step 4.1',
+    mergeStep.includes('run Step 4.0 (`_shared/pr-first-merge-post-merge.md`), then Step 4.0b (`{pr-number}` = `{pr}`), then Step 4.0c, then Step 4.1.'),
+    'merge-mode step 3: one sequence, Step 4.0 then Step 4.0b then Step 4.0c then Step 4.1',
   );
 });
 
@@ -610,7 +612,7 @@ test('go-red control: the pre-change post-merge file has no Step 4.0b', { skip: 
 
 // ---- Task 4: tidy's parent-gate backstop surfaces stranded below-floor parents ----
 
-const ABOVE_ROW_TAIL = ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo ';
+const ABOVE_ROW_TAIL = ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:accept ';
 const BELOW_ROW_TAIL = ' — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)';
 
 // Same shape as tests/help-acceptance-queue-local-files.test.js: `node -e "` ... closing `"` at a line start.
@@ -713,7 +715,7 @@ test('AC3.1: the Collect lines and the pre-filter prose carry the below-floor fo
   const unGated = collapse(paragraph(pg, 'Un-gated parents recommend'));
   assert.ok(unGated.includes('**Close the parent below the floor**'), 'approval closes through the section');
   assert.ok(unGated.includes('`wrap-up/verification-brief-parent-gate.md`'));
-  assert.ok(unGated.includes('no `/claude-tweaks:demo` step'));
+  assert.ok(unGated.includes('no `/claude-tweaks:accept` step'));
 
   const shape7 = section(read('tidy/step-1-records.md'), '### Shape 7 — decomposition parent gate due', '### Shape 8 —');
   assert.ok(!collapse(shape7).includes('Both backstop shapes below (this one and Shape 8) filter out below-floor candidates'));
@@ -774,9 +776,9 @@ test('AC3.1: stale brief-only restatements name the below-floor close', () => {
   const gate = read('tidy/SKILL.md').split('\n').find((l) => l.startsWith('| **Open parent gate** |'));
   assert.ok(gate.includes('below the oversight floor') && gate.includes(floorPtr), 'SKILL.md What It Means column');
   const procedures = collapse(read('tidy/scan-procedures.md'));
-  assert.ok(procedures.includes('so an above-floor finding still ends with "then run `/claude-tweaks:demo #{n}`"'), 'scan-procedures above-floor only');
+  assert.ok(procedures.includes('so an above-floor finding still ends with "then run `/claude-tweaks:accept #{n}`"'), 'scan-procedures above-floor only');
   const actions = collapse(read('tidy/actions-github-issues.md'));
-  assert.ok(actions.includes('which is why an above-floor recommendation still ends with `/claude-tweaks:demo #{n}`'), 'github action above-floor only');
+  assert.ok(actions.includes('which is why an above-floor recommendation still ends with `/claude-tweaks:accept #{n}`'), 'github action above-floor only');
   assert.ok(actions.includes('closes the parent and asserts every sub-issue is complete'), 'github staging reasoning');
   const local = collapse(read('tidy/actions-local-files.md'));
   assert.ok(local.includes('closes the parent and asserts every sub-issue is complete'), 'local staging reasoning');

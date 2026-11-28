@@ -13,7 +13,8 @@ by hand at the operator's explicit request.
 ## The report
 
 Read `dispatch-crosspr-overlap.json` (`queue-pull-script.md`'s output, `{candidate, pr, files}[]`
-— `grouping.js`'s `detectCrossPRFileOverlap`). Non-empty: render one line per entry before the
+— `grouping.js`'s `detectCrossPRFileOverlap`). Absent (the pull removes it at its start and a failed
+overlap step writes none, #5409) or empty: render nothing. Non-empty: render one line per entry before the
 rest of Step 3:
 
 `#{candidate} overlaps open PR #{pr} on {files.join(', ')} — possible duplicate root-cause fix;

@@ -14,6 +14,8 @@ const { classifyMirror } = require('./classify');
 // commit directly to the mirror) — reported with a warning, never acted on.
 function mirrorFastForward(repoRoot, integration, opts = {}) {
   const classified = classifyMirror(repoRoot, integration, opts);
+  // opts.env (optional, a hook event's context, #5377): the environment every git child runs in; absent, the inherited one.
+  const envOpts = opts.env ? { env: opts.env } : undefined;
   if (classified.failure) {
     return { state: null, action: 'skipped', reason: classified.failure };
   }
@@ -41,7 +43,7 @@ function mirrorFastForward(repoRoot, integration, opts = {}) {
   // integration branch onto the wrong checked-out branch would be silent
   // corruption, not a loud failure, whenever that branch also happens to
   // fast-forward cleanly.
-  const current = runGit(['branch', '--show-current'], repoRoot);
+  const current = runGit(['branch', '--show-current'], repoRoot, envOpts);
   if (current.failure) return { state: 'behind', action: 'skipped', reason: current.failure };
   if (current.stdout !== integration) {
     // #2565: not checked out here doesn't mean nothing can be done. A plain
@@ -54,7 +56,7 @@ function mirrorFastForward(repoRoot, integration, opts = {}) {
     // see the local integration-branch ref advance whenever the main
     // checkout stayed off that branch, and every merged run reported
     // `local-behind-merge` forever.
-    const fetchUpdate = runGit(['fetch', 'origin', `${integration}:${integration}`], repoRoot);
+    const fetchUpdate = runGit(['fetch', 'origin', `${integration}:${integration}`], repoRoot, envOpts);
     if (!fetchUpdate.failure) return { state: 'behind', action: 'fast-forwarded' };
     // Fetch-based update itself isn't viable (no local `{integration}` ref
     // to update yet, or it would genuinely not be a fast-forward — a real
@@ -64,7 +66,7 @@ function mirrorFastForward(repoRoot, integration, opts = {}) {
     // common case, not a replacement for every case.
     return { state: 'behind', action: 'skipped', reason: `wrong-branch: checked out on '${current.stdout}', not '${integration}'` };
   }
-  const ff = runGit(['merge', '--ff-only', `origin/${integration}`], repoRoot);
+  const ff = runGit(['merge', '--ff-only', `origin/${integration}`], repoRoot, envOpts);
   if (ff.failure) return { state: 'behind', action: 'failed', reason: ff.failure };
   return { state: 'behind', action: 'fast-forwarded' };
 }

@@ -1,0 +1,14 @@
+{
+  "dispatches": {
+    "items": [
+      { "agentId": "agent-impl", "description": "Implement Task 1: fixture", "wallClockMs": 5000, "tokens": { "output": 999, "cacheRead": 999, "cacheCreate": 999 } },
+      { "agentId": "3a-a", "description": "Review lens 3a convention (A)", "wallClockMs": 2000, "tokens": { "output": 100, "cacheRead": 1000, "cacheCreate": 10 } },
+      { "agentId": "3a-b", "description": "Review lens 3a convention (B)", "wallClockMs": 2000, "tokens": { "output": 200, "cacheRead": 2000, "cacheCreate": 20 } },
+      { "agentId": "3b-a", "description": "Review lens 3b structure (A)", "wallClockMs": 2000, "tokens": { "output": 30, "cacheRead": 300, "cacheCreate": 3 } },
+      { "agentId": "3b-b", "description": "Review lens 3b structure (B)", "wallClockMs": 2000, "tokens": { "output": 40, "cacheRead": 400, "cacheCreate": 4 } },
+      { "agentId": "agent-tb-1", "description": "Tiebreak 1: alpha", "wallClockMs": 1500, "tokens": { "output": 11, "cacheRead": 101, "cacheCreate": 1001 } },
+      { "agentId": "agent-tb-2", "description": "Tiebreak 2: beta", "wallClockMs": 2500, "tokens": { "output": 12, "cacheRead": 102, "cacheCreate": 1002 } },
+      { "agentId": "agent-tb-3", "description": "Tiebreak 3: gamma", "wallClockMs": 1000, "tokens": { "output": 13, "cacheRead": 103, "cacheCreate": 1003 } }
+    ]
+  }
+}

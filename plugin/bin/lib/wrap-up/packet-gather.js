@@ -11,10 +11,17 @@ const {
   PACKET_MARKER_RE,
   COMMANDS_ONLY_SURFACES,
   encodeFactKey,
+  NEGATIVE_ID_PREFIX,
+  isDeployRef,
 } = require('./packet-contract');
-const { checkLink, findCredentialInText } = require('./packet-links');
+const {
+  BEARER_SEGMENT_REASON, checkLink, findCredentialInText, hasBearerUrl,
+} = require('./packet-links');
+const { redactOrWithhold } = require('../walkthrough/redact');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 const { SECTIONS: CONSOLE_SECTIONS, decisionLineHash } = require('../console/resolve');
+const { DECISION_RENDER_FIELDS } = require('../console/decision-facts');
+const { escapeRegExp } = require('../shared-primitives');
 
 // The text is read up to a line terminator (`.` stops at one) and trimmed after, and
 // what follows it must be whitespace. A trailing `\s*$` in the pattern is quadratic on a
@@ -38,7 +45,6 @@ const POSITIONAL_AC_PREFIX = 'AC';
 // code never swallows the rest of the section as a false fence.
 const FENCE_RE = /^ {0,3}(?:(`{3,})([^`]*)|(~{3,})(.*))$/;
 
-const NEGATIVE_ID_PREFIX = 'neg-';
 const NEGATIVE_TAG = 'negative';
 const STORIES_KEY_RE = /^stories:\s*(?:#.*)?$/;
 // A bare `-` opens an item too, its keys on the lines below it.
@@ -59,6 +65,11 @@ const LOW_CONFIDENCE_NOTE_RE = /Staged to Review Console as low-confidence.*?(?:
 const REVERSIBILITY_CLAUSE_RE = /Reversibility:.*?(?:\.(?=\s|$)|$)/;
 const DECISION_LEAD_IN = ' — ';
 const SETTLED_RESOLUTIONS = Object.freeze(['dismissed', 'dropped']);
+// The shared line grammar, planning-decisions.md's Line forms. Its one section heading is
+// read by exact match; a settled line counts only at column 0, bare or behind `- `.
+const PLANNING_DECISIONS_HEADING = '## Planning Decisions';
+const SETTLED_PLANNING_PREFIX = 'Settled at planning:';
+const SETTLED_PLANNING_RE = new RegExp(`^(?:- )?${escapeRegExp(SETTLED_PLANNING_PREFIX)}`);
 // `Title: x`, `- Finding: x`, `- **Finding:** x`, the shapes archived staged files use.
 const stagedFieldRe = (name) => new RegExp(`^(?:[-*]\\s+)?(?:\\*\\*)?${name}(?:\\*\\*)?:(?:\\*\\*)?[ \\t]*(\\S.*)$`, 'm');
 const TITLE_FIELD_RE = stagedFieldRe('Title');
@@ -187,14 +198,39 @@ function stagedFindingText(text) {
   return lines[0] ?? null;
 }
 
-function lowConfidenceFindings({ items, findings, decisions }, readStaged) {
+// The settled lines of each `## Planning Decisions` section in a spec. A section runs to
+// the next `## ` line, so specify's section and the build's are both read. Nothing
+// continues onto a following line.
+function settledPlanningLines(specText) {
+  if (typeof specText !== 'string') return [];
+  const lines = [];
+  let inSection = false;
+  for (const line of linesOutsideFences(specText)) {
+    if (line.trimEnd() === PLANNING_DECISIONS_HEADING) {
+      inSection = true;
+    } else if (line.startsWith('## ')) {
+      inSection = false;
+    } else if (inSection && SETTLED_PLANNING_RE.test(line)) {
+      lines.push(line.replace(/^- /, '').trimEnd());
+    }
+  }
+  return lines;
+}
+
+// The Review Console's low-confidence items, then the settled planning lines of each
+// record's spec, numbered on in that order.
+function lowConfidenceFindings(
+  { items, findings, decisions },
+  readStaged,
+  { records = [], readSpec = () => null } = {},
+) {
   let linesByHash = null;
-  return items
+  const consoleTexts = items
     // A settled staged file keeps its section. A can't-tell verdict keeps its item,
     // even at a `dropped` default: an agent that could not tell settled nothing.
     .filter((item) => item.section === CONSOLE_SECTIONS.LOW
       && (item.tiebreak || !SETTLED_RESOLUTIONS.includes(item.resolution)))
-    .map(({ id }, index) => {
+    .map(({ id }) => {
       const decision = DECISION_ID_RE.exec(id);
       let text;
       if (decision) {
@@ -205,8 +241,10 @@ function lowConfidenceFindings({ items, findings, decisions }, readStaged) {
       } else {
         text = stagedFindingText(readStaged(id));
       }
-      return { n: index + 1, text: text ?? id };
+      return text ?? id;
     });
+  const settled = records.flatMap((n) => settledPlanningLines(readSpec(n)).map((text) => ({ text, source: 'planning-decisions' })));
+  return [...consoleTexts.map((text) => ({ text })), ...settled].map((entry, index) => ({ n: index + 1, ...entry }));
 }
 
 // ---- QA and verify inputs ----
@@ -433,7 +471,8 @@ function linkOutcome({ id, label, url, command }, surface, allowedHosts) {
   });
   if (command) {
     const key = findCredentialInText(command);
-    return key ? refuse(`credential key in command: ${key}`) : accept({ command });
+    if (key) return refuse(`credential key in command: ${key}`);
+    return hasBearerUrl(command) ? refuse(BEARER_SEGMENT_REASON) : accept({ command });
   }
   if (COMMANDS_ONLY_SURFACES.includes(surface)) return refuse('infra surface lists commands, not links');
   const check = checkLink(url, { allowedHosts });
@@ -444,20 +483,63 @@ function deployFact(deploy) {
   const { target, live } = deploy ?? { target: 'local', live: null };
   let text = `target: ${target}`;
   if (target === 'dev') text += live === true ? ', confirmed live' : ', not confirmed live';
-  return { id: 'deploy:status', kind: 'deploy', status: 'passed', source: 'deploy', text, target, live };
+  const fact = { id: 'deploy:status', kind: 'deploy', status: 'passed', source: 'deploy', text, target, live };
+  // The deployed commit, which a later /accept refresh compares against (#4613).
+  if (isDeployRef(deploy?.ref)) fact.ref = deploy.ref;
+  return fact;
 }
 
-// A pass-through record may already spell its id with the kind.
-function passThroughFacts(kind, source, entries) {
+// A pass-through record may already spell its id with the kind. The status and reason come
+// from the call, never from the entry. Only a flag entry's `unconfirmed: true` is carried on.
+function passThroughFacts(kind, source, entries, { status = 'passed', reason } = {}) {
   const prefix = `${kind}:`;
-  return (entries ?? []).map(({ id, text, url }) => ({
+  return (entries ?? []).map(({ id, text, unconfirmed }) => ({
     id: `${prefix}${encodeFactKey(id.startsWith(prefix) ? id.slice(prefix.length) : id)}`,
     kind,
-    status: 'passed',
+    status,
+    ...(reason === undefined ? {} : { reason }),
     source,
     ...(text === undefined ? {} : { text }),
-    ...(url === undefined ? {} : { url }),
+    ...(kind === 'flag' && unconfirmed === true ? { unconfirmed: true } : {}),
   }));
+}
+
+// A decision entry keeps the fields a control-mode console writes (#4620); an entry with only { id, text } yields
+// exactly the pass-through fact. An absent or non-string field stays absent.
+function decisionFacts(entries) {
+  const base = passThroughFacts('decision', 'decision-items', entries);
+  return base.map((fact, i) => {
+    const entry = entries[i];
+    const extra = {};
+    for (const field of DECISION_RENDER_FIELDS) if (typeof entry[field] === 'string') extra[field] = entry[field];
+    return { ...fact, ...extra };
+  });
+}
+
+const PROOF_NOT_RUN_REASON = 'planned in the plan, not yet run';
+
+// A recording's free strings as a narrator may read them, with the sum of what went from them.
+// A claim's text meets only the credential screen, which misses a bare token or an address.
+function redactedRecordingStrings({ text, captions, failure }) {
+  let redactions = 0;
+  const redacted = (value) => {
+    if (typeof value !== 'string') return value;
+    const result = redactOrWithhold(value);
+    redactions += result.count;
+    return result.text;
+  };
+  return { text: redacted(text), captions: captions?.map(redacted), failure: redacted(failure), redactions };
+}
+
+// The snapshot's outcome as a fact. A not-run one has no GIF, so no location.
+function recordingFact(recording, recordingPath) {
+  const { status, reason, exposure } = recording;
+  const { text, captions, failure, redactions } = redactedRecordingStrings(recording);
+  const common = { id: 'recording:walkthrough', kind: 'recording', status, source: 'walkthrough' };
+  if (status === 'not-run') return { ...common, reason, ...(failure === undefined ? {} : { failure }), redactions };
+  return {
+    ...common, text, url_or_path: recordingPath.live, archive_path: recordingPath.archived, captions, exposure, redactions,
+  };
 }
 
 function unmatchedAcKeys(acResults, criteria) {
@@ -503,14 +585,15 @@ function gatherPacketFacts(inputs) {
     ...checkFacts(inputs.report, inputs.expectedChecks),
     ...acFacts,
     ...stories,
-    ...(inputs.lowConfidence ?? []).map(({ n, text }) => ({
-      id: `finding:${n}`, kind: 'finding', status: 'passed', source: 'review', text,
+    ...(inputs.lowConfidence ?? []).map(({ n, text, source }) => ({
+      id: `finding:${n}`, kind: 'finding', status: 'passed', source: source ?? 'review', text,
     })),
     ...linkOutcomes.flatMap(({ fact }) => (fact ? [fact] : [])),
     deployFact(inputs.deploy),
-    ...passThroughFacts('recording', 'recordings', inputs.recordings),
+    ...(inputs.recording ? [recordingFact(inputs.recording, inputs.recordingPath)] : []),
     ...passThroughFacts('flag', 'flags', inputs.flags),
-    ...passThroughFacts('decision', 'decision-items', inputs.decisions),
+    ...passThroughFacts('proof', 'proofs', inputs.proofs, { status: 'not-run', reason: PROOF_NOT_RUN_REASON }),
+    ...decisionFacts(inputs.decisions),
   ];
 
   const byId = new Map();
@@ -570,11 +653,16 @@ function readPacket(comments) {
 module.exports = {
   parseAcceptanceCriteria,
   lowConfidenceFindings,
+  settledPlanningLines,
+  PLANNING_DECISIONS_HEADING,
+  SETTLED_PLANNING_PREFIX,
   qaSelectionFromDecisions,
   expectedChecksFromDeclaration,
   parseStoryFile,
   storyResultsFromQaReport,
   storiesFromQaStamp,
+  redactedRecordingStrings,
   gatherPacketFacts,
+  decisionFacts,
   readPacket,
 };

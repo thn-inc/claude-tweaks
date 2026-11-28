@@ -2,12 +2,13 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { computeInboundReferences } = require('../../../plugin/bin/lib/docs-health/findability');
 
 function makeTmpRoot() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'docs-health-findability-'));
+  return scratchDir('docs-health-findability-');
 }
 
 test('counts zero references for an orphan doc', () => {

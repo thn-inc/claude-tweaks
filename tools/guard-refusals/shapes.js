@@ -154,7 +154,7 @@ function stripQuoted(text) {
 }
 
 function keyword(word) {
-  const re = new RegExp(`(?<![\\w./-])${word}(?![\\w./-])`);
+  const re = new RegExp(`(?<![\\w./-])${word}(?![\\w./-])`, 'i');
   return (text) => re.test(stripSingle(text));
 }
 
@@ -184,13 +184,165 @@ function shellWords(text) {
 
 // The guard refuses a shell word whose whole value, quoted or bare, is `word`;
 // a word that merely contains it (`"task complete"`, a `node -e` script) passes.
+// Any letter case: `echo COMPLETE`, `echo Eval` and `grep -c "Source" f` were
+// refused live (2026-11-16, #5590).
 function wholeWord(word) {
-  return (text) => shellWords(text).includes(word);
+  return (text) => shellWords(text).some((w) => w.toLowerCase() === word);
+}
+
+// A `git` command with an argument word whose basename (text after the last
+// `/`) is `git` or `git-…`, any case, after quote removal: `-- git`, `-- x/git-y`,
+// `--grep "git"` were refused live (2026-11-16, #5590); `gitx`, `x-git`,
+// `git.md`, `--grep=git` and `"git x"` ran.
+const GIT_BASENAME = /^git(?:-[\w-]*)?$/i;
+function gitWordArgument(text) {
+  const { bare } = views(text);
+  // A `$(` or `(` ends the argument list read here: a nested `git` is its own
+  // command word, not an argument of this one.
+  return commandSegments(bare, 'git').some(([s, e]) => {
+    const open = bare.slice(s, e).indexOf('(');
+    // A backslash-newline continuation vanishes in shell, joining the word it splits.
+    return shellWords(text.slice(s, open === -1 ? e : s + open).replace(/(?<!\\)((?:\\\\)*)\\\r?\n/g, '$1')).slice(1).some((w) => GIT_BASENAME.test(w.slice(w.lastIndexOf('/') + 1)));
+  });
+}
+
+// A `'` or `"` inside an open `{` in a heredoc body (either delimiter quoting)
+// was refused live (2026-11-16, #5590). The brace depth counts over heredoc
+// chars only and resets at any other non-newline char, so it never spans a
+// non-heredoc gap.
+function heredocBraceQuote(text) {
+  const kinds = lexShell(text);
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (kinds[i] !== 'heredoc') {
+      if (text[i] !== '\n') depth = 0;
+      continue;
+    }
+    const c = text[i];
+    if (c === '{') depth++;
+    else if (c === '}') depth = Math.max(0, depth - 1);
+    else if ((c === "'" || c === '"') && depth > 0) return true;
+  }
+  return false;
+}
+
+// A call whose last quote never closes: `grep -c "^# " "README.md` was refused live (2026-11-16,
+// #5590); the same call with the quote closed ran. A char appended on a new line lexes as quoted
+// content exactly when a quote is still open at the end: the newline ends a comment and leaves a
+// closing heredoc delimiter line whole.
+function unterminatedQuote(text) {
+  const last = lexShell(`${text}\nx`)[text.length + 1];
+  return last === 'single' || last === 'double';
+}
+
+// A backslash right before a space inside a quoted span, single or double: `grep -c "a\ b" f`,
+// `grep -c 'a\ b' f` and `grep -c "a\\ b" f` were refused live (2026-11-16, #5590); `"a\\b"` ran.
+function quotedBackslashSpace(text) {
+  const kinds = lexShell(text);
+  for (let i = text.indexOf('\\ '); i !== -1; i = text.indexOf('\\ ', i + 1)) {
+    if ((kinds[i] === 'single' || kinds[i] === 'double') && kinds[i + 1] === kinds[i]) return true;
+  }
+  return false;
+}
+
+// A word that starts with `=` and a letter, right after a space or a `|`, quoted or bare (zsh reads a
+// bare `=name` as a command path): `grep -c "x =require" f`, `'x =require'`, `"a\|=token"`, `"a|=b"`
+// and a bare `=y` were refused live (2026-11-16, #5590); `"=require"`, `"x = require"`, `"x =1"`,
+// `"a(=b"`, `"a,=b"` and `"x == y"` ran. Comment and heredoc text was not probed and is not read.
+function equalsWord(text) {
+  const kinds = lexShell(text);
+  for (const m of text.matchAll(/[ |]=[A-Za-z]/g)) {
+    const k = kinds[m.index + 1];
+    if (k === 'plain' || k === 'single' || k === 'double') return true;
+  }
+  return false;
+}
+
+// Index just past the call's leading run of `NAME=value` statements, each ended by `;`, `&&` or a
+// newline. A hand scan: a regex over the same run can split a blank run every way.
+function leadingAssignmentsEnd(text, kinds) {
+  let i = 0;
+  for (;;) {
+    while (i < text.length && /\s/.test(text[i])) i++;
+    const m = /^[A-Za-z_]\w{0,255}=/.exec(text.slice(i, i + 258));
+    if (!m || kinds[i] !== 'plain') return i;
+    let j = i + m[0].length;
+    while (j < text.length && !(kinds[j] === 'plain' && /[\s;&|()<>]/.test(text[j]))) j++;
+    while (text[j] === ' ' || text[j] === '\t') j++;
+    if (text[j] === ';' || text[j] === '\n') i = j + 1;
+    else if (text[j] === '&' && text[j + 1] === '&') i = j + 2;
+    else return i;
+  }
+}
+
+// The text `git` anywhere in the call (a case-insensitive substring, as for git-text-redirect-var)
+// plus a reference to a literally assigned name whose assignment follows another command. Live
+// 2026-11-16 (#5590): `pwd; F="README.md"; grep -c "digit" "$F"`, `pwd; F="README.md"; git log -1 --
+// "$F"` and `cd /tmp; W="<own worktree>"; git -C "$W" log -1` were refused ("names git in a form too
+// complex"); the same calls with the assignment first, with no `git` text, or with the name never
+// referenced ran. A computed value is the older detectors' case, so only a literal one counts here.
+// The assignment test is staticNames' (ASSIGN_CONTEXT, LITERAL_VALUE) over fixed windows: staticNames
+// itself rescans the line once per assignment (115 s on `A=1; ` x 40000, measured 2026-11-16).
+const CONTEXT_WINDOW = 256;
+const VALUE_WINDOW = 4096;
+function gitTextLateVar(text) {
+  if (!/git/i.test(text)) return false;
+  const kinds = lexShell(text);
+  const lead = leadingAssignmentsEnd(text, kinds);
+  const bare = stripQuoted(text);
+  const late = new Set();
+  for (const m of text.matchAll(/(?<![\w$-])([A-Za-z_]\w*)=/g)) {
+    if (m.index < lead || kinds[m.index] !== 'plain') continue;
+    const before = bare.slice(Math.max(0, m.index - CONTEXT_WINDOW), m.index);
+    if (!ASSIGN_CONTEXT.test(before.slice(before.lastIndexOf('\n') + 1))) continue;
+    const at = m.index + m[0].length;
+    if (LITERAL_VALUE.test(text.slice(at, at + VALUE_WINDOW))) late.add(m[1]);
+  }
+  if (late.size === 0) return false;
+  return [...stripSingle(text).matchAll(/\$\{?([A-Za-z_]\w*)/g)].some((m) => late.has(m[1]));
 }
 
 const GH_JQ_PIPE = new RegExp(`${CMD}gh\\s[^\\n]*--jq[\\s=]+(?:'[^']*\\|[^']*'|"[^"]*\\|[^"]*")`);
 const GH_REPO_URL = new RegExp(`${CMD}gh\\s[^\\n]*--repo[\\s=]+["']?(?:https?://)?github\\.com/`);
-const GH_CHAINED_STATUS = new RegExp(`${CMD}gh\\s[^\\n]*?(?:;|&&)[^\\n]*\\$\\?`);
+// Start of the latest `seps` separator that ends at or before the last `status` in text[start, end)
+// (one line), or -1.
+function latestSeparator(text, start, end, seps, status) {
+  if (end - start < status.length) return -1;
+  const found = text.slice(start, end).lastIndexOf(status);
+  if (found < 0) return -1;
+  const at = start + found;
+  for (let p = at - 1; p >= start; p -= 1) {
+    if (seps.some((s) => p + s.length <= at && text.startsWith(s, p))) return p;
+  }
+  return -1;
+}
+
+// True when a command-position `<word>\s` is chained by one of `seps` onto `status` on the line the
+// text after it continues: what `<word>\s[^\n]*?(?:seps)[^\n]*status` matches, without its
+// backtracking (seconds on 7,000 characters of `git x; `). The `\s` may be the `\n` itself, so the
+// chain is read from just past it. Each line's latest separator is computed once, when the first
+// match reaches that line (linear).
+function chainedStatus(word, seps, status) {
+  const command = new RegExp(`${CMD}${word}\\s`, 'g');
+  return (text) => {
+    command.lastIndex = 0;
+    let lineEnd = -1;
+    let sepAt = -1;
+    while (command.exec(text) !== null) {
+      const from = command.lastIndex;
+      if (from > lineEnd) {
+        const lineStart = text.lastIndexOf('\n', from - 1) + 1;
+        lineEnd = text.indexOf('\n', from);
+        if (lineEnd < 0) lineEnd = text.length;
+        sepAt = latestSeparator(text, lineStart, lineEnd, seps, status);
+      }
+      if (from <= sepAt) return true;
+    }
+    return false;
+  };
+}
+
+const GH_CHAINED_STATUS = chainedStatus('gh', [';', '&&'], '$?');
 const GIT_COMMAND = new RegExp(String.raw`(?:(?:^|[\s;&|(])|${CMD_POSITION}${PATH_PREFIX})git\s+[a-z]`, 'm');
 const GIT_IN_SUBSTITUTION = new RegExp(String.raw`\$\(\s*(?:${PATH_PREFIX})?git\s`);
 const NODE_EVAL_SCRIPT_VAR = new RegExp(`${CMD}node\\s+(?:-e|-p|--eval|--print)\\s+"[^"]*${VAR}`);
@@ -201,7 +353,8 @@ const STDOUT_FILE_REDIRECT = /(?:&|(?<![<>&\d]))>>?(?!&)\s*\S/;
 // joined: `bare` (quoted, comment and heredoc text blanked: shell structure)
 // and `args` (single-quoted, comment and heredoc text blanked: what expands).
 function views(text) {
-  const join = (s) => s.replace(/\\\r?\n/g, (m) => ' '.repeat(m.length));
+  // Only an unescaped backslash continues a line: `\\` + newline is a literal backslash, then a real break.
+  const join = (s) => s.replace(/(?<!\\)((?:\\\\)*)(\\\r?\n)/g, (m, pre, cont) => pre + ' '.repeat(cont.length));
   return { bare: join(stripQuoted(text)), args: join(stripSingle(text)) };
 }
 
@@ -382,6 +535,39 @@ function graphqlMultivarMutation(text) {
   return /\(\s*\w+\s*:\s*\{/.test(text.slice(m.index + m[0].length));
 }
 
+// `git -C .`: the operand is the bare or quoted dot.
+const GIT_C_DOT = new RegExp(`${CMD}git\\s+-C\\s+(?:\\.|"\\."|'\\.')(?=\\s|$)`, 'm');
+// `git -C <operand>` with an unquoted glob char after the operand's first character, in the same
+// simple command; the caller blanks quoted text. What `git\s+-C\s+\S+[^;&|\n]*[*?[]` matches,
+// without its backtracking (the overlapping `\S+` and `[^;&|\n]*` rescanned the segment per
+// split: seconds on 40,000 characters, pinned in perf/guard-refusals-chained-status-linearity).
+// Each segment's last glob char is found once, when the first match reaches it (linear).
+const GIT_C_OPERAND = new RegExp(`${CMD}git\\s+-C\\s+(?=\\S)`, 'gm');
+function gitCGlob(text) {
+  GIT_C_OPERAND.lastIndex = 0;
+  let segEnd = -1;
+  let lastGlob = -1;
+  while (GIT_C_OPERAND.exec(text) !== null) {
+    const from = GIT_C_OPERAND.lastIndex;
+    if (from > segEnd) {
+      segEnd = text.length;
+      for (let p = from; p < text.length; p += 1) {
+        if (';&|\n'.includes(text[p])) { segEnd = p; break; }
+      }
+      lastGlob = -1;
+      for (let p = from + 1; p < segEnd; p += 1) {
+        if ('*?['.includes(text[p])) lastGlob = p;
+      }
+    }
+    if (lastGlob > from) return true;
+  }
+  return false;
+}
+// A git command chained by ; && or || onto `$?` on one line: unquoted, or a
+// double-quoted word that is exactly "$?" ("exit=$?" runs).
+const GIT_CHAINED_STATUS = chainedStatus('git', [';', '&&', '||'], '$?');
+const GIT_CHAINED_QUOTED_STATUS = chainedStatus('git', [';', '&&', '||'], '"$?"');
+
 const DETECTORS = [
   {
     id: 'complete-token',
@@ -403,7 +589,7 @@ const DETECTORS = [
   {
     id: 'gh-jq-pipe-chained',
     row: "`gh pr view 1 --repo o/r --json comments --jq '.comments[] \\| .id'; echo exit=$?`; `gh pr view 1 --repo github.com/o/r --json comments && echo exit=$?`",
-    test: (t) => (GH_JQ_PIPE.test(t) || GH_REPO_URL.test(t)) && GH_CHAINED_STATUS.test(stripQuoted(t)),
+    test: (t) => (GH_JQ_PIPE.test(t) || GH_REPO_URL.test(t)) && GH_CHAINED_STATUS(stripQuoted(t)),
   },
   {
     id: 'git-text-redirect-var',
@@ -419,6 +605,21 @@ const DETECTORS = [
     id: 'git-var-operand',
     row: "`git -C \"$PWD\" status --short`; `W=\"$(node -e 'console.log(process.cwd())')\"` then `git -C \"$W\" status --short`; `git -C \"$(pwd)\" status --short` (2026-10-25)",
     test: (t) => hasVarOperand(t, 'git', { substitution: true }),
+  },
+  {
+    id: 'git-C-dot',
+    row: '`git -C . rev-parse --short HEAD`',
+    test: (t) => GIT_C_DOT.test(t),
+  },
+  {
+    id: 'git-C-glob',
+    row: '`git -C "<worktree>" grep -c X -- tools/guard-refusals/*.js`',
+    test: (t) => gitCGlob(stripQuoted(t)),
+  },
+  {
+    id: 'git-chained-status',
+    row: '`git merge-base --is-ancestor HEAD HEAD; echo exit=$?`',
+    test: (t) => GIT_CHAINED_STATUS(stripQuoted(t)) || GIT_CHAINED_QUOTED_STATUS(stripSingle(t)),
   },
   {
     id: 'node-eval-script-var-with-git',
@@ -483,15 +684,58 @@ const DETECTORS = [
     test: (t) => /(?:^|[\s;&|(])test\s+[^\s"'$-]\S*\s+!?==?\s/m.test(t),
   },
   {
+    id: 'git-word-argument',
+    row: '`git grep -c "git-discipline" -- f.md`; `git log --oneline -1 -- git`',
+    test: gitWordArgument,
+  },
+  {
+    id: 'heredoc-brace-quote',
+    row: "`node \"/lit/bin/node-eval-file.js\" a <<'EOF'`; `const r = { a: 'x' };`; `EOF`",
+    test: heredocBraceQuote,
+  },
+  {
     id: 'backslash-space',
     row: '`ls /Users/me/Code\\ Workspaces/repo/README.md`',
     test: (t) => /[^\s\\]\\ (?=\S)/.test(stripQuoted(t)),
   },
+  {
+    id: 'git-text-late-var',
+    row: '`pwd; F="README.md"; grep -c "digit" "$F"`',
+    test: gitTextLateVar,
+  },
+  {
+    id: 'quoted-backslash-space',
+    row: '`grep -c "a\\ b" README.md`',
+    test: quotedBackslashSpace,
+  },
+  {
+    id: 'equals-word',
+    row: '`grep -c "x =require" README.md`',
+    test: equalsWord,
+  },
+  {
+    id: 'unterminated-quote',
+    row: '`grep -c "^# " "README.md`',
+    test: unterminatedQuote,
+  },
 ];
 
-// Refused-row Example cell -> why no static detector can decide it. Empty: every
-// refused row today has a detector.
-const UNDETECTED_ROWS = {};
+// A refusal reason (trace.js REASONS) the guard no longer gives, bound to the §7 passes row that
+// records it by that row's exact Example cell. `until` is the day the row was last probed (UTC): a
+// refusal with this reason from that day on contradicts the row, so the replay leaves it unexplained.
+const FORMER_REASONS = {
+  'gh-text': {
+    row: "`gh api graphql -f query='query{repository(owner:\"o\",name:\"r\"){issue(number:1){parent{number}}}}'`; `gh issue list --repo o/r --search \"zsh in:title\" --json number`; `for n in 1 2; do gh issue view $n --repo o/r --json number --jq '\"#\\(.number)\"'; done`",
+    until: '2026-11-16',
+  },
+};
+
+// Refused-row Example cell -> why no static detector can decide it. Every other
+// refused row has a detector.
+const UNDETECTED_ROWS = {
+  '`git -C "<main checkout>" rev-parse --short HEAD`; `cd "<main checkout>" && git log --oneline -1`':
+    'whether a -C operand or cd target is another checkout is known only at run time: the path text alone cannot tell the shared checkout from any other directory',
+};
 
 // The agent substitutes a literal plugin root for these placeholders before it
 // runs a command (_shared/worktree-setup.md, "Resolve plugin-supplied values to
@@ -510,4 +754,4 @@ function detectShapes(text, { placeholders = true } = {}) {
   return ids;
 }
 
-module.exports = { DETECTORS, UNDETECTED_ROWS, normalizePlaceholders, detectShapes };
+module.exports = { DETECTORS, UNDETECTED_ROWS, FORMER_REASONS, normalizePlaceholders, detectShapes, lexShell };

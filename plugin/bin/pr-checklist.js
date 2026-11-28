@@ -20,8 +20,8 @@
 //
 // Status is data: exit 0 for written, no-op, no-pr and gh-absent.
 // 2 malformed invocation, or an unreadable --summary-file.
-// 3 run dir missing or not anchored under the main checkout (a worktree-local
-//   shadow -- _shared/pipeline-run-dir.md, [IL-127]).
+// 3 run dir missing or not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local
+//   shadow, or a directory outside pipelines/ -- _shared/pipeline-run-dir.md, [IL-127]).
 // 4 run-marker mismatch: the PR body's first line names a different run (or
 //   none) -- refused, nothing written to the PR. The CLI logs the refusal
 //   (`refused on PR #{n} — run marker mismatch (body names run {found|none},
@@ -39,7 +39,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { CANONICAL_PHASES, repairPrBody, reviseSpecSummary } = require('./lib/flow/pr-body');
+const { CANONICAL_PHASES, repairPrBody, reviseSpecSummary, WHOLE_PIECE_RESTORES } = require('./lib/flow/pr-body');
 const { setPhaseRow, firstLineRunId, readRunReversals } = require('./lib/flow/pr-checklist');
 const { readManifest } = require('./lib/flow/manifest');
 const { resolveTarget, appendEntry, formatEntry } = require('./lib/log-decision/append');
@@ -53,7 +53,7 @@ const USAGE = 'usage: pr-checklist.js --run <run-dir> --phase <build|test|review
   + '  prints {action, pr, phase, row, restored, summary}; action: written | no-op | no-pr | gh-absent\n'
   + '  exit 0 done or status-as-data (no-pr, gh-absent, no-op)\n'
   + '       2 malformed invocation or unreadable --summary-file\n'
-  + '       3 run dir missing or not anchored under the main checkout\n'
+  + '       3 run dir missing or not anchored under the main checkout\'s .claude-tweaks/pipelines\n'
   + '       4 run marker mismatch -- refused, nothing written\n'
   + '       5 gh pr view / gh pr edit failed\n'
   + '  4 and 5 append their own AUTO line to decisions.md\n';
@@ -121,7 +121,7 @@ function run(argv, overrides = {}) {
   const target = resolveTarget({ runDir: o.run, cwd: deps.cwd(), mainRoot: deps.mainRoot });
   if (!target.ok) {
     if (target.reason === 'missing') deps.stderr(`pr-checklist.js: run dir does not exist: ${o.run}\n`);
-    else deps.stderr(`pr-checklist.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
+    else deps.stderr(`pr-checklist.js: run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
     return 3;
   }
 
@@ -214,7 +214,7 @@ function run(argv, overrides = {}) {
   // 11. A repair is worth a decisions.md line; a logging failure never changes the exit.
   let logFailed = false;
   if (repaired.restored.length > 0) {
-    const carried = repaired.restored.length === 3 ? 'none' : 'some';
+    const carried = WHOLE_PIECE_RESTORES.every((p) => repaired.restored.includes(p)) ? 'none' : 'some';
     try {
       deps.appendDecision({
         runDir: o.run,

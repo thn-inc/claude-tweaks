@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
 
-const { selectScope } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'scope.js'));
+const { selectScope, inertDirtyPaths } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'scope.js'));
 const { readDeclaration } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'declaration.js'));
 
 const FULL = '0123456789abcdef0123456789abcdef01234567';
@@ -15,7 +15,7 @@ function decl(json) {
   return r.decl;
 }
 
-const EXAMPLE = decl({
+const EXAMPLE_JSON = {
   checks: { types: 't', lint: 'l', tests: { api: 'a', web: 'w' } },
   rules: [
     { match: 'apps/api/**', suites: ['api'], static: true },
@@ -25,7 +25,9 @@ const EXAMPLE = decl({
     { match: 'docs/plans/*-ledger.md', suites: [], static: false },
     { match: '.claude-tweaks/pipelines/**', suites: [], static: false },
   ],
-});
+};
+const EXAMPLE = decl(EXAMPLE_JSON);
+const EXAMPLE_WITH_CI = decl({ ...EXAMPLE_JSON, ci: { api: { workflow: 'test.yml', job: 'api' } } });
 
 test('no declaration → full, byte-for-byte today (AC1)', () => {
   for (const files of [[], ['anything.js'], ['docs/x.md']]) {
@@ -33,7 +35,7 @@ test('no declaration → full, byte-for-byte today (AC1)', () => {
   }
 });
 
-test('no prior stamp → full even with a declaration (the first run is always the anchor)', () => {
+test('no prior stamp and no fallbackBase → full even with a declaration', () => {
   const r = selectScope({ decl: EXAMPLE, files: ['docs/x.md'], stamp: null });
   assert.strictEqual(r.mode, 'full');
   assert.strictEqual(r.suites, '*');
@@ -106,8 +108,8 @@ test('tool-scoped: path rules do not pick suites, static still follows the rules
   assert.strictEqual(r.mode, 'none');
 });
 
-test('a legacy stamp with no fullSha anchors on its sha', () => {
-  const r = selectScope({ decl: EXAMPLE, files: ['docs/x.md'], stamp: { sha: FULL, scope: 'full', legacy: true } });
+test('a stamp with no fullSha anchors on its sha', () => {
+  const r = selectScope({ decl: EXAMPLE, files: ['docs/x.md'], stamp: { sha: FULL, scope: 'full' } });
   assert.strictEqual(r.base, FULL);
 });
 
@@ -135,7 +137,7 @@ const MAP = parseImpactMap(JSON.stringify(encodeImpactMap({
 }))).map;
 const HEAD = ['tests/a.test.js', 'tests/b.test.js', 'tests/p.test.js'];
 const CTX = { map: MAP, problem: null, headTests: HEAD };
-const FULL_RUN = { suite: 'tests', files: null, fallback: null, selected: null, changedTests: [], untracedTests: [], driftTests: [], driftSelected: null, superseded: false };
+const FULL_RUN = { suite: 'tests', files: null, fallback: null, selected: null, changedTests: [], untracedTests: [], driftTests: [], driftSelected: null, superseded: false, supersedingPaths: [] };
 const NOT_SELECTED = { ...FULL_RUN, files: [], selected: 0, driftSelected: 0 };
 const SUPERSEDED = { ...FULL_RUN, superseded: true };
 const isel = (files, statuses, impact = CTX, extra = {}) => selectScope({ decl: IMPACT, files, stamp: STAMP, statuses, impact, ...extra });
@@ -147,7 +149,7 @@ test('impact subset → scoped, only the tests that read the changed path', () =
   assert.strictEqual(r.static, true);
   assert.strictEqual(r.base, FULL);
   assert.deepStrictEqual(r.matched, [{ file: 'src/x.js', rule: 0 }]);
-  assert.deepStrictEqual(r.impact, { suite: 'tests', files: ['tests/a.test.js'], fallback: null, selected: 1, changedTests: [], untracedTests: [], driftTests: [], driftSelected: 0, superseded: false });
+  assert.deepStrictEqual(r.impact, { suite: 'tests', files: ['tests/a.test.js'], fallback: null, selected: 1, changedTests: [], untracedTests: [], driftTests: [], driftSelected: 0, superseded: false, supersedingPaths: [] });
 });
 
 test('a subset impact suite never yields full, even with every suite selected and static', () => {
@@ -199,21 +201,21 @@ test('an unmatched path supersedes the impact subset', () => {
   assert.strictEqual(r.mode, 'full');
   assert.strictEqual(r.suites, '*');
   assert.deepStrictEqual(r.unmatched, ['unknown/path.txt']);
-  assert.deepStrictEqual(r.impact, SUPERSEDED);
+  assert.deepStrictEqual(r.impact, { ...SUPERSEDED, supersedingPaths: ['unknown/path.txt'] });
 });
 
 test('a "*" rule or an explicit rule naming the impact suite also supersedes; fallback stays null', () => {
   const ctx = { ...CTX, problem: 'map-missing' };
   let r = isel(['src/x.js', 'shared/k.js'], { 'src/x.js': 'M', 'shared/k.js': 'M' }, ctx);
   assert.strictEqual(r.mode, 'full');
-  assert.deepStrictEqual(r.impact, SUPERSEDED);
+  assert.deepStrictEqual(r.impact, { ...SUPERSEDED, supersedingPaths: ['shared/k.js'] });
   r = isel(['src/x.js', 'lib/k.js'], { 'src/x.js': 'M', 'lib/k.js': 'M' }, ctx);
   assert.strictEqual(r.mode, 'scoped');
   assert.deepStrictEqual(r.suites, ['tests']);
-  assert.deepStrictEqual(r.impact, SUPERSEDED);
+  assert.deepStrictEqual(r.impact, { ...SUPERSEDED, supersedingPaths: ['lib/k.js'] });
   // Selected in full with no impact-rule file at all is still superseded.
   r = isel(['lib/k.js'], { 'lib/k.js': 'M' });
-  assert.deepStrictEqual(r.impact, SUPERSEDED);
+  assert.deepStrictEqual(r.impact, { ...SUPERSEDED, supersedingPaths: ['lib/k.js'] });
 });
 
 test('no impact-rule file and the impact suite unselected: impact is the empty subset (files [], selected 0)', () => {
@@ -230,7 +232,7 @@ test('changed test files at HEAD and untraced HEAD tests join the subset', () =>
   const r = isel(['src/x.js', 'tests/b.test.js'], { 'src/x.js': 'M', 'tests/b.test.js': 'M' }, { ...CTX, headTests: head });
   assert.deepStrictEqual(r.impact, {
     suite: 'tests', files: ['tests/a.test.js', 'tests/b.test.js', 'tests/new.test.js'], fallback: null, selected: 3,
-    changedTests: ['tests/b.test.js'], untracedTests: ['tests/new.test.js'], driftTests: [], driftSelected: 0, superseded: false,
+    changedTests: ['tests/b.test.js'], untracedTests: ['tests/new.test.js'], driftTests: [], driftSelected: 0, superseded: false, supersedingPaths: [],
   });
   assert.strictEqual(r.static, true);
 });
@@ -239,8 +241,21 @@ test('drifted tests from the context join the subset and are counted (#4132)', (
   const r = isel(['src/x.js'], { 'src/x.js': 'M' }, { ...CTX, driftTests: ['tests/b.test.js'] });
   assert.deepStrictEqual(r.impact, {
     suite: 'tests', files: ['tests/a.test.js', 'tests/b.test.js'], fallback: null, selected: 2,
-    changedTests: [], untracedTests: [], driftTests: ['tests/b.test.js'], driftSelected: 1, superseded: false,
+    changedTests: [], untracedTests: [], driftTests: ['tests/b.test.js'], driftSelected: 1, superseded: false, supersedingPaths: [],
   });
+});
+
+test('supersedingPaths names unmatched and suite-selecting files only (#4321)', () => {
+  const files = ['docs/a.md', 'lib/k.js', 'shared/k.js', 'src/x.js', 'unknown/path.txt'];
+  const r = isel(files, Object.fromEntries(files.map((f) => [f, 'M'])));
+  assert.strictEqual(r.impact.superseded, true);
+  assert.deepStrictEqual(r.impact.supersedingPaths, ['lib/k.js', 'shared/k.js', 'unknown/path.txt']);
+});
+
+test('a rule selecting only another suite supersedes nothing (#4321)', () => {
+  const r = isel(['docs/a.md'], { 'docs/a.md': 'M' });
+  assert.strictEqual(r.impact.superseded, false);
+  assert.deepStrictEqual(r.impact.supersedingPaths, []);
 });
 
 test('an empty subset drops the impact suite', () => {
@@ -284,7 +299,7 @@ test('no stamp + fallbackBase anchors on the merge-base; no stamp + no fallbackB
   assert.deepStrictEqual(r.impact, { ...FULL_RUN, fallback: 'map-missing' });
 });
 
-test('no impact block is unchanged: no impact key, fallbackBase ignored', () => {
+test('no impact block: no impact key in any result', () => {
   const MB = 'fedcba9876543210fedcba9876543210fedcba98';
   assert.deepStrictEqual(
     selectScope({ decl: null, files: ['a.js'], stamp: STAMP, statuses: { 'a.js': 'M' }, impact: CTX, fallbackBase: MB }),
@@ -294,6 +309,102 @@ test('no impact block is unchanged: no impact key, fallbackBase ignored', () => 
   for (const files of [[], ['apps/api/src/a.ts'], ['docs/x.md'], ['unknown/path.txt']]) {
     assert.strictEqual('impact' in selectScope({ decl: EXAMPLE, files, stamp: STAMP }), false, files.join());
   }
-  const r = selectScope({ decl: EXAMPLE, files: ['docs/x.md'], stamp: null, fallbackBase: MB });
-  assert.deepStrictEqual(r, { mode: 'full', suites: '*', static: true, base: null, unmatched: [], matched: [] });
+});
+
+test('no stamp + fallbackBase anchors a declaration with a ci block on the merge-base (#6102 AC1-2)', () => {
+  const MB = 'fedcba9876543210fedcba9876543210fedcba98';
+  const sel = (files) => selectScope({ decl: EXAMPLE_WITH_CI, files, stamp: null, fallbackBase: MB });
+  let r = sel(['docs/x.md']);
+  assert.strictEqual(r.mode, 'none');
+  assert.strictEqual(r.base, MB);
+  r = sel(['apps/api/src/a.ts']);
+  assert.strictEqual(r.mode, 'scoped');
+  assert.deepStrictEqual(r.suites, ['api']);
+  assert.strictEqual(r.base, MB);
+  r = sel(['unknown/path.txt']);
+  assert.strictEqual(r.mode, 'full');
+  assert.strictEqual(r.suites, '*');
+});
+
+test('no stamp: a declaration with neither impact nor ci, decl null, or no fallbackBase stays full (#6102 AC1, AC3)', () => {
+  const MB = 'fedcba9876543210fedcba9876543210fedcba98';
+  let r = selectScope({ decl: EXAMPLE, files: ['docs/x.md'], stamp: null, fallbackBase: MB });
+  assert.strictEqual(r.mode, 'full');
+  assert.strictEqual(r.base, null);
+  assert.strictEqual(selectScope({ decl: null, files: ['a.js'], stamp: null, fallbackBase: MB }).mode, 'full');
+  r = selectScope({ decl: EXAMPLE_WITH_CI, files: ['docs/x.md'], stamp: null, fallbackBase: null });
+  assert.strictEqual(r.mode, 'full');
+  assert.strictEqual(r.base, null);
+});
+
+// ── inertDirtyPaths (#5234) ───────────────────────────────────────────────
+const INERT = decl({
+  checks: { tests: 'npm test' },
+  generated: ['gen/**'],
+  rules: [
+    { match: 'src/**', suites: '*', static: true },
+    { match: 'docs/plans/*-ledger.md', suites: [], static: false },
+    { match: 'lintme/**', suites: [], static: true },
+    { match: 'docs/**', suites: [], static: false },
+  ],
+});
+
+test('AC1.1: a single path whose first matching rule is suites [] static false is inert', () => {
+  assert.deepStrictEqual(inertDirtyPaths(INERT, ['docs/plans/x-ledger.md']), ['docs/plans/x-ledger.md']);
+});
+
+test('AC1.2: a path matching a generated glob is inert', () => {
+  assert.deepStrictEqual(inertDirtyPaths(INERT, ['gen/out.json']), ['gen/out.json']);
+});
+
+test('AC1.3: one inert path and one selecting path is not inert', () => {
+  assert.strictEqual(inertDirtyPaths(INERT, ['docs/plans/x-ledger.md', 'src/a.js']), null);
+});
+
+test('AC1.4: an unmatched path is not inert', () => {
+  assert.strictEqual(inertDirtyPaths(INERT, ['other/x.js']), null);
+});
+
+test('AC1.5: the first matching rule decides, not a later inert one', () => {
+  const d = decl({
+    checks: { tests: 'npm test' },
+    rules: [
+      { match: 'docs/special.md', suites: '*', static: false },
+      { match: 'docs/**', suites: [], static: false },
+    ],
+  });
+  assert.strictEqual(inertDirtyPaths(d, ['docs/special.md']), null);
+});
+
+test('AC1.6: a static true rule with suites [] is not inert', () => {
+  assert.strictEqual(inertDirtyPaths(INERT, ['lintme/a.js']), null);
+});
+
+test('AC1.7: an empty or null list is not inert', () => {
+  assert.strictEqual(inertDirtyPaths(INERT, []), null);
+  assert.strictEqual(inertDirtyPaths(INERT, null), null);
+});
+
+test('a parsed impact rule (suites null, impact true) is not inert', () => {
+  const d = decl({
+    checks: { tests: 'npm test' },
+    impact: { suite: 'tests', command: 'node --test {files}', tests: ['tests/**/*.test.js'] },
+    rules: [{ match: 'lib/**', impact: true, static: false }],
+  });
+  assert.strictEqual(d.rules[0].suites, null);
+  assert.strictEqual(d.rules[0].impact, true);
+  assert.strictEqual(inertDirtyPaths(d, ['lib/a.js']), null);
+});
+
+test('generated glob wins over a selecting rule', () => {
+  const d = decl({
+    checks: { tests: 'npm test' },
+    generated: ['gen/**'],
+    rules: [{ match: '**', suites: '*', static: true }],
+  });
+  assert.deepStrictEqual(inertDirtyPaths(d, ['gen/x.js']), ['gen/x.js']);
+});
+
+test('result is sorted and de-duplicated', () => {
+  assert.deepStrictEqual(inertDirtyPaths(INERT, ['docs/b.md', 'docs/a.md', 'docs/b.md']), ['docs/a.md', 'docs/b.md']);
 });

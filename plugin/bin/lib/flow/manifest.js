@@ -2,9 +2,9 @@
 // (schema documented in skills/flow/multispec-run-dir-layout.md)
 // and couples every status write to the `## Flow: Running ...` progress
 // banner (#690). This is a targeted parser/serializer for that one fixed
-// shape — `{ multispec: { parent, baseSha?, specs: [{id, status, subdir,
-// startedAt?}] } }` (`baseSha` is legacy: parsed and preserved on rewrite,
-// never written by manifestInit — nothing reads it) — not a general YAML
+// shape — `{ multispec: { parent, specs: [{id, status, subdir,
+// startedAt?}] } }` (a legacy `baseSha:` line still parses but is not
+// written back, so the next rewrite drops it) — not a general YAML
 // implementation: the plugin ships zero runtime npm deps (see
 // bin/lib/policy.js's own header for the same constraint), and manifest.yml
 // is entirely machine-owned (no hand-editing convention to preserve, unlike
@@ -84,7 +84,6 @@ function parseManifestYaml(text) {
 function serializeManifestYaml(manifest) {
   const m = manifest.multispec;
   const lines = ['multispec:', `  parent: ${m.parent}`];
-  if (m.baseSha) lines.push(`  baseSha: ${m.baseSha}`);
   lines.push('  specs:');
   for (const spec of m.specs) {
     lines.push(`    - id: ${spec.id}`);

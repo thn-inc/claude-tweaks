@@ -2,12 +2,13 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { checkStagedInventory, parseStagePaths } = require('../plugin/bin/lib/hooks/staged-inventory');
 
 function tmpRunDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-staged-inventory-'));
+  return scratchDir('ct-staged-inventory-');
 }
 
 function writeDecisions(runDir, text) {

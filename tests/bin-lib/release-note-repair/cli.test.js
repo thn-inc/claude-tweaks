@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { run } = require('../../../plugin/bin/release-note-repair');
@@ -11,7 +12,7 @@ const { writeRecord, readRecord } = require('../../../plugin/bin/lib/issues/loca
 const F = require('./fixtures');
 
 function fixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rn-cli-'));
+  const root = scratchDir('rn-cli-');
   const main = path.join(root, 'main');
   const runDir = path.join(main, '.claude-tweaks', 'pipelines', '2026-09-29T120000-tidy-standalone');
   const shadow = path.join(main, '.claude', 'worktrees', 'wt', '.claude-tweaks', 'pipelines', '2026-09-29T120000-tidy-standalone');

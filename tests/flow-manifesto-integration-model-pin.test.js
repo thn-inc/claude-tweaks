@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { run } = require('../plugin/bin/set-config');
@@ -40,7 +41,7 @@ function writeMechanismParagraph(manifesto) {
 }
 
 function fixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'impin-'));
+  const root = scratchDir('impin-');
   const main = path.join(root, 'main');
   const runDir = path.join(main, '.claude-tweaks', 'pipelines', '2026-10-19T090000-spec-3350');
   fs.mkdirSync(runDir, { recursive: true });
@@ -135,6 +136,14 @@ test('manifesto.md Write mechanism: a degraded resolve line is handled like the 
   assert.match(para, /resolve-policy: degraded — integration-model:/, 'Write mechanism must name the degrade line the resolve prints on stderr');
   assert.match(para, /never becomes the run pin/, 'Write mechanism must say a degraded detection never becomes the run pin');
   assert.match(para, /`merge-verification` entry carries a `degraded` field[^.]*`wait`/, 'Write mechanism must write a degraded-derived merge-verification lever as wait');
+});
+
+test('AC1.1: the Write mechanism writes spec: through a single-key set-config call', () => {
+  const para = writeMechanismParagraph(readText(MANIFESTO));
+  assert.match(para, /--key spec --value \{lowest record number\}/, 'Write mechanism must write spec: via a single-key set-config call');
+  const setMatch = /--set "([^"]*)"/.exec(para);
+  assert.ok(setMatch, 'Write mechanism paragraph has no --set "..." argument');
+  assert.ok(!/(^|,)spec=/.test(setMatch[1]), 'the 14-pair --set batch must not carry a spec= pair');
 });
 
 test('integration-model.md Run-scoped stability: a degraded detection is never pinned (#4578 Q10, AC20.2)', () => {

@@ -90,6 +90,20 @@ it literally into the next call; never carry it in a shell variable across calls
    state — abort here (do not fall through to a `git -C "undefined"` command) and treat it the same
    as the Park branch below: nothing has been merged yet, so `pending-review` is the correct outcome.
 
+   2a. **Re-check the merge-check verdict (#5833)** — a needs-human verdict logged after the console
+   resolved, or, when the console stored `merge`, one never logged, must not reach `close-run`. Run, as its own call, with `{run-dir}`
+   pasted as in step 2:
+
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/bin/console-resolve.js" --run "{run-dir}" --recheck-merge
+   ```
+
+   Proceed only on exit 0 printing `recheck-merge merge`. On `recheck-merge leave-open` (the CLI has
+   already logged the verdict), go to the **Park** branch below with no re-stamp and the reason
+   `merge-check verdict withheld the merge`. On any other exit, go to the **Park** branch with no
+   re-stamp and the reason `merge re-check failed (exit {code})`. Nothing has been closed or merged,
+   so `pending-review` is the outcome.
+
 3. **Pre-merge checks** — `_shared/local-merge-sequence.md` Step 1, from the main checkout.
 
    **Bindings:** `{base-branch}` = step 1's value, `{branch}` = `{feature-branch}`, `{issues}` = `{issue}`, `{tag}` = `auto-finish`, `{run-dir}` = `$RUN_DIR`'s value, `{worktree-path}` = step 2's value.
@@ -140,7 +154,9 @@ it literally into the next call; never carry it in a shell variable across calls
 7. **Push** — `_shared/local-merge-sequence.md` Step 4, from inside the worktree step 2 read.
 
    After a successful push, run `_shared/pr-first-merge-post-merge.md` Step 4.0b against the pushed
-   merge commit (no PR, so `$MERGING_PR` is empty), logging to `$RUN_DIR/decisions.md`.
+   merge commit (no PR, so `$MERGING_PR` is empty), logging to `$RUN_DIR/decisions.md`. Then run
+   `node "${CLAUDE_PLUGIN_ROOT}/bin/recheck-followups.js" execute --run "$RUN_DIR" --local-merged`, which
+   executes the run's approved follow-up re-checks (`wrap-up/followup-recheck.md`) and logs its own lines.
 
    **On push failure** (non-zero exit — a rejected fast-forward, network failure, or permission
    error): the merge already landed locally in the main checkout, but nothing reached `origin` — do
@@ -166,12 +182,12 @@ it literally into the next call; never carry it in a shell variable across calls
    its step 4 (worktree removal) exactly as though `finishing-a-development-branch` itself had
    reported "Merged, PR created, or discarded."
 
-**Park branch (an unmergeable state — abort, composer failure, conflict, failed merged-result verification, or push failure):**
+**Park branch (an unmergeable state — withheld merge-check verdict, abort, composer failure, conflict, failed merged-result verification, or push failure):**
 
 **If the park was reached after step 4** (a merge failure from step 5, a red verification from step 6,
 or a push failure from step 7), re-protect the run first — `_shared/local-merge-sequence.md` Step 5,
 with the `{worktree-path}` step 2 read. When it does not print `worktree recorded`, its output line
-is not ignored — carry it into the log call's `{text-file}` below. A park reached from step 2 or
+is not ignored — carry it into the log call's `{text-file}` below. A park reached from step 2, 2a or
 step 3 runs no re-stamp: `close-run` has not fired, so nothing was closed.
 
 Then log the outcome:

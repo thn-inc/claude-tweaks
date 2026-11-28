@@ -3,12 +3,14 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const { execFileSync } = require('child_process');
 
 const {
-  changedFiles, resolveBase, usableAnchor, mergeNarrowing, ChangedFilesError,
+  changedFiles, resolveBase, usableAnchor, scopedPassBase, mergeNarrowing, ChangedFilesError,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'changed-files.js'));
+const { initRepo } = require('../../helpers/git-fixtures');
 
 const FULL = '0123456789abcdef0123456789abcdef01234567';
 const MB = 'fedcba9876543210fedcba9876543210fedcba98';
@@ -228,12 +230,12 @@ test('resolveBase verifies an explicit base as a commit and never consults the s
   assert.throws(() => resolveBase({ stamp: null, base: 'nope', execImpl: bad }), ChangedFilesError);
 });
 
-test('resolveBase uses stamp.sha as the anchor for a legacy stamp that carries no fullSha, canonicalized via rev-parse (finding 11)', () => {
+test('resolveBase uses stamp.sha as the anchor for a stamp that carries no fullSha, canonicalized via rev-parse (finding 11)', () => {
   const exec = fakeExec({
     [`merge-base --is-ancestor --end-of-options ${FULL} HEAD`]: '',
     [`rev-parse --verify --end-of-options ${FULL}^{commit}`]: `${CANON}\n`,
   });
-  assert.strictEqual(resolveBase({ stamp: { sha: FULL, scope: 'full', legacy: true }, integrationBranch: 'main', execImpl: exec }), CANON);
+  assert.strictEqual(resolveBase({ stamp: { sha: FULL, scope: 'full' }, integrationBranch: 'main', execImpl: exec }), CANON);
 });
 
 // #1922 re-review NEW-1: usableAnchor is the exact "is this anchor still
@@ -255,16 +257,54 @@ test('usableAnchor returns null when the anchor is not an ancestor of HEAD (a re
   assert.strictEqual(usableAnchor({ stamp: { sha: 'x', fullSha: FULL }, execImpl: exec }), null);
 });
 
+// #5075: scopedPassBase names a clean, passing, non-full stamp's sha as the base for the
+// bookkeeping-only check; every other stamp shape yields null so the fullSha delta applies.
+const PASS = `merge-base --is-ancestor --end-of-options ${MB} HEAD`;
+const PASS_CANON = `rev-parse --verify --end-of-options ${MB}^{commit}`;
+const scopedStamp = (over = {}) => ({ sha: MB, fullSha: FULL, scope: 'scoped', dirty: false, ...over });
+
+test('scopedPassBase returns the canonical sha of a clean scoped stamp that is an ancestor of HEAD', () => {
+  const exec = fakeExec({ [PASS]: '', [PASS_CANON]: `${CANON}\n` });
+  assert.strictEqual(scopedPassBase({ stamp: scopedStamp(), anchor: FULL, execImpl: exec }), CANON);
+});
+
+test('scopedPassBase anchors on a none or static-only stamp too, so bookkeeping-only stamps chain', () => {
+  const exec = fakeExec({ [PASS]: '', [PASS_CANON]: `${CANON}\n` });
+  for (const scope of ['none', 'static-only']) {
+    assert.strictEqual(scopedPassBase({ stamp: scopedStamp({ scope }), anchor: FULL, execImpl: exec }), CANON, scope);
+  }
+});
+
+test('scopedPassBase returns null for a null stamp, a null anchor, a full stamp, a dirty stamp, or sha === anchor', () => {
+  const exec = fakeExec({
+    [PASS]: '', [PASS_CANON]: `${CANON}\n`,
+    [`merge-base --is-ancestor --end-of-options ${FULL} HEAD`]: '', [`rev-parse --verify --end-of-options ${FULL}^{commit}`]: `${CANON}\n`,
+  });
+  assert.strictEqual(scopedPassBase({ stamp: null, anchor: FULL, execImpl: exec }), null);
+  assert.strictEqual(scopedPassBase({ stamp: scopedStamp(), anchor: null, execImpl: exec }), null);
+  assert.strictEqual(scopedPassBase({ stamp: scopedStamp({ scope: 'full' }), anchor: FULL, execImpl: exec }), null);
+  assert.strictEqual(scopedPassBase({ stamp: scopedStamp({ dirty: true }), anchor: FULL, execImpl: exec }), null);
+  assert.strictEqual(scopedPassBase({ stamp: scopedStamp({ dirty: undefined }), anchor: FULL, execImpl: exec }), null);
+  assert.strictEqual(scopedPassBase({ stamp: scopedStamp({ sha: FULL }), anchor: FULL, execImpl: exec }), null);
+});
+
+test('scopedPassBase returns null for a non-string sha and for a sha that is not an ancestor of HEAD', () => {
+  const probesPass = fakeExec({ 'merge-base --is-ancestor --end-of-options 42 HEAD': '', 'rev-parse --verify --end-of-options 42^{commit}': `${CANON}\n` });
+  assert.strictEqual(scopedPassBase({ stamp: scopedStamp({ sha: 42 }), anchor: FULL, execImpl: probesPass }), null);
+  const exec = fakeExec({ [PASS]: new Error('exit 1'), [PASS_CANON]: `${CANON}\n` });
+  assert.strictEqual(scopedPassBase({ stamp: scopedStamp(), anchor: FULL, execImpl: exec }), null);
+});
+
 test('usableAnchor returns null when there is no stamp at all', () => {
   assert.strictEqual(usableAnchor({ stamp: null, execImpl: fakeExec({}) }), null);
 });
 
-test('usableAnchor falls back to stamp.sha for a legacy stamp with no fullSha', () => {
+test('usableAnchor falls back to stamp.sha for a stamp with no fullSha', () => {
   const exec = fakeExec({
     [`merge-base --is-ancestor --end-of-options ${FULL} HEAD`]: '',
     [`rev-parse --verify --end-of-options ${FULL}^{commit}`]: `${CANON}\n`,
   });
-  assert.strictEqual(usableAnchor({ stamp: { sha: FULL, scope: 'full', legacy: true }, execImpl: exec }), CANON);
+  assert.strictEqual(usableAnchor({ stamp: { sha: FULL, scope: 'full' }, execImpl: exec }), CANON);
 });
 
 // #1922 review finding (medium): a dash-prefixed anchor from the JSON stamp
@@ -286,11 +326,9 @@ test('usableAnchor guards a dash-prefixed anchor with --end-of-options so it can
 // tip at cut time. preBranchFiles (each [rel, content]) commit to trunk before
 // the cut, so both branches start from them.
 function mergeRepo(preBranchFiles = []) {
-  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'merge-narrowing-')));
+  const repo = fs.realpathSync(scratchDir('merge-narrowing-'));
   const git = (...a) => execFileSync('git', a, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-  git('init', '-q', '-b', 'trunk');
-  git('config', 'user.email', 'verify-test@example.invalid');
-  git('config', 'user.name', 'verify test');
+  initRepo(repo, { name: 'verify test', email: 'verify-test@example.invalid', branch: 'trunk', cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   const write = (rel, content) => {
     fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
     fs.writeFileSync(path.join(repo, rel), content);
@@ -348,10 +386,11 @@ test('mergeNarrowing: a merged-in path the branch then edited stays selected (#3
 test('mergeNarrowing: an uncommitted edit to a merge-identical path stays selected (#3072 Review Focus)', () => {
   const r = mergeRepo();
   mergeTrunkWith(r, [['ui/a.js', 'a'], ['ui/b.js', 'b']]);
+  r.commit('src/own.py', 'own');
   r.write('ui/b.js', 'b — uncommitted edit');
   const files = changedSince(r, r.anchor);
   const n = mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: r.exec });
-  assert.deepStrictEqual(n.files, ['ui/b.js']);
+  assert.deepStrictEqual(n.files, ['src/own.py', 'ui/b.js']);
   assert.deepStrictEqual(n.excluded, ['ui/a.js']);
 });
 
@@ -372,9 +411,45 @@ test('mergeNarrowing: an unresolvable integration branch degrades to null, never
   assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'no-such-branch', files, execImpl: r.exec }), null);
 });
 
+// #5773: the working-tree read changedFiles makes is handed to mergeNarrowing, which then asks git no status question.
+test('changedFiles hands its raw working-tree read to a capture object, and returns the same shape with or without one (#5773)', () => {
+  const r = mergeRepo();
+  r.commit('src/own.py', 'own');
+  r.write('src/own.py', 'edited');
+  const capture = {};
+  const captured = changedFiles({ base: r.anchor, execImpl: r.exec, capture });
+  assert.strictEqual(capture.status, ' M src/own.py\0');
+  assert.deepStrictEqual(captured, changedFiles({ base: r.anchor, execImpl: r.exec }));
+  assert.deepStrictEqual(Object.keys(captured), ['base', 'files']);
+});
+
+test('mergeNarrowing with a handed status asks git no status question and decides from that status (#5773)', () => {
+  const r = mergeRepo();
+  mergeTrunkWith(r, [['ui/a.js', 'a'], ['ui/b.js', 'b']]);
+  r.commit('src/own.py', 'own');
+  r.write('ui/b.js', 'b — uncommitted edit');
+  const files = changedSince(r, r.anchor);
+  const capture = {};
+  changedFiles({ base: r.anchor, execImpl: r.exec, capture });
+  const statusCalls = [];
+  const spy = (cmd, args, opts) => { if (args.includes('status')) statusCalls.push(args); return r.exec(cmd, args, opts); };
+  const handed = mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: spy, status: capture.status });
+  assert.deepStrictEqual(statusCalls, [], 'no second working-tree read');
+  assert.deepStrictEqual(handed.files, ['src/own.py', 'ui/b.js']);
+  // The handed value is what decides: an empty one reads a clean tree even though the live tree is dirty.
+  const cleanClaim = mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: spy, status: '' });
+  assert.deepStrictEqual(cleanClaim.files, ['src/own.py']);
+  assert.deepStrictEqual(statusCalls, []);
+  // Without one, git is asked once and sees the dirty tree.
+  const asked = mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: spy });
+  assert.strictEqual(statusCalls.length, 1);
+  assert.deepStrictEqual(asked.files, handed.files);
+});
+
 test('mergeNarrowing: a failing working-tree status read degrades to null, never a throw (#3072 review)', () => {
   const r = mergeRepo();
   mergeTrunkWith(r, [['ui/a.js', 'a']]);
+  r.commit('src/own.py', 'own');
   const files = changedSince(r, r.anchor);
   const statusFails = (cmd, args, opts) => {
     if (args[1] === 'status') { const e = new Error('index.lock: File exists'); e.status = 128; throw e; }
@@ -386,6 +461,7 @@ test('mergeNarrowing: a failing working-tree status read degrades to null, never
 test('mergeNarrowing: a failing anchor merge-base or pre-anchor diff degrades to null, never a throw (#3072)', () => {
   const r = mergeRepo();
   mergeTrunkWith(r, [['ui/a.js', 'a']]);
+  r.commit('src/own.py', 'own');
   const files = changedSince(r, r.anchor);
   const fail = () => { const e = new Error('fatal: bad object'); e.status = 128; throw e; };
   const mergeBaseFails = (cmd, args, opts) => (args[0] === 'merge-base' && !args.includes('--is-ancestor') ? fail() : r.exec(cmd, args, opts));
@@ -456,10 +532,111 @@ test('mergeNarrowing: a conflict resolved in the integration branch\'s favour ke
   r.exec('git', ['checkout', '--theirs', 'src/x.py'], { encoding: 'utf8' });
   r.git('add', 'src/x.py');
   r.git('commit', '-q', '--no-edit');
+  r.commit('src/own.py', 'own');
   const files = changedSince(r, anchor);
   assert.ok(files.includes('src/x.py'), `expected src/x.py among changed files, got ${JSON.stringify(files)}`);
   const n = mergeNarrowing({ anchor, integrationBranch: 'trunk', files, execImpl: r.exec });
   assert.ok(n, 'expected mergeNarrowing to engage (a real merge of trunk happened)');
   assert.ok(n.files.includes('src/x.py'), `src/x.py must stay selected even though HEAD now matches trunk; files=${JSON.stringify(n.files)}`);
   assert.ok(!n.excluded.includes('src/x.py'), `src/x.py must not be excluded; excluded=${JSON.stringify(n.excluded)}`);
+});
+
+// #4638: the anchor is on trunk's line; a side branch merges into trunk with a
+// real merge commit; feat fast-forwards onto trunk, so HEAD is trunk's tip.
+function tipRepo() {
+  const r = mergeRepo();
+  r.git('checkout', '-q', 'trunk');
+  r.git('checkout', '-q', '-b', 'side');
+  r.commit('src/merged.js', 'merged');
+  r.git('checkout', '-q', 'trunk');
+  r.git('merge', '-q', '--no-ff', '--no-edit', 'side');
+  r.git('checkout', '-q', 'feat');
+  r.git('merge', '-q', '--ff-only', 'trunk');
+  return r;
+}
+
+test('AC1.1: at the integration tip narrowing declines, so the changed paths stay selected (#4638)', () => {
+  const r = tipRepo();
+  const files = changedSince(r, r.anchor);
+  assert.deepStrictEqual(files, ['src/merged.js']);
+  assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: r.exec }), null);
+});
+
+test('AC1.1: at the tip with a dirty tree narrowing still declines (#4638)', () => {
+  const r = tipRepo();
+  r.write('README.md', 'dirty');
+  const files = changedSince(r, r.anchor);
+  assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: r.exec }), null);
+});
+
+test('AC1.1: behind the tip on the integration line narrowing declines (#4638)', () => {
+  const r = tipRepo();
+  r.git('checkout', '-q', 'trunk');
+  r.commit('src/later.js', 'later');
+  r.git('checkout', '-q', 'feat');
+  const files = changedSince(r, r.anchor);
+  assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: r.exec }), null);
+});
+
+test('a failing ahead-count read degrades to null (#4638)', () => {
+  const r = mergeRepo();
+  mergeTrunkWith(r, [['ui/a.js', 'a']]);
+  r.commit('src/own.py', 'own');
+  const files = changedSince(r, r.anchor);
+  const countFails = (cmd, args, opts) => {
+    if (args[0] === 'rev-list' && args.includes('--count')) { const e = new Error('fatal: bad object'); e.status = 128; throw e; }
+    return r.exec(cmd, args, opts);
+  };
+  assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: countFails }), null);
+  assert.ok(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: r.exec }), 'control: the same repo narrows when git succeeds');
+});
+
+test('an unparseable ahead-count or a failing ref..HEAD diff read degrades to null (#4638)', () => {
+  const r = mergeRepo();
+  mergeTrunkWith(r, [['ui/a.js', 'a']]);
+  r.commit('src/own.py', 'own');
+  const files = changedSince(r, r.anchor);
+  const countIs = (out) => (cmd, args, opts) => (args[0] === 'rev-list' && args.includes('--count') ? out : r.exec(cmd, args, opts));
+  const refDiffFails = (cmd, args, opts) => {
+    if (args[0] === 'diff' && args[args.length - 1] === 'HEAD') { const e = new Error('fatal: bad object'); e.status = 128; throw e; }
+    return r.exec(cmd, args, opts);
+  };
+  assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: countIs('') }), null);
+  assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: countIs('not-a-number') }), null);
+  assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: refDiffFails }), null);
+  assert.ok(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: r.exec }), 'control: the same repo narrows when git succeeds');
+});
+
+// #4638 round 4, Reading B: the tree defines the tip. mergeTrunkWith alone
+// leaves feat 1 commit ahead of trunk with a tree identical to trunk's.
+test('round-4 Reading B: a no-own-commit --no-ff merge of the ref declines even with a dirty mapped path (#4638)', () => {
+  const r = mergeRepo();
+  mergeTrunkWith(r, [['ui/a.js', 'a']]);
+  assert.strictEqual(r.git('rev-list', '--count', 'trunk..HEAD'), '1', 'fixture: exactly the merge commit is ahead');
+  r.write('src/dirty.js', 'dirty');
+  const files = changedSince(r, r.anchor);
+  assert.deepStrictEqual(files, ['src/dirty.js', 'ui/a.js']);
+  assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: r.exec }), null);
+  r.commit('src/own.py', 'own');
+  assert.ok(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files: changedSince(r, r.anchor), execImpl: r.exec }), 'control: one own commit makes the tree differ, so narrowing engages');
+});
+
+test('resolveBase uses a passed head instead of asking (#5773)', () => {
+  const exec = fakeExec({
+    [`merge-base --is-ancestor --end-of-options ${FULL} HEAD`]: '',
+    [`rev-parse --verify --end-of-options ${FULL}^{commit}`]: `${FULL}\n`,
+    'rev-parse --verify --quiet refs/remotes/origin/main': 'abc\n',
+    'merge-base --end-of-options origin/main HEAD': `${MB}\n`,
+  });
+  const result = resolveBase({
+    stamp: { sha: 'x', fullSha: FULL }, integrationBranch: 'main', requireNonDegenerate: true, head: FULL, execImpl: exec,
+  });
+  assert.strictEqual(result, MB, 'the passed head equals the anchor, so the degenerate skip still applies');
+  assert.ok(!exec.calls.some((c) => c.join(' ') === 'git rev-parse --verify HEAD'), 'no rev-parse --verify HEAD call');
+});
+
+test('resolveBase uses a passed anchor instead of re-deriving it (#5773)', () => {
+  const exec = fakeExec({});
+  assert.strictEqual(resolveBase({ stamp: { sha: 'x', fullSha: FULL }, anchor: 'abc', execImpl: exec }), 'abc');
+  assert.deepStrictEqual(exec.calls, [], 'no git call, in particular no merge-base --is-ancestor');
 });

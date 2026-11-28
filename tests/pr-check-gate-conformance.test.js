@@ -6,7 +6,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
-const { FAILING_CONCLUSIONS, classifyRollup } = require('../plugin/bin/lib/pr-checks/classify');
+const { FAILING_CONCLUSIONS, HELD_CONCLUSIONS, HEAD_RUN_FIELDS, classifyRollup } = require('../plugin/bin/lib/pr-checks/classify');
 const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
@@ -79,6 +79,43 @@ test('FAILING_CONCLUSIONS equals the merge gate prose list (code twin)', () => {
   const tail = line.slice(line.indexOf('`conclusion` in') + '`conclusion` in'.length);
   const prose = [...tail.matchAll(/`([A-Z_]+)`/g)].map((m) => m[1]);
   assert.deepEqual(prose, [...FAILING_CONCLUSIONS]);
+});
+
+const heldLine = (text) => text.split('\n').find((l) => l.startsWith('- A check whose newest entry'));
+const heldTokens = (line) => {
+  const from = line.indexOf('`conclusion` in') + '`conclusion` in'.length;
+  return [...line.slice(from, line.indexOf('→')).matchAll(/`([A-Z_]+)`/g)].map((m) => m[1]);
+};
+
+test('AC2.1: HELD_CONCLUSIONS equals the merge gate held-bullet prose list (code twin)', () => {
+  const line = heldLine(MERGE);
+  assert.ok(line, 'pr-first-merge.md held bullet found');
+  assert.deepEqual(heldTokens(line), [...HELD_CONCLUSIONS]);
+  // go-red control: a prose list missing STALE no longer matches
+  assert.notDeepEqual(heldTokens(line.replace('`STALE`', '')), [...HELD_CONCLUSIONS]);
+});
+
+test('AC2.1: FAILING_CONCLUSIONS and HELD_CONCLUSIONS are disjoint', () => {
+  assert.deepEqual(FAILING_CONCLUSIONS.filter((c) => HELD_CONCLUSIONS.includes(c)), []);
+});
+
+test('the Step 2.5 head-run read requests HEAD_RUN_FIELDS', () => {
+  const line = MERGE.split('\n').find((l) => l.startsWith('gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json'));
+  assert.ok(line, 'Step 2.5 head-run read found');
+  assert.ok(line.endsWith(`--json ${HEAD_RUN_FIELDS}`), 'Step 2.5 read ends with HEAD_RUN_FIELDS');
+  const exec = read('plugin/skills/release/execute.md');
+  assert.ok(exec.split('\n').some((l) => l.includes(`--limit 100 --json ${HEAD_RUN_FIELDS}`)), 'release/execute.md carries the same field list');
+});
+
+test('#3468: the release PR read feeds the settle window: createdAt and the committer-date read', () => {
+  const exec = read('plugin/skills/release/execute.md');
+  const view = exec.split('\n').find((l) => l.startsWith('gh pr view {releasePr.value.number} --repo {owner}/{repo} --json ') && l.includes('statusCheckRollup'));
+  assert.ok(view, 'release PR view read found');
+  assert.ok(view.split('--json ')[1].split(',').includes('createdAt'), 'release PR view requests createdAt ({pr-created-at})');
+  const commit = 'gh api repos/{owner}/{repo}/commits/{headRefOid} --jq .commit.committer.date';
+  assert.ok(MERGE.split('\n').includes(commit), 'Step 2.5 carries the committer-date read');
+  assert.ok(exec.split('\n').includes(commit), 'release/execute.md carries the same committer-date read ({head-committed-at})');
+  assert.ok(exec.includes('{head-committed-at}') && exec.includes('{pr-created-at}'), 'release names both settle anchors');
 });
 
 const PR_CHECKS = read('plugin/bin/pr-checks.js');
@@ -174,4 +211,53 @@ test('#3770 go-red control: removing the entry with `conclusion` in anchor fails
   const mutated = MERGE.replace('entry with `conclusion` in', '');
   assert.notEqual(mutated, MERGE, 'the entry with `conclusion` in anchor is present to remove');
   assert.throws(() => assertStatusContextNormalization(mutated), /entry with `conclusion` in/);
+});
+
+// #5153: Step 2.5's ready-run bullet routes every `state` bin/ready-run.js can print. Both
+// directions: a state the CLI gained with no prose routing, and a prose state the CLI never emits.
+const { STATES: READY_RUN_STATES } = require('../plugin/bin/lib/pr-checks/ready-run');
+const READY_RUN_BULLET_START = "- The ready-run read's `state`";
+
+function readyRunBulletStates(text) {
+  const start = text.indexOf(READY_RUN_BULLET_START);
+  assert.notEqual(start, -1, 'pr-first-merge.md Step 2.5 ready-run bullet not found — the twin pin would pass vacuously');
+  const end = text.indexOf('\n- ', start + 1);
+  assert.notEqual(end, -1, 'the ready-run bullet must be followed by another bullet');
+  const bullet = text.slice(start, end).replace(/\s+/g, ' ');
+  const states = [];
+  for (const m of bullet.matchAll(/((?:`[a-z-]+`, )*`[a-z-]+`) →/g)) {
+    for (const [, state] of m[1].matchAll(/`([a-z-]+)`/g)) states.push(state);
+  }
+  assert.ok(states.length > 0, 'the ready-run bullet routed no state words — the parser found nothing');
+  return states;
+}
+
+function assertReadyRunStatesTwin(text) {
+  const parsed = readyRunBulletStates(text);
+  assert.equal(new Set(parsed).size, parsed.length, 'the ready-run bullet routes each state once');
+  assert.deepEqual([...new Set(parsed)].sort(), [...READY_RUN_STATES].sort(), 'the ready-run bullet\'s state words differ from bin/ready-run.js STATES');
+}
+
+test('the ready-run bullet\'s state words equal bin/ready-run.js STATES (code twin, both directions)', () => {
+  assertReadyRunStatesTwin(MERGE);
+  // Prose drops a state the CLI emits.
+  const dropped = MERGE.replace('`awaiting` →', 'awaiting →');
+  assert.notEqual(dropped, MERGE, 'the awaiting routing is present to drop');
+  assert.throws(() => assertReadyRunStatesTwin(dropped), { message: /differ from bin\/ready-run\.js STATES/ });
+  // Prose routes a state the CLI never emits.
+  const invented = MERGE.replace('`met`, `not-applicable` →', '`met`, `not-applicable`, `stalled` →');
+  assert.notEqual(invented, MERGE, 'the met/not-applicable routing is present to extend');
+  assert.throws(() => assertReadyRunStatesTwin(invented), { message: /differ from bin\/ready-run\.js STATES/ });
+  // A reworded anchor trips the parse-signal guard instead of passing vacuously.
+  const reworded = MERGE.replace(READY_RUN_BULLET_START, "- The ready run's `state`");
+  assert.notEqual(reworded, MERGE);
+  assert.throws(() => assertReadyRunStatesTwin(reworded), { message: /ready-run bullet not found/ });
+});
+
+test('the ready-run bullet names readyRunVerdict and classify.js exports it', () => {
+  const start = MERGE.indexOf(READY_RUN_BULLET_START);
+  assert.notEqual(start, -1, 'ready-run bullet found');
+  const bullet = MERGE.slice(start, MERGE.indexOf('\n- ', start + 1)).replace(/\s+/g, ' ');
+  assert.ok(bullet.includes('`classify.js`\'s `readyRunVerdict`'), 'the bullet names its code twin');
+  assert.equal(typeof require('../plugin/bin/lib/pr-checks/classify').readyRunVerdict, 'function');
 });

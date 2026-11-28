@@ -17,6 +17,7 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
 const { originWithTwoClones } = require('./helpers/git-fixtures');
+const { detectShapes } = require('../tools/guard-refusals/shapes.js');
 
 const ROOT = path.join(__dirname, '..');
 const CHECK = readText(path.join(ROOT, 'plugin', 'skills', 'build', 'adopted-branch-collision-check.md'));
@@ -24,7 +25,7 @@ const PLUGIN_ROOT = path.join(ROOT, 'plugin').split(path.sep).join('/');
 
 // #4028: {branch} and {repo} are plain-call results the agent pastes in (the worktree guard refuses
 // git inside $(...)), so the test substitutes them the same way before it runs the fence.
-const START_ANCHOR = '```bash\nnode "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "{branch}" "{repo}" "{records}"';
+const START_ANCHOR = '```bash\nnode "${CLAUDE_PLUGIN_ROOT}/bin/remote-branch-collision.js" --branch "{branch}" --repo "{repo}" --records "{records}"';
 
 function extractSnippet() {
   const start = CHECK.indexOf(START_ANCHOR);
@@ -36,12 +37,14 @@ function extractSnippet() {
 }
 
 // Pastes the plain-call values in. `repo` defaults to '' — what the fixture's `gh repo view`
-// (no GitHub remote) yields, the fail-open path that skips the PR lookup.
-function fill(snippet, { branch, repo = '' }) {
-  for (const placeholder of ['"{branch}"', '"{repo}"']) {
+// (no GitHub remote) yields, the fail-open path that skips the PR lookup; `records` defaults to ''
+// too (the value the skill tells the agent to paste when the run has no record numbers).
+function fill(snippet, { branch, repo = '', records = '' }) {
+  for (const placeholder of ['"{branch}"', '"{repo}"', '"{records}"']) {
     assert.strictEqual(snippet.split(placeholder).length - 1, 1, `the snippet must carry ${placeholder} exactly once`);
   }
-  return snippet.replace('"{branch}"', JSON.stringify(branch)).replace('"{repo}"', JSON.stringify(repo));
+  return snippet.replace('"{branch}"', JSON.stringify(branch)).replace('"{repo}"', JSON.stringify(repo))
+    .replace('"{records}"', JSON.stringify(records));
 }
 
 const currentBranch = (r) => r.run(r.work, ['branch', '--show-current']).trim();
@@ -84,24 +87,35 @@ test('the collision-check snippet, run verbatim with CLAUDE_PLUGIN_ROOT left to 
   assert.match(foreign.card, /worktree-record-1/, 'foreign must carry the stop card naming the branch');
 });
 
-// A stub plugin root: the real node-eval-file.js and the real formatStopCard, with
-// classifyRemoteBranch pinned to an `unreachable` result — the one state a fixture repo
-// cannot produce on demand (a fetch that fails after ls-remote succeeds).
-// #3887: `prs` pins findPrsForBranch's pull requests; classifyRemoteBranch stays real when `result` is null.
+const PINNED_SHA = 'c19a97b7a4ff1b8e9ff51f5834326eaabbd189b5';
+
+// A stub plugin root: the real bin/remote-branch-collision.js (copied) over the real
+// checkAdoptedBranch composition, with only its two process seams pinned — `gh` answers `prs` and,
+// when `gitFake` is set, `git` answers a pinned unreachable shape (ls-remote returns a sha,
+// merge-base and fetch exit 128 → `fetch-failed`; or ls-remote itself exits 128 →
+// `ls-remote-failed`), the one state a fixture repo cannot produce on demand. With `gitFake` null
+// git is the real one the fixture's cwd runs. The CLI's other ./lib requires are re-exported from
+// the real tree rather than copying their dependency chain.
 // #4058: `comments` / `readOk` pin the issue-comment read findPriorAttemptPr makes for tombstone evidence.
-function stubPluginRoot(t, result, prs = [], comments = [], readOk = true) {
+function stubPluginRoot(t, gitFake, prs = [], comments = [], readOk = true) {
   const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'adopted-branch-stub-root-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   fs.mkdirSync(path.join(dir, 'bin', 'lib', 'worktree'), { recursive: true });
-  fs.copyFileSync(path.join(ROOT, 'plugin', 'bin', 'node-eval-file.js'), path.join(dir, 'bin', 'node-eval-file.js'));
-  // node-eval-file.js requires ./lib/session-tmp; re-export the real one rather than copying its dependency chain.
-  fs.writeFileSync(path.join(dir, 'bin', 'lib', 'session-tmp.js'),
-    `module.exports = require(${JSON.stringify(path.join(ROOT, 'plugin', 'bin', 'lib', 'session-tmp.js').split(path.sep).join('/'))});`);
+  fs.copyFileSync(path.join(ROOT, 'plugin', 'bin', 'remote-branch-collision.js'), path.join(dir, 'bin', 'remote-branch-collision.js'));
+  for (const mod of ['shared-primitives', 'repo-resolve']) {
+    fs.writeFileSync(path.join(dir, 'bin', 'lib', `${mod}.js`),
+      `module.exports = require(${JSON.stringify(path.join(ROOT, 'plugin', 'bin', 'lib', `${mod}.js`).split(path.sep).join('/'))});`);
+  }
   const real = path.join(ROOT, 'plugin', 'bin', 'lib', 'worktree', 'remote-branch-collision.js').split(path.sep).join('/');
+  const pinnedGit = [
+    'const fail = (status) => Object.assign(new Error("pinned git failure"), { status });',
+    `const git = (args) => { if (args[0] === 'ls-remote') { if (${JSON.stringify(gitFake)} === 'ls-remote-failed') throw fail(128); return ${JSON.stringify(PINNED_SHA)} + '\\t' + args[3] + '\\n'; } throw fail(128); };`,
+  ];
   fs.writeFileSync(path.join(dir, 'bin', 'lib', 'worktree', 'remote-branch-collision.js'), [
     `const real = require(${JSON.stringify(real)});`,
-    `module.exports = { ...real, ${result === null ? '' : `classifyRemoteBranch: () => (${JSON.stringify(result)}), `}findPrsForBranch: () => ({ ok: true, prs: ${JSON.stringify(prs)} }), ` +
-      `findPriorAttemptPr: (args) => real.findPriorAttemptPr({ ...args, readComments: () => ({ ok: ${JSON.stringify(readOk)}, comments: ${JSON.stringify(comments)} }) }) };`,
+    ...(gitFake ? pinnedGit : []),
+    `const gh = (args) => { if (args[0] === 'issue') { if (!${JSON.stringify(readOk)}) throw new Error('pinned comment read failure'); return ${JSON.stringify(JSON.stringify({ comments }))}; } return ${JSON.stringify(JSON.stringify(prs))}; };`,
+    `module.exports = { ...real, checkAdoptedBranch: (o) => real.checkAdoptedBranch({ ...o, ${gitFake ? 'git, ' : ''}gh }) };`,
   ].join('\n'));
   return dir.split(path.sep).join('/');
 }
@@ -110,20 +124,21 @@ test('the snippet prints the unknown-relation card for unreachable with remoteSh
   const r = originWithTwoClones('adopted-branch-unreachable-');
   t.after(() => fs.rmSync(r.root, { recursive: true, force: true }));
   r.run(r.work, ['checkout', '-q', '-b', 'worktree-record-2']);
-  const run = (result) => {
+  const run = (gitFake) => {
     const stdout = execFileSync('bash', ['-c', fill(extractSnippet(), { branch: currentBranch(r) })], {
       cwd: r.work, timeout: 60000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...r.env, CLAUDE_PLUGIN_ROOT: stubPluginRoot(t, result) },
+      env: { ...r.env, CLAUDE_PLUGIN_ROOT: stubPluginRoot(t, gitFake) },
     });
     return JSON.parse(stdout.trim());
   };
-  const sha = 'c19a97b7a4ff1b8e9ff51f5834326eaabbd189b5';
-  const known = run({ state: 'unreachable', reason: 'fetch-failed', remoteSha: sha });
+  const known = run('fetch-failed');
   assert.strictEqual(known.state, 'unreachable');
+  assert.strictEqual(known.reason, 'fetch-failed');
+  assert.strictEqual(known.remoteSha, PINNED_SHA);
   assert.match(known.card, /`worktree-record-2` already exists on `origin` at `c19a97b7a`/);
   assert.match(known.card, /could not be determined \(`fetch-failed`\)/);
   assert.doesNotMatch(known.card, /is not in this worktree's history/);
-  const unknown = run({ state: 'unreachable', reason: 'ls-remote-failed', remoteSha: null });
+  const unknown = run('ls-remote-failed');
   assert.strictEqual(unknown.card, undefined, 'unreachable without a remoteSha fails open — no stop card');
 });
 
@@ -167,19 +182,17 @@ function priorAttemptFixture(t, prefix) {
   };
   const snippet = extractSnippet();
   assert.strictEqual(snippet.split('"{records}"').length - 1, 1, 'the snippet must carry the "{records}" placeholder exactly once');
-  const run = (script, comments = [TOMBSTONE_COMMENT], readOk = true) => {
-    const stdout = execFileSync('bash', ['-c', script], {
-      cwd: r.work, timeout: 60000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...r.env, CLAUDE_PLUGIN_ROOT: stubPluginRoot(t, null, [pr], comments, readOk) },
-    });
-    return JSON.parse(stdout.trim());
-  };
-  const withRecords = (records) => fill(snippet, { branch, repo: 'o/r' }).replace('"{records}"', `"${records}"`);
-  return { snippet, run, withRecords, branch };
+  const exec = (script, comments = [TOMBSTONE_COMMENT], readOk = true) => execFileSync('bash', ['-c', script], {
+    cwd: r.work, timeout: 60000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...r.env, CLAUDE_PLUGIN_ROOT: stubPluginRoot(t, null, [pr], comments, readOk) },
+  });
+  const run = (script, comments, readOk) => JSON.parse(exec(script, comments, readOk).trim());
+  const withRecords = (records) => fill(snippet, { branch, repo: 'o/r', records });
+  return { snippet, exec, run, withRecords, branch };
 }
 
 test('AC1.1: the snippet adopts this record\'s own prior attempt instead of carding it (#3887)', (t) => {
-  const { snippet, run, withRecords, branch } = priorAttemptFixture(t, 'adopted-branch-prior-attempt-');
+  const { snippet, exec, run, withRecords, branch } = priorAttemptFixture(t, 'adopted-branch-prior-attempt-');
 
   const own = run(withRecords('1'));
   assert.strictEqual(own.state, 'prior-attempt');
@@ -193,9 +206,41 @@ test('AC1.1: the snippet adopts this record\'s own prior attempt instead of card
   const bundle = run(withRecords('7,1'));
   assert.strictEqual(bundle.state, 'prior-attempt', 'a bundle run matches any of its records');
 
-  const verbatim = run(fill(snippet, { branch }));
-  assert.strictEqual(verbatim.state, 'foreign', 'the unsubstituted placeholder matches no record');
-  assert.match(verbatim.card, /worktree-record-1/);
+  // The unsubstituted {records} placeholder is a malformed call: exit 2, usage on stderr, no stdout.
+  const verbatimScript = snippet.replace('"{branch}"', JSON.stringify(branch)).replace('"{repo}"', '"o/r"');
+  assert.ok(verbatimScript.includes('"{records}"'), 'the verbatim control must leave the {records} placeholder in place');
+  assert.throws(() => exec(verbatimScript), (err) => err.status === 2 && err.stdout === '',
+    'the unsubstituted placeholder must exit 2 with empty stdout');
+});
+
+// #5589 AC5.1: the point of the CLI is a fence the worktree guard accepts.
+// The structural rules shared by the live fence and its go-red control: one plain line, no heredoc,
+// no command substitution. The shape catalogue has no row for the heredoc shape yet (#5590), so this
+// is the assertion that discriminates the old fence.
+function assertPlainOneLineCommand(text) {
+  assert.ok(!text.trim().includes('\n'), 'the fence must be a single line');
+  assert.ok(!text.includes('<<'), 'the fence must carry no heredoc');
+  assert.ok(!text.includes('$('), 'the fence must carry no command substitution');
+}
+
+test('AC5.1: the fence carries no shape the worktree guard is known to refuse', () => {
+  const snippet = extractSnippet();
+  const filled = fill(snippet, { branch: 'worktree-record-1', repo: 'o/r', records: '1,2' });
+  assertPlainOneLineCommand(snippet);
+  assertPlainOneLineCommand(filled);
+  // Regression floor only: detectShapes is non-discriminating for the heredoc shape until #5590 adds that row.
+  assert.deepEqual(detectShapes(snippet), []);
+  assert.deepEqual(detectShapes(filled), []);
+});
+
+test('AC5.1 go-red: the same structural assertion throws on the pre-#5589 heredoc fence', () => {
+  const oldFence = [
+    'node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "{branch}" "{repo}" "{records}" <<NODE_EVAL_EOF',
+    'const x = 1;',
+    'NODE_EVAL_EOF',
+  ].join('\n');
+  assert.throws(() => assertPlainOneLineCommand(oldFence), /the fence must be a single line/);
+  assert.throws(() => assertPlainOneLineCommand(oldFence.split('\n').join(' ')), /the fence must carry no heredoc/);
 });
 
 test('#4058 AC1.2: the snippet stops with the foreign card on a closed PR that has no tombstone evidence', (t) => {

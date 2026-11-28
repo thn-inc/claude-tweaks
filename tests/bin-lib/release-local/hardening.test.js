@@ -71,7 +71,7 @@ function makeReleaseHookDeps({ policyRaw } = {}) {
     readFile: (p) => (p in state.files ? state.files[p] : null),
     writeFile: (p, text) => { state.writes.push(p); state.files[p] = text; },
     listPlanFiles: () => [],
-    runHook: (cmd) => { state.hooks.push(cmd); return 0; },
+    runHook: (cmd) => { state.hooks.push(cmd); return { status: 0, stdout: '', stderr: '' }; },
     today: () => '2026-09-12',
     stdout: (t) => { state.out += t; },
     stderr: (t) => { state.err += t; },

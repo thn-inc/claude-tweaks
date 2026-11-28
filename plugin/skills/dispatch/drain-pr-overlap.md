@@ -53,7 +53,7 @@ strong near-duplicate pair whose shared files appear during the build is invisib
 pull); a drain re-pulls after each group, so it gets the same protection from the neighbour-in-flight
 guard instead. Also run `drainNearDuplicateHits(members, pairs, drainPrs)` (`bin/lib/dispatch/near-dup-pairs.js`) with this
 group's member numbers, `dispatch-near-dup-pairs.json` (`queue-pull-script.md`'s output, strong
-pairs only) and this firing's `dispatch-drain-prs.json`. Each `{pr, member, partner}` hit — a
+pairs only; read an absent file as `[]`, no pairs from this pull (#5409)) and this firing's `dispatch-drain-prs.json`. Each `{pr, member, partner}` hit — a
 member whose strong-pair partner is closed by a drain PR (`closingIssueNumbers`) — renders
 `cross-pr-overlap-report.md`'s warning line with `(near-duplicate of #{partner})` in place of the
 file list, and logs:

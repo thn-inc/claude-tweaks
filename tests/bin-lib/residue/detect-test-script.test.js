@@ -1,12 +1,13 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const { hasTestScript } = require('../../../plugin/bin/lib/residue/detect-test-script');
 
 function tmpDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'residue-detect-test-'));
+  return scratchDir('residue-detect-test-');
 }
 
 // Every fixture below plants a `.git` marker at the boundary it wants the

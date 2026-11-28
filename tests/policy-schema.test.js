@@ -2,13 +2,16 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { POLICY_KEYS, RENAMED_KEYS, auditPolicy, resolveValue, resolvePolicyKeys } = require('../plugin/bin/lib/policy-schema');
 const { readText } = require('./helpers/read-skill');
+const { runCliSync } = require('./helpers/run-cli');
+const { assertLastBump } = require('./helpers/last-bump');
 
 function tmpRepo() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-policy-schema-'));
+  return scratchDir('ct-policy-schema-');
 }
 function writePolicy(repo, content) {
   const dir = path.join(repo, '.claude-tweaks');
@@ -37,121 +40,21 @@ const RENAMES_332 = [
 ];
 
 test('POLICY_KEYS entries are unique', () => {
-  // 35 -> 37, #269 (backlog grant mode): grant-origination-enabled and
-  // fleet-daily-grant-cap, the reserved opt-in + the mode's own soft cap.
-  // 37 -> 42, #219 (model-profile levers): model-stance, frontier-run-cap,
-  // model-ceiling, model-profiles, research-mode — count recomputed from the
-  // merged list at conflict resolution, never summed from either side (IL-99).
-  // 42 -> 44, #274 (experiment-cleanup vertical): experiment-flag-patterns,
-  // experiment-flag-exclude — the repo's flag idiom + kill-switch exclusion.
-  // 44 -> 45, #330 (prose migration): health-open-cap — documented in
-  // _shared/policy-schema.md since #235 but never registered; the resolver
-  // migration surfaced the gap (unknown-key for a documented lever).
-  // 45 -> 41, #331 (key collapse): execution.always merged into
-  // execution-strategy's widened enum, merge-check renamed to
-  // branch-divergence-check, and review-diff-heuristic-thresholds /
-  // promise-register-min-leaves / section-confirmation retired outright —
-  // five rows out, one (branch-divergence-check) in; RENAMED_KEYS carries
-  // all five migrations.
-  // 41 -> 43, #366 (oversight-floor predicate): risk-floor, size-floor — the
-  // shared floors grant-gate.js's gate 5 and /claude-tweaks:demo's binary gate
-  // both read via exceedsOversightFloor.
-  // 43 -> 44, #406 (pr-first integration model): integration-model — no static
-  // default (computed at resolve time by bin/resolve-policy.js's forge
-  // detection instead), see skills/_shared/integration-model.md.
-  // 44 -> 47, #414 (sweep backstop): pr-unarmed-age-hours, unsettled-age-hours,
-  // housekeeping-auto-merge — the two threshold keys plus the tidy
-  // housekeeping-PR arming grant, see skills/_shared/github-pr-scan.md's
-  // 'unarmed ready PR' check.
-  // 47 -> 48, #363 (plans-retention policy): superpowers-plans-retention —
-  // configurable docs/superpowers/plans/*.md retention at wrap-up cleanup
-  // item 1, default keep-forever preserves today's unconditional behavior.
-  // 48 -> 49, #559 (merge-verification): CI-verification lever for merges
-  // into the integration branch, default derived by bin/lib/merge-verification.js.
-  // 49 -> 50, #595 (design-critique lever): off | auto | full, default auto —
-  // governs whether project-local design critics run at review time.
-  // 50 -> 51, #645 (session-scoped record snapshot): record-snapshot-ttl-seconds
-  // — freshness window for /tmp/ct-records-{session-id}.json, shared by
-  // backlog/capture/specify/trust-table/help/tidy/visualize.
-  // 51 -> 52, #715 (merge-authorization lever): lets a human pre-authorize,
-  // at Manifesto time, that this run should merge itself once every
-  // HARD-GATE is green — policy.yml is deliberately excluded as a source
-  // (see resolvePolicyKeys' merge-authorization special case).
-  // 52 -> 53, #310 (sampling floor): grant-sampling-every — every Nth
-  // machine-granted merged record is flagged for a real /demo verdict, so
-  // human calibration evidence keeps entering the trust table.
-  // 53 -> 54, #660 (review prose-exemption lever): review-auto-apply-prose-exempt
-  // — lets a prose-only fix auto-apply one severity tier above the resolved
-  // review-auto-apply-ceiling, see skills/review/step3-routing.md.
-  // 54 -> 59, #194 (Phase 2 doc-convention wiring): doc-convention-tutorial,
-  // doc-convention-how-to, doc-convention-reference, doc-convention-explanation,
-  // doc-convention-journey — one enum key per newly-wired Diátaxis/Journey genre,
-  // same shape as doc-convention-adr.
-  // 59 -> 60, #357 (ui-stack decision point): ui-stack — free-form string
-  // naming the UI component library/styling approach a frontend build should
-  // use, mirrors integration-branch's no-static-default shape.
-  // 60 -> 61, #1137 (brainstorming auto-continue): specify-auto-continue —
-  // lets a session invoke /claude-tweaks:specify on an approved brainstorming
-  // design doc immediately, see skills/specify/SKILL.md's Auto-continue section.
-  // 61 -> 62, #309 (veto-window maturation): grant-veto-window-hours — how
-  // long a machine-granted auto:merge-pending grant must sit unvetoed before
-  // /claude-tweaks:dispatch's Auto-merge gate matures it to auto:merge.
-  // 62 -> 63, #1654 (dispatch group-size guard lever): dispatch-group-size-guard
-  // — headless `next` selection's file-overlap group-size exclusion threshold,
-  // wired through the same policy.yml precedence chain as its dispatch-batch-size
-  // sibling; grouping.js's GROUP_SIZE_GUARD_DEFAULT stays the unset fallback.
-  // 63 -> 64, #1491 (specify drain budget): specify-budget — default
-  // attempt-count budget for a bare /specify drain invocation, sibling of
-  // dispatch-batch-size; the shared n/all --budget semantics are canonical in
-  // _shared/record-batch-input.md, not restated here.
-  // 64 -> 65, #1792 (port isolation): port-services — names the services
-  // that get a port from this checkout's leased block; read directly by
-  // SessionStart, not an auto-mode lever.
-  // 65 -> 66, #1910 (fast-lane bundling): dispatch-fastlane-bundle-cap —
-  // caps how many non-overlapping ceremony:fast-lane singleton dispatch
-  // groups queue-pull-script.md folds into one multi-spec group; 0 disables
-  // bundling, grouping.js's FASTLANE_BUNDLE_CAP_DEFAULT stays the unset
-  // fallback (sibling of #1654's dispatch-group-size-guard above).
-  // 66 -> 67, #1886 (design-ceremony lever): design-ceremony — new static
-  // per-project policy key gating whether /claude-tweaks:specify's
-  // /superpowers:brainstorming handoff prepends a per-section-approval
-  // consolidation instruction (fast-lane) or leaves the invocation
-  // unchanged (standard, the default).
-  // 67 -> 69, #2253 (release family, unit 3): release-hook — the local
-  // engine's post-tag publish/mirror/deploy command, ignored under
-  // pr-first; release-train — opt-in for the unattended release train,
-  // honored only at autonomy: unattended. Both non-core scaffolding seeded
-  // commented-out by /claude-tweaks:init Step 21; consumers land in units 4 and 6.
-  // 69 -> 70, #2540 (variant-exploration off-switch): design-variant-exploration
-  // — off|offer, default off — gates /specify's Step 2.5b-ii layout-tournament
-  // and scaffold-live offers, which previously had no policy lever at all.
-  // 70 -> 71, #2567 (configurable gh timeout): gh-timeout-ms — bounds
-  // (1000-60000) how long a shared-primitives.js `gh` subprocess call may
-  // run before it is killed and retried once; env var
-  // CLAUDE_TWEAKS_GH_TIMEOUT_MS takes precedence over this when both are set.
-  // 71 -> 72, #3128 (decomposition event log): specify-decomposition-log —
-  // boolean, default false — opts a project into /specify's Ceremony tally
-  // writing docs/specify-decomposition-log.md; off, the step is a no-op.
-  // 72 -> 73, #3051 (configurable claims-git-cas timeout): git-timeout-ms —
-  // integer (1000-120000), default 30000 — bounds how long a
-  // claims-git-cas.js `git` subprocess call may run before it is killed;
-  // env var CLAUDE_TWEAKS_GIT_TIMEOUT_MS takes precedence over this when
-  // both are set.
-  // 73 -> 74, #3298 (merge-subject scope source): commit-scope — string, no default — the constant Conventional-Commits scope token
-  // 74 -> 75, #3298: commit-scope-paths — list, default [] — comma-separated prefix=token pairs resolved against a merge's changed files
-  // 75 -> 76, #4041: release-tip-moves — integer, default 2 — caps how far origin/{branch} may move past /release Step 3's reviewed tip before Step 5 holds the release
-  // 76 -> 82, #4029: the six {fast-lane,standard}-run-{round-trip,procedure-kb,verify-minutes}-ceiling efficiency budgets — integer, min 0 (0 disables), p90-derived defaults
-  // 82 -> 84, #4025 (express lane): express-lane — boolean opt-in, default false; express-review-sample-every — integer >= 1, default 5
-  // 84 -> 97, #4609 (human-in-control policy keys): thirteen inert flat keys — control-mode, acceptance-target, deploy-reach, deploy-command, deploy-live-workflow, deploy-version-url, dev-base-url, dev-test-account, deploy-wait-seconds, deploy-poll-seconds, owned-owners, trusted-authors, risk-categories
-  // 97 -> 98, #4609 (human-in-control policy keys): risk-path-globs — the second block-style key, a slug-to-glob-list map
-  // 98 -> 99, #4847: declare-claude-tweaks — boolean, default true — false stops /init Step 14 declaring claude-tweaks at project scope
-  assert.strictEqual(POLICY_KEYS.length, 99);
-  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 99);
+  assertLastBump(__filename);
+  // Changes only with a recorded reason. Recompute by counting the merged list,
+  // never by summing either side's delta (IL-99); history is `git log -L`.
+  // Last bump: 125 -> 126, #6119
+  assert.strictEqual(POLICY_KEYS.length, 126);
+  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 126);
 });
 
-test('express-lane keys resolve their defaults (#4025)', () => {
+test('AC1.1, AC2.1: express-lane defaults on and a project opts out (#4025, #4591)', () => {
   const resolved = resolvePolicyKeys(['express-lane', 'express-review-sample-every'], { policyRaw: '', runConfigRaw: null });
-  assert.deepStrictEqual(resolved['express-lane'], { value: false, source: 'default' });
+  assert.deepStrictEqual(resolved['express-lane'], { value: true, source: 'default' });
+  const optOut = resolvePolicyKeys(['express-lane'], { policyRaw: 'express-lane: false\n', runConfigRaw: null });
+  assert.deepStrictEqual(optOut['express-lane'], { value: false, source: 'policy' });
+  const typo = resolvePolicyKeys(['express-lane'], { policyRaw: 'express-lane: off\n', runConfigRaw: null });
+  assert.strictEqual(typo['express-lane'].invalid, true, 'the generic fallback is unchanged; the gate acts on invalid');
   assert.deepStrictEqual(resolved['express-review-sample-every'], { value: 5, source: 'default' });
   const zero = resolvePolicyKeys(['express-review-sample-every'], { policyRaw: 'express-review-sample-every: 0\n', runConfigRaw: null });
   assert.strictEqual(zero['express-review-sample-every'].invalid, true, 'min: 1 — a sample cadence of 0 is schema-invalid');
@@ -658,6 +561,64 @@ test('trust-revert-window-days is a recognized integer key with a floor of 1, de
   assert.strictEqual(auditPolicy(negative).invalidValues.length, 1, 'a negative value must be flagged too');
 });
 
+test('AC6.1: trust-evaluation-window-days is a recognized integer key with a floor of 1, defaulting to 30', () => {
+  const key = POLICY_KEYS.find((k) => k.key === 'trust-evaluation-window-days');
+  assert.ok(key, 'trust-evaluation-window-days missing from POLICY_KEYS');
+  assert.strictEqual(key.type, 'integer');
+  assert.strictEqual(key.min, 1);
+  assert.strictEqual(key.default, 30);
+
+  const repo = tmpRepo();
+  writePolicy(repo, 'trust-evaluation-window-days: 45\n');
+  assert.deepStrictEqual(auditPolicy(repo).invalidValues, []);
+
+  for (const bad of ['0', '-5']) {
+    const dir = tmpRepo();
+    writePolicy(dir, `trust-evaluation-window-days: ${bad}\n`);
+    const result = auditPolicy(dir);
+    assert.strictEqual(result.invalidValues.length, 1, `${bad} is below the floor of 1 and must be flagged`);
+    assert.strictEqual(result.invalidValues[0].key, 'trust-evaluation-window-days');
+  }
+});
+
+test('AC6.1: trust-follow-up-rate-max-percent is an integer key bounded 0..100, defaulting to 30', () => {
+  const key = POLICY_KEYS.find((k) => k.key === 'trust-follow-up-rate-max-percent');
+  assert.ok(key, 'trust-follow-up-rate-max-percent missing from POLICY_KEYS');
+  assert.strictEqual(key.type, 'integer');
+  assert.strictEqual(key.min, 0);
+  assert.strictEqual(key.max, 100);
+  assert.strictEqual(key.default, 30);
+
+  for (const ok of ['0', '100']) {
+    const dir = tmpRepo();
+    writePolicy(dir, `trust-follow-up-rate-max-percent: ${ok}\n`);
+    assert.deepStrictEqual(auditPolicy(dir).invalidValues, [], `${ok} is inside 0..100`);
+  }
+  for (const bad of ['101', '-1', 'banana']) {
+    const dir = tmpRepo();
+    writePolicy(dir, `trust-follow-up-rate-max-percent: ${bad}\n`);
+    const result = auditPolicy(dir);
+    assert.strictEqual(result.invalidValues.length, 1, `${bad} must be flagged`);
+    assert.strictEqual(result.invalidValues[0].key, 'trust-follow-up-rate-max-percent');
+  }
+  assert.strictEqual(resolveValue('trust-follow-up-rate-max-percent', '101'), 30);
+});
+
+test('AC6.1: resolvePolicyKeys flags a malformed trust window and rate and resolves their defaults', () => {
+  const keys = ['trust-evaluation-window-days', 'trust-follow-up-rate-max-percent'];
+  const bad = resolvePolicyKeys(keys, { policyRaw: 'trust-evaluation-window-days: 0\ntrust-follow-up-rate-max-percent: 101\n' });
+  assert.strictEqual(bad['trust-evaluation-window-days'].value, 30);
+  assert.strictEqual(bad['trust-evaluation-window-days'].invalid, true);
+  assert.strictEqual(bad['trust-follow-up-rate-max-percent'].value, 30);
+  assert.strictEqual(bad['trust-follow-up-rate-max-percent'].invalid, true);
+
+  const good = resolvePolicyKeys(keys, { policyRaw: 'trust-evaluation-window-days: 45\ntrust-follow-up-rate-max-percent: 20\n' });
+  assert.strictEqual(good['trust-evaluation-window-days'].value, 45);
+  assert.strictEqual(good['trust-follow-up-rate-max-percent'].value, 20);
+  assert.strictEqual(good['trust-evaluation-window-days'].invalid, undefined);
+  assert.strictEqual(good['trust-follow-up-rate-max-percent'].invalid, undefined);
+});
+
 test('grant-veto-window-hours is a recognized integer key with a floor of 1, defaulting to 24', () => {
   const key = POLICY_KEYS.find((k) => k.key === 'grant-veto-window-hours');
   assert.ok(key, 'grant-veto-window-hours missing from POLICY_KEYS');
@@ -769,6 +730,15 @@ test('model-profiles: an unrecognized sub-field inside a valid row is accepted �
   assert.deepStrictEqual(result.invalidValues, []);
 });
 
+test('AC1.1: model-profiles audit sees the block when policy.yml has CRLF endings and a trailing comment on the key line (#4816)', () => {
+  const repo = tmpRepo();
+  writePolicy(repo, ['model-profiles:   # project overrides', '  bogus:', '    model: opus', ''].join('\r\n'));
+  const result = auditPolicy(repo);
+  assert.strictEqual(result.invalidValues.length, 1);
+  assert.strictEqual(result.invalidValues[0].key, 'model-profiles');
+  assert.deepStrictEqual(result.invalidValues[0].value, { bogus: true });
+});
+
 test('auditPolicy flags a valid policy.yml value for a source-excluded lever as sourceExcludedKeys, not silently accepted (#839)', () => {
   const repo = tmpRepo();
   writePolicy(repo, 'merge-authorization: pre-authorized\n');
@@ -813,6 +783,32 @@ test('the source-excluded special case is keyed on the generic policySourceExclu
 test('merge-authorization is the one POLICY_KEYS entry currently flagged policySourceExcluded', () => {
   const flagged = POLICY_KEYS.filter((k) => k.policySourceExcluded === true).map((k) => k.key);
   assert.deepStrictEqual(flagged, ['merge-authorization']);
+});
+
+// #6006: a key a run decides live is both excluded from the standing sources and refused from the
+// factory layer, so the refused-key warning names every factory value the exclusion would discard.
+test('every policySourceExcluded row in POLICY_KEYS is in FACTORY_REFUSED_KEYS', () => {
+  const { FACTORY_REFUSED_KEYS } = require('../plugin/bin/lib/policy-factory');
+  const flagged = POLICY_KEYS.filter((k) => k.policySourceExcluded === true).map((k) => k.key);
+  assert.ok(flagged.length > 0, 'at least one flagged row, or this check is vacuous');
+  assert.deepStrictEqual(flagged.filter((key) => !FACTORY_REFUSED_KEYS.includes(key)), []);
+});
+
+// #6006: merge-authorization, the one flagged row, is also factory-refused, so only a temporarily
+// flagged row reaches the guard with a factory value. The flag is restored before the test returns.
+test('a policySourceExcluded row is set neither from policy.yml nor from the factory layer, only from a run config', () => {
+  const row = POLICY_KEYS.find((k) => k.key === 'design-ceremony');
+  assert.ok(row && !row.policySourceExcluded && !row.policyOnly);
+  row.policySourceExcluded = true;
+  try {
+    const resolve = (raws) => resolvePolicyKeys(['design-ceremony'], raws)['design-ceremony'];
+    assert.deepStrictEqual(resolve({ factoryRaw: 'design-ceremony: fast-lane\n' }), { value: 'standard', source: 'default' });
+    assert.deepStrictEqual(resolve({ policyRaw: 'design-ceremony: fast-lane\n' }), { value: 'standard', source: 'default' });
+    assert.deepStrictEqual(resolve({ runConfigRaw: 'design-ceremony: fast-lane\n', factoryRaw: 'design-ceremony: standard\n' }), { value: 'fast-lane', source: 'run-config' });
+  } finally {
+    delete row.policySourceExcluded;
+  }
+  assert.deepStrictEqual(resolvePolicyKeys(['design-ceremony'], { factoryRaw: 'design-ceremony: fast-lane\n' })['design-ceremony'], { value: 'fast-lane', source: 'factory' });
 });
 
 test('mixed policy.yml + CLAUDE.md content is read independently, both audited together', () => {
@@ -935,4 +931,489 @@ test('#4029 M4: the procedure-kb ceiling summaries say a run may read its proced
     assert.doesNotMatch(summary, /may load/, key);
     assert.ok(summary.length <= 140, `${key}: ${summary.length} chars`);
   }
+});
+
+// #5216: the express-driver keys — all policyOnly, so a --run config never sets them.
+const DRIVER_CLI = path.join(__dirname, '..', 'plugin', 'bin', 'resolve-policy.js');
+// In-process (#5384): the child's stdout is what the assertions parse; the cwd is the fixture repo.
+function driverCli(args, cwd) {
+  const r = runCliSync(DRIVER_CLI, args, { cwd, env: { ...process.env } });
+  return { stdout: r.stdout, stderr: r.stderr, status: r.code };
+}
+const DRIVER_KEYS = [
+  { id: 'AC11.1', key: 'express-driver', def: 'off', other: 'on', policyVal: 'split' },
+  { id: 'AC11.2', key: 'express-driver-wall-clock-minutes', def: 30, other: 99, policyVal: 5 },
+  { id: 'AC11.3', key: 'express-driver-spend-ceiling-dollars', def: 10, other: 77, policyVal: 5 },
+  { id: 'AC16.1', key: 'express-driver-review', def: 'beyond-express', other: 'on', policyVal: 'off' },
+  { id: 'AC7.1 (#5224)', key: 'express-driver-max-size', def: 'low', other: 'medium', policyVal: 'medium' },
+  { id: 'AC7.2 (#5224)', key: 'express-driver-max-key-files', def: 3, other: 9, policyVal: 5 },
+  { id: 'AC7.3 (#5224)', key: 'express-driver-max-lines', def: 40, other: 999, policyVal: 120 },
+  { id: 'AC8 (#6018)', key: 'express-driver-max-risk', def: 'low', other: 'high', policyVal: 'medium' },
+  { id: 'AC1 (#6019)', key: 'express-driver-protected-paths', def: 'refuse', other: 'reviewer', policyVal: 'reviewer' },
+];
+
+// AC7 (#5384): the fresh-project cwd is the only input that yields `off` — this repo's own policy.yml pins `on`.
+test('AC7.1: express-driver resolves off from the default in a fresh project', () => {
+  const repo = tmpRepo();
+  try {
+    const r = driverCli(['express-driver'], repo);
+    assert.deepStrictEqual(JSON.parse(r.stdout)['express-driver'], { value: 'off', source: 'default' });
+  } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('AC6/express-driver: each value resolves; a malformed one falls back', () => {
+  for (const v of ['split', 'on']) {
+    assert.deepStrictEqual(resolvePolicyKeys(['express-driver'], { policyRaw: `express-driver: ${v}\n`, runConfigRaw: null })['express-driver'], { value: v, source: 'policy' });
+  }
+  assert.deepStrictEqual(resolvePolicyKeys(['express-driver'], { policyRaw: 'express-driver: half\n', runConfigRaw: null })['express-driver'], { value: 'off', source: 'default', invalid: true });
+});
+
+test('AC16: express-driver-review resolves its default from resolve-policy.js in a fresh project', () => {
+  const repo = tmpRepo();
+  try {
+    const r = driverCli(['express-driver-review'], repo);
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.deepStrictEqual(JSON.parse(r.stdout)['express-driver-review'], { value: 'beyond-express', source: 'default' });
+  } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('AC16: express-driver-review values resolve and a malformed one falls back', () => {
+  for (const v of ['off', 'on', 'beyond-express']) {
+    assert.deepStrictEqual(resolvePolicyKeys(['express-driver-review'], { policyRaw: `express-driver-review: ${v}\n`, runConfigRaw: null })['express-driver-review'], { value: v, source: 'policy' });
+  }
+  assert.deepStrictEqual(resolvePolicyKeys(['express-driver-review'], { policyRaw: 'express-driver-review: sometimes\n', runConfigRaw: null })['express-driver-review'], { value: 'beyond-express', source: 'default', invalid: true });
+});
+
+test('AC8.1, AC8.2 (#6018): express-driver-max-risk resolves low unset, each enum value from policy, and a malformed value to low with invalid', () => {
+  const key = 'express-driver-max-risk';
+  assert.deepStrictEqual(resolvePolicyKeys([key], { policyRaw: '', runConfigRaw: null })[key], { value: 'low', source: 'default' });
+  for (const v of ['low', 'medium', 'high']) {
+    assert.deepStrictEqual(resolvePolicyKeys([key], { policyRaw: `${key}: ${v}\n`, runConfigRaw: null })[key], { value: v, source: 'policy' });
+  }
+  for (const v of ['Medium', 'critical', '2']) {
+    assert.deepStrictEqual(resolvePolicyKeys([key], { policyRaw: `${key}: ${v}\n`, runConfigRaw: null })[key], { value: 'low', source: 'default', invalid: true }, v);
+  }
+  const { RAIL_BYTES } = require('../plugin/bin/lib/skill-audit/budgets.js');
+  const shared = path.join(__dirname, '..', 'plugin', 'skills', '_shared');
+  assert.ok(fs.statSync(path.join(shared, 'policy-schema.md')).size < RAIL_BYTES);
+  assert.match(readText(path.join(shared, 'policy-schema-express-driver.md')), /^\| `express-driver-max-risk` \| /m);
+});
+
+test('AC1.1 (#6019): express-driver-protected-paths resolves refuse unset, each enum value from policy, and a malformed value to refuse with invalid', () => {
+  const key = 'express-driver-protected-paths';
+  assert.deepStrictEqual(resolvePolicyKeys([key], { policyRaw: '', runConfigRaw: null })[key], { value: 'refuse', source: 'default' });
+  for (const v of ['refuse', 'reviewer']) {
+    assert.deepStrictEqual(resolvePolicyKeys([key], { policyRaw: `${key}: ${v}\n`, runConfigRaw: null })[key], { value: v, source: 'policy' });
+  }
+  for (const v of ['Reviewer', 'on', 'true']) {
+    assert.deepStrictEqual(resolvePolicyKeys([key], { policyRaw: `${key}: ${v}\n`, runConfigRaw: null })[key], { value: 'refuse', source: 'default', invalid: true }, v);
+  }
+  const shared = path.join(__dirname, '..', 'plugin', 'skills', '_shared');
+  assert.match(readText(path.join(shared, 'policy-schema-express-driver.md')), /^\| `express-driver-protected-paths` \| /m);
+  assert.ok(readText(path.join(shared, 'policy-schema.md')).includes('| `express-driver-protected-paths` |'));
+});
+
+test('AC8.1: each ceiling resolves its default when unset, at or above the design targets', () => {
+  const r = resolvePolicyKeys(['express-driver-wall-clock-minutes', 'express-driver-spend-ceiling-dollars'], { policyRaw: '', runConfigRaw: null });
+  assert.deepStrictEqual(r['express-driver-wall-clock-minutes'], { value: 30, source: 'default' });
+  assert.ok(r['express-driver-wall-clock-minutes'].value >= 15);
+  assert.deepStrictEqual(r['express-driver-spend-ceiling-dollars'], { value: 10, source: 'default' });
+  assert.ok(r['express-driver-spend-ceiling-dollars'].value >= 5);
+});
+
+test('AC8.2: a ceiling below 1, negative or non-integer falls back invalid', () => {
+  const ceilings = ['express-driver-wall-clock-minutes', 'express-driver-spend-ceiling-dollars'];
+  for (const { key, def } of DRIVER_KEYS.filter((k) => ceilings.includes(k.key))) {
+    for (const bad of ['0', '-3', '1.5', 'abc']) {
+      assert.deepStrictEqual(resolvePolicyKeys([key], { policyRaw: `${key}: ${bad}\n`, runConfigRaw: null })[key], { value: def, source: 'default', invalid: true }, `${key}=${bad}`);
+    }
+  }
+});
+
+for (const { id, key, def, other, policyVal } of DRIVER_KEYS) {
+  test(`${id}: a run config cannot set ${key}`, () => {
+    const viaRun = resolvePolicyKeys([key], { policyRaw: '', runConfigRaw: `${key}: ${other}\n` })[key];
+    assert.deepStrictEqual(viaRun, { value: def, source: 'default' });
+    const withPolicy = resolvePolicyKeys([key], { policyRaw: `${key}: ${policyVal}\n`, runConfigRaw: `${key}: ${other}\n` })[key];
+    assert.deepStrictEqual(withPolicy, { value: policyVal, source: 'policy' });
+  });
+
+  test(`${id} via the CLI: resolve-policy.js --run ignores a run config that sets ${key}`, () => {
+    const repo = tmpRepo();
+    const runDir = scratchDir('ct-driver-run-');
+    try {
+      fs.writeFileSync(path.join(runDir, 'config.yml'), `${key}: ${other}\n`);
+      const r = driverCli(['--run', runDir, key], repo);
+      assert.deepStrictEqual(JSON.parse(r.stdout)[key], { value: def, source: 'default' });
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+      fs.rmSync(runDir, { recursive: true, force: true });
+    }
+  });
+}
+
+test('AC8.3: each ceiling\'s doc row states its unit', () => {
+  const lines = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'policy-schema-express-driver.md')).split('\n');
+  // The summary cell alone: the key cell already spells the unit, so matching the whole row could not fail.
+  const summaryOf = (key) => lines.find((l) => l.startsWith(`| \`${key}\` |`)).split('|')[5];
+  assert.match(summaryOf('express-driver-wall-clock-minutes'), /\bminutes\b/i);
+  assert.match(summaryOf('express-driver-spend-ceiling-dollars'), /\bwhole dollars\b/i);
+});
+
+test('AC11.4: the policyOnly bullet names every DRIVER_KEYS key', () => {
+  const line = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'policy-schema-coverage.md')).split('\n').find((l) => l.includes('are `policyOnly`'));
+  for (const { key } of DRIVER_KEYS) assert.ok(line.includes('`' + key + '`'), key);
+});
+
+// #5917: express-driver-models, a policyOnly block key of per-role work profiles.
+const MODELS = 'express-driver-models';
+const FOUR = { implementer: 'standard', reviewer: 'capable', 'merge-check': 'standard', acceptance: 'standard' };
+const rModels = (policyRaw, runConfigRaw = null) => resolvePolicyKeys([MODELS], { policyRaw, runConfigRaw })[MODELS];
+const REJECTED = { value: null, source: 'default', invalid: true };
+
+test('express-driver-models: unset resolves the four spec roles\' defaults, no explorer', () => {
+  assert.deepStrictEqual(rModels(''), { value: FOUR, source: 'default' });
+  assert.ok(!Object.hasOwn(rModels('').value, 'explorer'));
+});
+
+test('AC2.1: a policy.yml block sets one role and keeps the others', () => {
+  const expected = { value: { ...FOUR, implementer: 'fast' }, source: 'policy' };
+  assert.deepStrictEqual(rModels('express-driver-models:\n  implementer: fast\n'), expected);
+  assert.deepStrictEqual(rModels('express-driver-models:\r\n  implementer: fast\r\n'), expected);
+  assert.deepStrictEqual(rModels('express-driver-models:   # note\r\n  reviewer: standard   # why\r\n'), { value: { ...FOUR, reviewer: 'standard' }, source: 'policy' });
+  assert.deepStrictEqual(rModels('express-driver-models:\n'), { value: FOUR, source: 'policy' });
+});
+
+test('express-driver-models: a rejected block resolves null invalid, never a partial map', () => {
+  const bad = [
+    'express-driver-models: fast\n',
+    'express-driver-models:\n  scout: fast\n',
+    'express-driver-models:\n  explorer: fast\n',
+    'express-driver-models:\n  implementer: fast\n  explorer: capable\n',
+    'express-driver-models:\n  implementer: turbo\n',
+    'express-driver-models:\n  implementer: fast\n  implementer: capable\n',
+    'express-driver-models:\n    implementer: fast\n',
+    'express-driver-models:\n\timplementer: fast\n',
+    'express-driver-models:\n  implementer:\n',
+    'express-driver-models:\n  implementer: fast\nexpress-driver-models:\n  reviewer: fast\n',
+  ];
+  for (const raw of bad) {
+    const seen = [];
+    const got = resolvePolicyKeys([MODELS], { policyRaw: raw, runConfigRaw: null, onInvalid: (k) => seen.push(k) })[MODELS];
+    assert.deepStrictEqual(got, REJECTED, JSON.stringify(raw));
+    assert.deepStrictEqual(seen, [MODELS], JSON.stringify(raw));
+  }
+  assert.deepStrictEqual(rModels('express-driver-models:\n  implementer: fast\nautonomy: trusted\n'), { value: { ...FOUR, implementer: 'fast' }, source: 'policy' });
+  // A following block's indented rows are not this block's rows: the next column-0 line closes it.
+  assert.deepStrictEqual(rModels('express-driver-models:\n  implementer: fast\nmodel-profiles:\n  standard:\n    model: opus\n'), { value: { ...FOUR, implementer: 'fast' }, source: 'policy' });
+});
+
+test('AC2.2: a run config block never sets express-driver-models', () => {
+  assert.deepStrictEqual(rModels('', 'express-driver-models:\n  implementer: fast\n'), { value: FOUR, source: 'default' });
+  assert.strictEqual(rModels('express-driver-models:\n  reviewer: standard\n', 'express-driver-models:\n  implementer: fast\n').value.implementer, 'standard');
+});
+
+test('AC2.2 via the CLI: resolve-policy.js --run ignores the block in config.yml', () => {
+  const repo = tmpRepo();
+  const runDir = scratchDir('ct-driver-models-run-');
+  try {
+    fs.writeFileSync(path.join(runDir, 'config.yml'), 'express-driver-models:\n  implementer: fast\n');
+    const r = driverCli(['--run', runDir, MODELS], repo);
+    assert.deepStrictEqual(JSON.parse(r.stdout)[MODELS], { value: FOUR, source: 'default' });
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test('express-driver-models: --values refuses it, as a block key', () => {
+  const repo = tmpRepo();
+  try {
+    const r = driverCli(['--values', MODELS], repo);
+    assert.notStrictEqual(r.status, 0);
+    assert.match(r.stderr, /--values does not support express-driver-models \(no scalar form\)/);
+  } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('express-driver-models: registered policyOnly, advanced, models, map keyed by the four policy roles', () => {
+  const row = POLICY_KEYS.find((k) => k.key === MODELS);
+  assert.strictEqual(row.type, 'map');
+  assert.strictEqual(row.policyOnly, true);
+  assert.strictEqual(row.tier, 'advanced');
+  assert.strictEqual(row.category, 'models');
+  assert.deepStrictEqual([...row.keys], ['implementer', 'reviewer', 'merge-check', 'acceptance']);
+  assert.deepStrictEqual({ ...row.default }, FOUR);
+  assert.ok(Object.isFrozen(row.default));
+});
+
+test('express-driver-models: auditPolicy flags an explorer row', () => {
+  const repo = tmpRepo();
+  try {
+    writePolicy(repo, 'express-driver-models:\n  explorer: fast\n');
+    const rows = auditPolicy(repo).invalidValues.filter((x) => x.key === MODELS);
+    assert.strictEqual(rows.length, 1);
+  } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('express-driver-models: auditPolicy flags a rejected block once and a valid one never', () => {
+  const cases = [['express-driver-models:\n  implementer: turbo\n', 1], ['express-driver-models: fast\n', 1], ['express-driver-models:\n  implementer: fast\n', 0]];
+  for (const [policy, count] of cases) {
+    const repo = tmpRepo();
+    try {
+      writePolicy(repo, policy);
+      const audit = auditPolicy(repo);
+      assert.strictEqual(audit.invalidValues.filter((x) => x.key === MODELS).length, count, policy);
+      assert.deepStrictEqual(audit.unrecognizedKeys, [], policy);
+    } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+  }
+});
+
+test('express-driver-models: the pre-change flat reader sees nothing of the block', () => {
+  const { parseFlatLines } = require('../plugin/bin/lib/policy-schema');
+  assert.deepStrictEqual(parseFlatLines('express-driver-models:\n  implementer: fast\n'), {});
+});
+
+test('AC11.4 (#5917): the policyOnly bullet names express-driver-models', () => {
+  const line = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'policy-schema-coverage.md')).split('\n').find((l) => l.includes('are `policyOnly`'));
+  assert.ok(line.includes('`express-driver-models`'));
+});
+
+test('#6056: the policyOnly bullet names plan-at-specify', () => {
+  const line = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'policy-schema-coverage.md')).split('\n').find((l) => l.includes('are `policyOnly`'));
+  assert.ok(line, 'the policyOnly bullet is missing');
+  assert.ok(line.includes('`plan-at-specify` (#6056)'), 'the policyOnly bullet does not name plan-at-specify');
+});
+
+test('review-lens-dispatch resolves task by default and for an invalid value, workflow when set (#5599), worker when set (#6003)', () => {
+  const cases = [[null, 'task'], ['review-lens-dispatch: sideways\n', 'task'], ['review-lens-dispatch: workflow\n', 'workflow'], ['review-lens-dispatch: worker\n', 'worker']];
+  for (const [policy, expected] of cases) {
+    const repo = tmpRepo();
+    try {
+      if (policy !== null) writePolicy(repo, policy);
+      const r = driverCli(['--values', 'review-lens-dispatch'], repo);
+      assert.strictEqual(r.status, 0, r.stderr);
+      assert.strictEqual(r.stdout.trim(), expected, `policy.yml: ${policy}`);
+    } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+  }
+  // Neither policyOnly nor policySourceExcluded: /claude-tweaks:review Step 3 resolves it with --run, so a run config sets it for one review.
+  const repo = tmpRepo();
+  const runDir = scratchDir('ct-review-lens-run-');
+  try {
+    fs.writeFileSync(path.join(runDir, 'config.yml'), 'review-lens-dispatch: workflow\n');
+    const r = driverCli(['--run', runDir, '--values', 'review-lens-dispatch'], repo);
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.strictEqual(r.stdout.trim(), 'workflow', r.stderr);
+    fs.writeFileSync(path.join(runDir, 'config.yml'), 'review-lens-dispatch: worker\n');
+    const w = driverCli(['--run', runDir, '--values', 'review-lens-dispatch'], repo);
+    assert.strictEqual(w.status, 0, w.stderr);
+    assert.strictEqual(w.stdout.trim(), 'worker', w.stderr);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test('AC6.3: the review-lens-dispatch removal condition names worker and #5825', () => {
+  const lines = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'policy-schema.js')).split('\n');
+  const row = lines.findIndex((l) => l.includes("{ key: 'review-lens-dispatch'"));
+  assert.ok(row > 0, 'the review-lens-dispatch row is missing');
+  let start = row;
+  while (start > 0 && lines[start - 1].trim().startsWith('//')) start--;
+  const block = lines.slice(start, row).join('\n');
+  // The header comment line already says `worker`, so a bare /worker/ passes without the removal sentence; pin the sentence's own clause.
+  assert.match(block, /`worker` is a permanent third value/);
+  assert.match(block, /#5825/);
+});
+
+test('review-lens-selection resolves tier by default and for an invalid value, adaptive when set (#6001)', () => {
+  const cases = [[null, 'tier'], ['review-lens-selection: sideways\n', 'tier'], ['review-lens-selection: adaptive\n', 'adaptive']];
+  for (const [policy, expected] of cases) {
+    const repo = tmpRepo();
+    try {
+      if (policy !== null) writePolicy(repo, policy);
+      const r = driverCli(['--values', 'review-lens-selection'], repo);
+      assert.strictEqual(r.status, 0, r.stderr);
+      assert.strictEqual(r.stdout.trim(), expected, `policy.yml: ${policy}`);
+    } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+  }
+  // Neither policyOnly nor policySourceExcluded: /claude-tweaks:review Step 3 resolves it with --run, so a run config sets it for one review.
+  const repo = tmpRepo();
+  const runDir = scratchDir('ct-review-lens-sel-run-');
+  try {
+    fs.writeFileSync(path.join(runDir, 'config.yml'), 'review-lens-selection: adaptive\n');
+    const r = driverCli(['--run', runDir, '--values', 'review-lens-selection'], repo);
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.strictEqual(r.stdout.trim(), 'adaptive', r.stderr);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+// #5224: the driver lane bound keys.
+const LANE_KEYS = ['express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-lines'];
+const resolveLane = (policyRaw, runConfigRaw = null, keys = LANE_KEYS) => resolvePolicyKeys(keys, { policyRaw, runConfigRaw });
+
+test('AC5.1 (#5224): the size and Key File keys resolve the express values unset', () => {
+  const r = resolveLane('');
+  assert.deepStrictEqual(r['express-driver-max-size'], { value: 'low', source: 'default' });
+  assert.deepStrictEqual(r['express-driver-max-key-files'], { value: 3, source: 'default' });
+  assert.deepStrictEqual(r['express-driver-max-lines'], { value: 40, source: 'default' });
+});
+
+test('AC5.5 (#5224): express-driver-max-lines unset derives whatever auto-merge-max-lines holds', () => {
+  const k = ['express-driver-max-lines'];
+  assert.deepStrictEqual(resolveLane('auto-merge-max-lines: 77\n', null, k)['express-driver-max-lines'], { value: 77, source: 'default' });
+  assert.deepStrictEqual(resolveLane('auto-merge-max-lines: x\n', null, k)['express-driver-max-lines'], { value: 40, source: 'default' });
+  assert.deepStrictEqual(resolveLane('', 'auto-merge-max-lines: 55\n', k)['express-driver-max-lines'], { value: 55, source: 'default' });
+  assert.deepStrictEqual(resolveLane('express-driver-max-lines: 0\nauto-merge-max-lines: 77\n', null, k)['express-driver-max-lines'], { value: 77, source: 'default', invalid: true });
+});
+
+test('AC5.2 (#5224): the Key File default equals EXPRESS_MAX_KEY_FILES', () => {
+  const { EXPRESS_MAX_KEY_FILES } = require('../plugin/bin/lib/express/eligibility');
+  assert.strictEqual(POLICY_KEYS.find((k) => k.key === 'express-driver-max-key-files').default, EXPRESS_MAX_KEY_FILES);
+});
+
+test('AC5.3 (#5224): malformed values never widen', () => {
+  for (const bad of ['high', 'Medium', 'med']) {
+    assert.deepStrictEqual(resolveLane(`express-driver-max-size: ${bad}\n`)['express-driver-max-size'], { value: 'low', source: 'default', invalid: true }, bad);
+  }
+  for (const bad of ['0', '2.5', 'x']) {
+    assert.deepStrictEqual(resolveLane(`express-driver-max-key-files: ${bad}\n`)['express-driver-max-key-files'], { value: 3, source: 'default', invalid: true }, bad);
+  }
+  for (const bad of ['0', '-1', 'x']) {
+    assert.deepStrictEqual(resolveLane(`express-driver-max-lines: ${bad}\n`)['express-driver-max-lines'], { value: 40, source: 'default', invalid: true }, bad);
+  }
+});
+
+test('AC7.3 (#5224): a run config setting express-driver-max-lines and auto-merge-max-lines feeds only the derivation', () => {
+  const k = ['express-driver-max-lines'];
+  const both = 'express-driver-max-lines: 999\nauto-merge-max-lines: 55\n';
+  assert.deepStrictEqual(resolveLane('', both, k)['express-driver-max-lines'], { value: 55, source: 'default' });
+  assert.deepStrictEqual(resolveLane('auto-merge-max-lines: 77\n', both, k)['express-driver-max-lines'], { value: 55, source: 'default' });
+  assert.deepStrictEqual(resolveLane('express-driver-max-lines: 120\n', both, k)['express-driver-max-lines'], { value: 120, source: 'policy' });
+});
+
+test('(#5224) the express-driver-max-lines summary names the reviewer condition', () => {
+  const { summary } = POLICY_KEYS.find((k) => k.key === 'express-driver-max-lines');
+  assert.match(summary, /reviewer step is on/);
+  assert.ok(summary.length <= 140, `${summary.length}`);
+});
+
+test('AC5.4 (#5224): set values resolve from policy', () => {
+  const r = resolveLane('express-driver-max-size: medium\nexpress-driver-max-key-files: 5\nexpress-driver-max-lines: 120\n');
+  assert.deepStrictEqual(r['express-driver-max-size'], { value: 'medium', source: 'policy' });
+  assert.deepStrictEqual(r['express-driver-max-key-files'], { value: 5, source: 'policy' });
+  assert.deepStrictEqual(r['express-driver-max-lines'], { value: 120, source: 'policy' });
+});
+
+// --- #4492: policy.yml located through the main checkout from a linked worktree ---
+const { resolvePolicyConfig, resolveIntegrationModel, resolveForgeProbeTimeoutMs } = require('../plugin/bin/lib/policy-schema');
+
+function worktreeFixture(t, policy = 'integration-branch: develop\nworktree-always: true\n') {
+  // realpath: the main-checkout lookup resolves symlinks (macOS /var -> /private/var).
+  const base = fs.realpathSync(scratchDir('policy-wt-'));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const main = path.join(base, 'main');
+  const wt = path.join(base, 'wt');
+  fs.mkdirSync(path.join(main, '.git', 'worktrees', 'wt'), { recursive: true });
+  fs.mkdirSync(path.join(main, '.claude-tweaks'), { recursive: true });
+  fs.mkdirSync(wt, { recursive: true });
+  fs.writeFileSync(path.join(wt, '.git'), `gitdir: ${path.join(main, '.git', 'worktrees', 'wt')}\n`);
+  if (policy !== null) fs.writeFileSync(path.join(main, '.claude-tweaks', 'policy.yml'), policy);
+  return { main, wt };
+}
+
+function fakeTopLevelGit(top) {
+  const calls = [];
+  const git = (args) => {
+    calls.push(args);
+    if (args.join(' ') === 'rev-parse --show-toplevel') return `${top}\n`;
+    throw new Error(`unexpected git ${args.join(' ')}`);
+  };
+  git.calls = calls;
+  return git;
+}
+
+const realRead = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
+
+test('AC5.1: resolvePolicyConfig, fake git runner — worktree file present: reads it, policySource checkout', (t) => {
+  const { wt } = worktreeFixture(t);
+  fs.mkdirSync(path.join(wt, '.claude-tweaks'));
+  fs.writeFileSync(path.join(wt, '.claude-tweaks', 'policy.yml'), 'integration-branch: release\n');
+  const git = fakeTopLevelGit(wt);
+  const out = resolvePolicyConfig({ git, readFile: realRead, keys: ['integration-branch'] });
+  assert.strictEqual(out.policySource, 'checkout');
+  assert.strictEqual(out.policyPath, path.join(wt, '.claude-tweaks', 'policy.yml'));
+  assert.strictEqual(out.result['integration-branch'].value, 'release');
+  assert.deepStrictEqual(git.calls, [['rev-parse', '--show-toplevel']]);
+});
+
+test('AC5.1: resolvePolicyConfig, fake git runner — worktree absent, main present: reads main\'s, policySource main-checkout', (t) => {
+  const { main, wt } = worktreeFixture(t);
+  const out = resolvePolicyConfig({ git: fakeTopLevelGit(wt), readFile: realRead, keys: ['integration-branch'] });
+  assert.strictEqual(out.policySource, 'main-checkout');
+  assert.strictEqual(out.policyPath, path.join(main, '.claude-tweaks', 'policy.yml'));
+  assert.strictEqual(out.result['integration-branch'].value, 'develop');
+});
+
+test('AC5.1: resolvePolicyConfig, fake git runner — both absent: policyRaw null, policySource checkout, every key at its default', (t) => {
+  const { wt } = worktreeFixture(t, null);
+  const out = resolvePolicyConfig({ git: fakeTopLevelGit(wt), readFile: realRead, keys: ['integration-branch', 'worktree-always'] });
+  assert.strictEqual(out.policyRaw, null);
+  assert.strictEqual(out.policySource, 'checkout');
+  assert.strictEqual(out.policyPath, path.join(wt, '.claude-tweaks', 'policy.yml'));
+  assert.strictEqual(out.result['integration-branch'].source, 'default');
+  assert.strictEqual(out.result['worktree-always'].source, 'default');
+});
+
+test('resolveIntegrationModel from a linked worktree honors the main checkout\'s integration-model pin', (t) => {
+  // pr-first, not local-merge: local-merge is also what detection returns for this forge-less fixture.
+  const { wt } = worktreeFixture(t, 'integration-model: pr-first\n');
+  assert.strictEqual(resolveIntegrationModel(wt), 'pr-first');
+});
+
+test('resolveForgeProbeTimeoutMs from a linked worktree reads the main checkout\'s gh-timeout-ms', (t) => {
+  const { wt } = worktreeFixture(t, 'gh-timeout-ms: 7000\n');
+  assert.strictEqual(resolveForgeProbeTimeoutMs(wt, { env: {} }), 7000);
+});
+
+test('auditPolicy from a linked worktree still reads CLAUDE.md at the worktree root', (t) => {
+  const { wt } = worktreeFixture(t);
+  fs.writeFileSync(path.join(wt, 'CLAUDE.md'), 'integration-branch: release\n');
+  const keys = auditPolicy(wt).migratableKeys.map((row) => row.key);
+  assert.ok(keys.includes('integration-branch'));
+});
+
+test('AC1.1: resolvePolicyConfig from a linked worktree without policy.yml reads the main checkout\'s — integration-branch develop, policySource main-checkout', (t) => {
+  const { wt } = worktreeFixture(t);
+  const out = resolvePolicyConfig({ git: fakeTopLevelGit(wt), readFile: realRead, keys: ['integration-branch'] });
+  assert.strictEqual(out.root, wt);
+  assert.strictEqual(out.result['integration-branch'].value, 'develop');
+  assert.strictEqual(out.policySource, 'main-checkout');
+});
+
+test('AC2.1: resolvePolicyConfig — a worktree policy.yml wins; the main checkout\'s is not read', (t) => {
+  const { main, wt } = worktreeFixture(t);
+  fs.mkdirSync(path.join(wt, '.claude-tweaks'));
+  fs.writeFileSync(path.join(wt, '.claude-tweaks', 'policy.yml'), 'integration-branch: release\n');
+  const reads = [];
+  const readFile = (p) => { reads.push(p); return realRead(p); };
+  const out = resolvePolicyConfig({ git: fakeTopLevelGit(wt), readFile, keys: ['integration-branch'] });
+  assert.strictEqual(out.result['integration-branch'].value, 'release');
+  assert.ok(!reads.includes(path.join(main, '.claude-tweaks', 'policy.yml')));
+});
+
+test('AC3.1: resolvePolicyConfig from the main checkout — policySource checkout, same result as before', (t) => {
+  const { main } = worktreeFixture(t);
+  const out = resolvePolicyConfig({ git: fakeTopLevelGit(main), readFile: realRead, keys: ['integration-branch'] });
+  assert.strictEqual(out.policySource, 'checkout');
+  assert.strictEqual(out.policyPath, path.join(main, '.claude-tweaks', 'policy.yml'));
+  assert.strictEqual(out.result['integration-branch'].value, 'develop');
+  assert.strictEqual(out.root, main);
+});
+
+test('auditPolicy from a linked worktree audits the main checkout\'s policy.yml', (t) => {
+  const { wt } = worktreeFixture(t, 'integration-branch: develop\nbogus-key: 1\n');
+  assert.ok(auditPolicy(wt).unrecognizedKeys.includes('bogus-key'));
 });

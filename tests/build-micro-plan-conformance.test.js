@@ -32,10 +32,11 @@ test('SKILL.md Spec Step 3 points to micro-plan.md before invoking writing-plans
   assert.ok(microPlanIdx < writingPlansIdx, 'micro-plan check must be read before the writing-plans invocation');
 });
 
-test('micro-plan.md: applicability gate names all three conditions', () => {
+test('micro-plan.md: applicability gate names all four conditions', () => {
+  assert.match(MICRO_PLAN, /All four must hold/);
   assert.match(MICRO_PLAN, /ceremony: fast-lane/);
   assert.match(MICRO_PLAN, /size: low/);
-  assert.match(MICRO_PLAN, /### Key Files.*at most one implementation file/s);
+  assert.match(MICRO_PLAN, /4\. The spec body does not carry a risk flag/);
 });
 
 test('micro-plan.md: any other header shape falls through to today\'s path unchanged', () => {
@@ -123,7 +124,20 @@ test('AC5.1 control: a specShapedBody record without keyFiles yields no parseabl
   assert.ok(!body.includes('### Key Files'));
 });
 
-for (const rel of ['plugin/skills/capture/SKILL.md', 'plugin/skills/reflect/SKILL.md', 'plugin/skills/wrap-up/leftover-routing.md']) {
+const KEYFILES_PRODUCERS = [
+  'plugin/skills/capture/SKILL.md',
+  'plugin/skills/reflect/SKILL.md',
+  'plugin/skills/wrap-up/leftover-routing.md',
+  'plugin/skills/review/step3-routing.md',
+  'plugin/skills/_shared/ledger-format.md',
+  'plugin/skills/wrap-up/review-console-appendix.md',
+  'plugin/skills/wrap-up/residue-sweep.md',
+  'plugin/skills/visual-review/browser-review.md',
+  'plugin/skills/reflect/full-mode.md',
+  'plugin/skills/wrap-up/claude-md-curation.md',
+];
+
+for (const rel of KEYFILES_PRODUCERS) {
   test(`AC6.1: ${rel} instructs passing keyFiles when the composer knows the affected files`, () => {
     const text = readText(path.join(ROOT, rel));
     assert.match(text, /keyFiles: \[\{ path, change \}\]/);

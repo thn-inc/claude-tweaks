@@ -13,6 +13,7 @@ Applies only when `MULTISPEC_REVIEW_DEFER=1` is set (by `/flow` multi-spec orche
    ```
    AUTO {time} — Review Console deferred to multi-spec consolidated console. Per-spec staged items: {count}. Auto-decisions: {count}. Parent run dir: {MULTISPEC_PARENT_DIR}.
    ```
+   `Auto-decisions` counts this spec's `AUTO` entries except `Phase exit` record lines (`AUTO … — Phase exit: {phase} phase exited at {sha}`, from `bin/phase-exit.js`), which trace phase boundaries, not decisions.
 4. Write `verify-expectations.json` in this spec's own run directory (`$PIPELINE_RUN_DIR`, the per-spec `spec-{N}/` subdirectory) through the sanctioned writer — a direct Write there is refused from a worktree-isolated session (#2764): `node "${CLAUDE_PLUGIN_ROOT}/bin/set-verify-expectations.js" --run "$PIPELINE_RUN_DIR" --deferred design-caches,worktree,ephemeral-server,claim-release,run-dir-archival`, which leaves `{"version": 1, "memory": [], "upstream": [], "deferred": ["design-caches", "worktree", "ephemeral-server", "claim-release", "run-dir-archival"]}`. The five deferred cleanup items map 1:1 to `deferred`'s vocabulary (`cleanup-procedures.md`'s items 3/4/6/7/8). `memory`/`upstream` stay empty here — this spec's own M#/U# resolution never ran (deferred to the parent console); the parent's own consolidated run directory carries the real resolution once it completes, so a per-spec `verify` run against a `MULTISPEC_REVIEW_DEFER=1` spec will correctly render its `memory-updates`/`upstream-feedback` rows as `skip (nothing recorded)` rather than the more alarming `unknown (expectations file missing)` (a known, accepted limitation of per-spec verification under multi-spec defer, not a full resolution). The writer read-modify-writes, so an `oversightExempt` array `verification-brief.md`'s Oversight-floor gate already recorded in this same file is preserved. Exit 3 from that writer means the run dir is wrong — re-resolve `$RUN_ROOT` per `_shared/pipeline-run-dir.md` and retry; exit 2 is a malformed call to fix, never a reason to fall back to a direct Write.
 5. Proceed to Phase 4's execution step, then the phase-trace report — the per-spec summary still renders, but its "Review Console" row reads `deferred — see multi-spec consolidated console`
 6. Skip the run-directory archival in Phase 4's cleanup planning — the parent `/flow` orchestration owns archival of the multi-spec parent dir after its consolidated console completes
@@ -57,14 +58,16 @@ one whose finding or header is missing, duplicated or malformed, so the two cann
 before any prefix rule runs and resolves to `refused` — those rows are in the CLI's table like
 every other row, and a `refused` item is never applied, at any tier, per `refused-proposals.md`.
 The CLI also computes the merge half with both carve-outs (`merge.resolution` = `merge` |
-`leave-open`, with the reason — it **never** runs the merge itself), appends one decisions block
+`leave-open`, with the reason — it **never** runs the merge itself; a stored `merge` is not final
+until the merge site's `--recheck-merge` confirms every member's passing verdict, and the resolve
+names an unconfirmed half on stderr, #5833), appends one decisions block
 (`AUTO {time} — Review Console: Console auto-resolved {n} item(s) at unattended
 (console-resolve.js). Reversibility: per item.` plus one line per item), and writes
-`{run-dir}/console.json` (`{resolved: true, mode: 'auto-resolve', at, ceiling, items, merge, droppedByTiebreak, filings}` —
+`{run-dir}/console.json` (`{resolved: true, mode: 'auto-resolve', at, ceiling, items, merge, droppedByTiebreak, filings, digests}` —
 the write the reconciler's archival needs, #1854; `droppedByTiebreak` holds the read-only Dropped
 by tiebreak block's rows, `filings` one `{item, fingerprint, title}` per planned can't-tell
-filing, with no proposal text, #3949). That file may later gain an optional
-`residueAcknowledgedAt`, written only by `console-residue.js --ack`/`--ack-all` (#3370); an item's stored resolution may later be rewritten by `console-resolve.js --set-item` (`refused-proposals.md`'s failed-execution rewrite — `apply` → `keep-staged`, adding `rewrittenFrom`/`rewrittenAt`, and dropping a stale `residueAcknowledgedAt`; a reference repair whose diff no longer applies at Phase 4 is rewritten `approve` → `pending — reference-repair-stale` the same way, per `execution-and-verification.md`'s Reference repairs bullet), and a `filings` entry whose fingerprint has no filed line in that dir's `decisions.md` reads as `filing-pending` residue (#4170); and
+filing, with no proposal text, #3949; `digests` one `{item, fingerprint}` per planned digest entry, #4679). That file may later gain an optional
+`residueAcknowledgedAt`, written only by `console-residue.js --ack`/`--ack-all` (#3370); an item's stored resolution may later be rewritten by `console-resolve.js --set-item` (`refused-proposals.md`'s failed-execution rewrite — `apply` → `keep-staged`, adding `rewrittenFrom`/`rewrittenAt`, and dropping a stale `residueAcknowledgedAt`; a reference repair whose diff no longer applies at Phase 4 is rewritten `approve` → `pending — reference-repair-stale` the same way, per `execution-and-verification.md`'s Reference repairs bullet), and a `filings` entry whose fingerprint has no filed line in that dir's `decisions.md` reads as `filing-pending` residue (#4170), a `digests` entry with no digested line as `digest-pending` (#4679); and
 `console-resolve.js --json` on a fresh resolution carries an `unresolved` array (the
 `pending`/`keep-staged` items, `[]` when none); the idempotent re-render of an already-resolved
 console prints the stored table and the `Needs a human` block as text whatever the flags.
@@ -79,8 +82,12 @@ procedure — no row is left unrouted:
 - `apply` on a **Pending review** item — step 1, which covers every staged item 5–7, not only the
   patches: a `.patch` via `_shared/staged-patch.md`'s `git apply` (a stale one takes the
   `Invariant:` re-derivation below), and a staged `.md` proposal (`polish-suggestion-*`,
-  `visual-review-*`, `design-decision-*`, `build-deviation-*`, `simplify-*`, `deepen-*`, `sdd-ruling-*`) applied
+  `visual-review-*`, `build-deviation-*`, `simplify-*`, `deepen-*`, `sdd-ruling-*`) applied
   as that step already describes for a non-patch item.
+- A `design-decision-*` item never resolves `apply`: it carries no diff, so it stays `pending — design-decision-human-remedy`
+  for a human to run its `Remedy:` command (`/impeccable:impeccable document`, or
+  `/claude-tweaks:design-wrapper explore` for the nudge). Approving it means running that command,
+  never editing `DESIGN.md` by hand — `DESIGN.md` stays upstream-owned.
 - `apply` on an `sdd-ruling-*` item — ratify. It executes no code change, and what it writes
   depends on the staged header, classified by `bin/lib/console/sdd-ruling.js`'s
   `sddRulingRatifyAction` (#3942):
@@ -100,7 +107,10 @@ procedure — no row is left unrouted:
     gate-withheld ruling files the record too. Ratifying it files the deferred work, so it never
     ends as a bare `accepted` row: it composes a born-ready record proposal exactly as `reverse`
     does below (`specShapedBody`; Current State = the ruling and the finding it deferred;
-    Deliverables = the deferred work; `Origin: SDD ruling ratified at Review Console`;
+    `keyFiles: [{ path, change }]` = the files the ruling's finding names, per
+    `_shared/ledger-format.md`'s Key Files path rule (repo-relative file paths, a
+    `:{digits}`/`:{digits}-{digits}` line suffix and a `#symbol` suffix stripped, omitted when the
+    finding names no file); Deliverables = the deferred work; `Origin: SDD ruling ratified at Review Console`;
     `Defer-reason:` = the staged file's own `Defer-reason:` value when the header carries exactly
     one valid one (`needs-human-decision` included — the human's tick is the decision), else
     derived from `_shared/deferral-gate.md`'s Fix-now criteria exactly as `reverse` derives it
@@ -117,7 +127,10 @@ procedure — no row is left unrouted:
   `reverse` (the Override vocabulary for a ruling row, `review-console-interactive.md`)
   composes a born-ready record proposal exactly as
   `_shared/ledger-format.md`'s Phase 3 `Keep` does (`specShapedBody`; Current State = the
-  ruling and the finding it ruled on; Deliverables = the reversal;
+  ruling and the finding it ruled on; `keyFiles: [{ path, change }]` = the files the ruling's
+  finding names, per `_shared/ledger-format.md`'s Key Files path rule (repo-relative file paths,
+  a `:{digits}`/`:{digits}-{digits}` line suffix and a `#symbol` suffix stripped, omitted when
+  the finding names no file); Deliverables = the reversal;
   `Origin: SDD ruling reversed at Review Console`; `Defer-reason:` derived, never a constant:
   run `_shared/deferral-gate.md`'s Fix-now criteria against the reversed ruling's finding and
   stamp per that file's Deriving the value from the criteria — the closed fix wave is what
@@ -158,22 +171,26 @@ procedure — no row is left unrouted:
   filing follows `refused-proposals.md`'s failed-execution rewrite with `{name}` = the ruling
   item `sdd-ruling-{N}.md` — `console.json`'s item, never the derived
   `ledger-record-sdd-ruling-{N}.md` proposal — so the row stays `open`.
+  A staged ruling's header may also carry `Class: behaviour`. A ruling the carry-forward labels `Class: procedural` (with `Defers: no` and no `Defer-reason:`) is never staged unless the route or an audit command fails — then it is staged with that header and ratifies like any other; otherwise procedural rulings never reach the console, and are logged in `decisions.md` as an `AUTO` line and an `observation` ledger row (#5449, `sddRulingRoute`).
 - `apply` on a `Q#` item — step 7 (record creation), whose `refused-proposals.md` check still
   runs first (a `.shadow-dup` copy is composed by `shadow-dup-proposal.js` before that, as that step states); on an `M#` item — step 8 (the `_shared/learning-routing.md` memory write plus its
   `MEMORY.md` index line).
 - `approve` — the curation steps: step 2 (Skill updates), step 3 (Documentation updates), step 4
   (Journey updates), step 5 (Configuration updates). A **Reference repairs** row has no numbered
   step of its own — it is applied by Phase 4's execution step, per
-  `execution-and-verification.md`'s Reference repairs bullet. Cleanup actions run at step 6.
+  `execution-and-verification.md`'s Reference repairs bullet, ahead of that step's Branch finish. Cleanup actions run at step 6.
   A **Reflection insights** row (`staged/wrap-up-reflect-insights.md`) runs at step 10. A Skill
   updates row for `staged/reflect-{n}.md` runs at step 2's reflect clause (`bin/reflect-apply.js`),
   not the Skills curation patch path.
 - `filed` — on a `U#` item, step 9's `/claude-tweaks:feedback --pre-confirmed` filing (the `U#`
   divergence stated in review-console.md); on a Low-confidence or Contested item, step 7, its
   proposal composed by `console-filings.js` (review-console.md's "Can't-tell filings").
+- `digested` — on a Low-confidence or Contested item, not step 7: post the digest line and log it per
+  review-console.md's "Can't-tell filings". Nothing is filed for it.
 - `dropped` — execute **nothing**. A tiebreak refuted the finding, or a human chose Approve all on
   its `drop` recommendation (`console-template.md`); its staged file stays in `staged/`, and the
   row is a final outcome, not residue.
+- `carried` — execute **nothing** at the console: the item's decision fact is already in `{run-dir}/packet-facts/decisions.json` and reaches the human through the acceptance packet (`verification-brief.md`'s gather). It is terminal — not residue, so archival proceeds.
 - `stale` — still step 1, but its re-derivation path only: rebuild the diff from the item's
   `Target:`/`Invariant:` preamble. Never `git apply` a diff the CLI already reported as failing
   `--check`, and never drop it silently.
@@ -224,7 +241,7 @@ A rendered console is somebody's open decision and no flag overwrites it, so a c
 follows `_shared/console-on-pr.md`'s Headless conclusion (report `pending-review` with the PR URL);
 an unparseable one stops and reports the CLI's stderr, like exits 2 and 3. Exit codes 2 and 3 (malformed invocation / `--run` not anchored) → a
 HARD-GATE failure: stop the wrap-up and report the CLI's stderr — an unattended run has nobody to
-answer a real stop. Send one consolidated `PushNotification` summarizing the run, at the same
+answer a real stop. Exit code 6 (a control-mode carry write failed) → stop with `flow/failure-cards.md`'s Generic gate failure card naming each item stderr lists. Send one consolidated `PushNotification` summarizing the run, at the same
 point the auto-merge short-circuit sends its own FYI (`_shared/autonomy-ceiling.md`'s Notification
 section) — one notification for the whole run, never one per item. End with the absolute path to
 `decisions.md`, `console.json`, and any retained `staged/*` files, so the operator has a concrete

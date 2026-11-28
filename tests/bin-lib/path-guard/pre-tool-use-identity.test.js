@@ -35,7 +35,7 @@ const denyReason = (out) => (isDeny(out) ? out.json.hookSpecificOutput.permissio
 function teardown(cwd, target) {
   return run({
     input: { tool_name: 'Bash', tool_input: { command: `git worktree remove ${target}` }, session_id: 's1' },
-    cwd, runDir: null, runState: null,
+    cwd, runDir: null, runState: null, env: process.env,
   }, { fsImpl });
 }
 
@@ -74,7 +74,7 @@ function commit(recorded, cwd, top) {
   try {
     return run({
       input: { tool_name: 'Bash', tool_input: { command: 'git commit -m x' }, session_id: 's1' },
-      cwd, runDir, runState: { status: 'active', worktree: recorded, sessionId: 's1' },
+      cwd, runDir, runState: { status: 'active', worktree: recorded, sessionId: 's1' }, env: process.env,
     }, { fsImpl, toplevel: () => top });
   } finally {
     fs.rmSync(runDir, { recursive: true, force: true });

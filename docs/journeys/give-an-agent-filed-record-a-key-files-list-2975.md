@@ -11,7 +11,14 @@ files:
   - plugin/skills/capture/SKILL.md
   - plugin/skills/reflect/SKILL.md
   - plugin/skills/wrap-up/leftover-routing.md
+  - plugin/skills/_shared/ledger-format.md
+  - plugin/skills/wrap-up/review-console-appendix.md
+  - plugin/skills/wrap-up/residue-sweep.md
+  - plugin/skills/visual-review/browser-review.md
+  - plugin/skills/reflect/full-mode.md
+  - plugin/skills/wrap-up/claude-md-curation.md
   - plugin/skills/build/micro-plan.md
+  - plugin/bin/lib/issues/micro-plan-gate.js
   - plugin/bin/lib/issues/grouping.js
 ---
 
@@ -39,19 +46,20 @@ files:
 - **Red flags:** An absolute, machine-local path under `### Key Files`; a single malformed finding stopping `validate-findings` for the whole batch.
 
 ### 3. File from a prose producer that knows its files
-- **URL:** `plugin/skills/capture/SKILL.md` (shaped-body branch, steps 1 and 3), `plugin/skills/reflect/SKILL.md` (tangential staged finding), `plugin/skills/wrap-up/leftover-routing.md` (step 1 compose)
-- **Action:** Capture a shaped body whose `## Technical Approach` carries a `### Key Files` list, or let reflect/wrap-up stage a finding that names its files.
-- **Should feel:** The file list you already wrote survives filing instead of being dropped by the section split.
-- **Should understand:** Each producer passes `keyFiles: [{ path, change }]` only when it knows the affected files — repo-relative only, omitted when unknown. A record filed before #2975 keeps its old body; nothing is backfilled.
-- **Red flags:** A captured body whose Key Files bullets vanish from the filed record; a producer passing an absolute path and the compose throwing.
+- **URL:** `plugin/skills/capture/SKILL.md` (shaped-body branch, steps 1 and 3), `plugin/skills/reflect/SKILL.md` (tangential staged finding), `plugin/skills/wrap-up/leftover-routing.md` (step 1 compose), and since #6282 `plugin/skills/_shared/ledger-format.md` (Phase 3 `Defer`/`Keep`/direct create/`Acknowledge`), `plugin/skills/wrap-up/review-console-appendix.md` (SDD ruling `file-record` and `reverse`), `plugin/skills/wrap-up/residue-sweep.md`, `plugin/skills/visual-review/browser-review.md` (Defer), `plugin/skills/reflect/full-mode.md` (Defer), `plugin/skills/wrap-up/claude-md-curation.md` (over-budget queue write)
+- **Action:** Capture a shaped body whose `## Technical Approach` carries a `### Key Files` list, or let reflect/wrap-up/ledger resolve/visual review stage a finding or ruling that names its files.
+- **Should feel:** The file list you already wrote survives filing instead of being dropped by the section split; a run's follow-ups that touch the same file share a Key File and can be grouped.
+- **Should understand:** Each producer passes `keyFiles: [{ path, change }]` only when it knows the affected files — repo-relative only, taken from explicit file tokens, a trailing `:{digits}`/`:{digits}-{digits}` line suffix and a `#symbol` suffix stripped (so `src/x.js:10` and `src/x.js` group together), no directories, omitted when unknown. A visual-review finding naming only a route or URL passes none. The CLAUDE.md budget fact carries absolute paths, which the producer makes repo-relative first. A record filed before #2975 keeps its old body; nothing is backfilled.
+- **Red flags:** A captured body whose Key Files bullets vanish from the filed record; a producer passing an absolute path and the compose throwing; a Key File still carrying its `:line` suffix.
 
 ### 4. See the fast path taken at build time
-- **URL:** `plugin/skills/build/micro-plan.md` (Applicability gate), `{run-dir}/work/{n}-spec.md`, `{run-dir}/decisions.md`
+- **URL:** `plugin/skills/build/micro-plan.md` (Applicability gate), `plugin/bin/lib/issues/micro-plan-gate.js` (`countImplementationFiles`, `MAX_IMPLEMENTATION_FILES`), `{run-dir}/work/{n}-spec.md`, `{run-dir}/decisions.md`
 - **Action:** Dispatch a `ceremony:fast-lane`, `size:low` record whose Key Files names one implementation file (plus, optionally, its test).
 - **Should feel:** A one-file fix goes straight to a one-task plan — no writing-plans dispatch, no plan audit.
-- **Should understand:** Condition 3 counts implementation files only (tests, `*.test.*`/`*.spec.*`, markdown that is not prompt prose such as `docs/**`, and a top-level `docs/plans/*.html` diagram (#4187) excluded; markdown under `skills/`, `agents/`, or `commands/` counts as implementation — the same split `computeDiffFacts` applies, #3477), and `extractKeyFilesSection` returns the bullets' backticked paths. A record with no Key Files section still falls through ("could not parse" is never "parsed to zero").
-- **Red flags:** `decisions.md` shows a full `/superpowers:writing-plans` dispatch for a fast-lane single-file record that carries Key Files; `extractKeyFilesSection` returning `[]` on a body that visibly has the section.
+- **Should understand:** Condition 3's counting rule lives in `micro-plan-gate.js`, which `micro-plan.md` cites instead of restating. It counts implementation files only (tests, `*.test.*`/`*.spec.*`, markdown that is not prompt prose such as `docs/**`, and a top-level `docs/plans/*.html` diagram (#4187) excluded; markdown under `skills/`, `agents/`, or `commands/` counts as implementation — the same split `computeDiffFacts` applies, #3477), and skips an entry whose note marks it read-only (`read only`, `read-only`, or a `no change(s)` that ends the note or a clause). `extractKeyFilesSection` returns the bullets' backticked paths; `extractKeyFileEntries` keeps each bullet's note and counts the bullets it could not read. A record with no Key Files section, or with a bullet that names no backticked path or an unfilled `{template}` one, still falls through ("could not parse" is never "parsed to zero"). A record carrying a kept risk flag (a `Risk-flags:` line naming a slug, or one that cannot be read) also falls through, by condition 4 (#4618), because the micro-plan has no audited `Proof(<slug>)` line.
+- **Red flags:** `decisions.md` shows a full `/superpowers:writing-plans` dispatch for a fast-lane single-file record that carries Key Files and no kept risk flag; `extractKeyFilesSection` returning `[]` on a body that visibly has the section.
 
 ## Origin
 - Created during build of #2975 (micro-plan gate unreachable for specShapedBody-composed records), the producer-side fix chosen over a gate fallback or materialize-time derivation.
+- Step 3 extended during build of #6282 (the remaining record-proposal producers pass `keyFiles`, so a run's follow-ups can be grouped by file).
 - Related journeys: `add-a-fast-lane-skip-to-the-roster-1926.md` (the fast-lane roster the micro-plan skip belongs to), `harness-health-premise-check.md` (the sibling body-metadata line harness-health composes).

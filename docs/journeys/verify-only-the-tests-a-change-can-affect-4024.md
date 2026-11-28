@@ -17,14 +17,14 @@ files:
 
 **Persona:** A claude-tweaks maintainer whose pipeline runs re-verify a two-line skill-prose edit. Until now each re-verify paid an eight-minute full `npm test` run, queued behind sibling sessions for the single suite slot.
 **Goal:** A scoped verify runs only the test files that actually read what the branch changed. Whenever that answer can't be trusted, it runs the whole suite and says why.
-**Entry point:** `node plugin/bin/verify.js --run "$PIPELINE_RUN_DIR" --scope .claude-tweaks/verify-scope.json --integration-branch main --cmd tests="npm test"`. This is the scoped invocation every pipeline re-verify site already runs.
+**Entry point:** `node plugin/bin/verify.js --run "$PIPELINE_RUN_DIR" --scope .claude-tweaks/verify-scope.json --integration-branch main --cmd tests="npm test"`. This is the scoped invocation every pipeline re-verify site already runs; since #5119 those sites also pass `--default-suite-slots {slots}`.
 **Success state:** A docs-only or skill-prose delta finishes in seconds. Stdout shows one `Impact:` line naming the selected count and the map's commit, and `report.json`'s `scope.impact` lists exactly which test files ran. A missing, stale, red or non-ancestor map, or a path no traced read covers, runs the full suite with the reason named.
 
 ## Steps
 
 ### 1. Get a map without tracing locally
 - **URL:** `.github/workflows/test-impact-map.yml`'s post-merge run on main, and `{git-common-dir}/claude-tweaks-test-impact.json`.
-- **Action:** Do nothing. When the scoped run finds no usable map, it runs the declaration's `fetch` command (`node tools/test-impact.js fetch`) once. That downloads the newest successful main map whose commit is an ancestor of HEAD. `node tools/test-impact.js trace` builds one by hand: it runs the full suite under the read tracer.
+- **Action:** Do nothing. When the scoped run finds no usable map, it runs the declaration's `fetch` command (`node tools/test-impact.js fetch`) once. That downloads the newest successful main map whose commit is an ancestor of HEAD, unless a clean, passing cached map that descends from that CI commit and is an ancestor of HEAD is already present, which is kept. `node tools/test-impact.js trace` builds one by hand: it runs the full suite under the read tracer.
 - **Should feel:** Invisible. The map refreshes off the hot path, and no build ever traces.
 - **Should understand:**
   - The map is stamped with its commit and the traced run's exit code.
@@ -61,7 +61,9 @@ files:
 - **Should understand:**
   - A directory listing matches only an added or deleted path beneath it, because modifying a file does not change a listing. A probe of an ancestor directory also matches an add or a delete.
   - A test file edited after the map was traced (on main before the branch's base, say) runs too: its recorded reads may be stale. `scope.impact.driftTests` names these drifted tests and `driftSelected` counts them, and the `Impact:` line ends `, N drift` inside its parentheses when there are any. A test the branch itself changed is counted as a changed test, not as drift.
+  - When more than 50 tests would run as drift, the scoped run first runs the declaration's `fetch` once, at most once per ten minutes per checkout (a marker in the git common dir, shared by every worktree), and takes the newer map only if it is usable and leaves no more drift. A failed or no-op fetch keeps the current map. The report's `fetch` entry shows it ran.
 - **Red flags:**
+  - A scoped run that re-runs hundreds of drift tests from a map that a three-second fetch would have replaced.
   - A new file under a listed directory selecting only the tests that read it directly.
   - A changed test file running alone, without the guard tests that read it.
   - A test edited since the map's commit that is left out when a path it now reads changes.
@@ -73,8 +75,10 @@ files:
 - **Should understand:**
   - An unknown never selects fewer tests. When git cannot list the tests that differ since the map's commit, the reason is `map-drift-unreadable`.
   - Changing `tools/run-tests.js` or the tracer always runs the whole suite through its own `"suites": "*"` rule.
-  - Standalone `/claude-tweaks:test` and a standalone `/build` stay full.
-  - On Windows, a selected subset whose command line would reach the 32,767-character limit runs the full suite instead, in the full-suite slot lane. The suite's stderr then reads `run-tests.js: --files-from {list}: a {n}-file subset needs a {len}-character command line, over the Windows limit of 32767 — running the full suite instead.` verify's `Impact:` line still names the subset it selected.
+  - Standalone `/claude-tweaks:test` and a standalone `/build` stay full, without the declaration's `localRuns`; under it they run scoped, and `/claude-tweaks:test full` runs the whole suite (`plugin/skills/test/impact-selection.md`'s Whole suite on request).
+  - A plain `npm test` typed at the top level of a checkout now uses this same selection and runs only the selected files, with a one-line stderr summary. `npm test -- --full` runs the whole suite, and a `verify.js --cmd tests="npm test"` check still runs the whole suite (with `--local` under `localRuns`) (`run-a-plain-npm-test-on-the-impact-subset-5319.md`).
+  - `timing.json` keeps the reason, the superseded flag, the selected count and the superseding paths in the run's verify entry, so they outlive the worktree and the overwritten `report.json`.
+  - On Windows, a selected subset whose command line would reach the 32,767-character limit runs the full suite instead. A direct `node tools/run-tests.js --files-from` run then takes the full-suite slot lane, but under verify.js the fallback stays inside verify's own subset-lane slot: the lane follows the command verify spawned, and the child runner skips its own lock (#5119). The suite's stderr then reads `run-tests.js: --files-from {list}: a {n}-file subset needs a {len}-character command line, over the Windows limit of 32767 — running the full suite instead.` verify's `Impact:` line still names the subset it selected.
 - **Red flags:**
   - A fallback with no named reason.
   - A large Windows subset that fails to spawn (`ENAMETOOLONG`) instead of falling back.
@@ -87,4 +91,8 @@ files:
 - Updated during the build of #4133: the tracer now resolves a `require` the way Node does, and it parses shell and `env` wrappers. Its existence-probe records fell from 135,709 to 31,033 across the suite with no resolution change lost.
 - Updated during the build of #4131: a map now records whether it was traced from a dirty tree, and verify refuses such a map as `map-dirty`. An interrupted `trace` now forwards the signal to the suite and removes its temp dir; before, a signal left the dir behind.
 - Updated during the build of #4134: tracing works on Windows, and a Windows subset too long for the command line falls back to the full suite.
+- Updated during the build of #5119: verify.js now holds the suite slot itself, so under verify a Windows full-suite fallback runs inside verify's subset-lane slot rather than taking the full-suite lane.
+- Updated during the build of #4321: the verify event, and through it `timing.json`, now carries the impact outcome, including the paths that superseded a subset.
+- Updated during the build of #5319: a plain local `npm test` now runs the same impact selection, so step 4 notes it. The entry-point command is unchanged.
+- Updated during the build of #5947: a usable map that leaves more than 50 drift tests is refreshed with one rate-limited `fetch`, so a branch 50-200 commits behind no longer re-runs about 75% drift (593 of 1350 test files became 182 on this branch's own change).
 - Related: `declare-a-verify-scope-1924.md` (the declaration this extends) and `run-the-suite-alongside-sibling-sessions-3969.md` (the suite slot a subset run holds for less time).

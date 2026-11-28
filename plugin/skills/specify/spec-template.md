@@ -12,6 +12,10 @@ Every record body opens with a short metadata block — plain body-metadata line
 
 `Ui-stack:` names the UI component library / styling approach a frontend build should use — e.g. `shadcn/ui + Tailwind`, or an explicit `none — no preference, defer to reference codebase` when the record's author genuinely has no opinion. `/claude-tweaks:specify`'s Step 2.5c2 (`design-pre-steps.md`, immediately after the Design-intent question) writes it, following the same auto-mode/`ui-stack` policy-key precedence Step 2.5c already uses for `Design-intent:`. Omitted for backend/infra/terminal records — the same frontend-only gate that already governs `Design-intent:`.
 
+`Risk-flags:` and `Risk-flags-unconfirmed:` are written only through `bin/risk-flags.js`: `/claude-tweaks:specify`'s Risk flags step settles them (`shaping-mode-stamping.md`'s `### Risk flags`), and `/claude-tweaks:backlog refine` confirms them with its `confirm` verb (`backlog/refine-risk-flags.md`); never hand-edit either line. The grammar is `Risk-flags: migrations, auth` (comma-separated lowercase slugs from the built-ins `migrations`, `auth`, `public-contract` and `irreversible-side-effect`, plus the policy `risk-categories`) or `Risk-flags: none` (classified, nothing flagged). No line means an unclassified legacy record, read as no flags; a line that is malformed or names an unknown slug reads as unknown, which is all four built-in categories flagged, never as no flags. `Risk-flags-unconfirmed: true` marks a set a headless run kept with no human to confirm it. Each kept flag needs a plan step carrying `Proof(<slug>): <text>`, at least 20 characters and more than the category's name (`/claude-tweaks:build`'s plan audit, Check G). A removal does not persist: a flag the classifier detects again on a later shaping is re-added and asked about again. These flags are not the `risk:low|medium|high` labels, the scoring axis (`## Facets`), which is a different axis. The `Risk-flags-added-by-tripwire: {slugs}` line is written only by the diff tripwire through `addTripwireRiskFlags` (`bin/lib/issues/record.js`), directly below `Risk-flags:`, carried forward by a re-shape's `settle`, and never composed into a body; `parseTripwireFlags` reads it, and an absent line means the tripwire has added nothing.
+
+`Acceptance-target:` is written only by `/claude-tweaks:specify`'s interactive path (`shaping-mode-stamping.md`'s `### Metadata block`), never under `--chained` or `next`. The grammar is exactly `Acceptance-target: local`, once, in the preamble. No line means no per-item override: the policy default applies. Any other form (a duplicate, a variant spelling, `dev`, another value) reads invalid and resolves to `local`. `parseAcceptanceTarget` is the one reader; it reports `dev` as well-formed, and `bin/lib/accept/target.js` rejects it as `invalid-input`.
+
 ````markdown
 Surface: {web | mobile | desktop | backend | infra | terminal}
 Design-intent: {one or more of bold | quiet | minimal | delightful | onboarding, comma-separated — or none alone}
@@ -19,6 +23,9 @@ Ui-stack: {free-form component-library/styling-approach string (e.g. "shadcn/ui 
 Design-seed: {the seed key from the surface brief's Impeccable direction contract, copied verbatim — NOT written by /specify; see below}
 Visual-reference: {path to an accepted shape-time scaffold file — omitted when /specify's Step 2.5b-ii variant-exploration step was skipped, declined, or not offered (non-frontend records)}
 Parent: {#N — decomposition-mode sub-issues under work-links: body-text only, and only when Step 2.6 kept a parent; omitted otherwise (a collapsed decomposition, native links, work-backend: local-files, and Shaping mode)}
+Risk-flags: {comma-separated slugs, or none — settled by /specify's Risk flags step, confirmed by /backlog refine}
+Risk-flags-unconfirmed: {true — headless-kept flags awaiting a human; omitted otherwise}
+Acceptance-target: {local — the human chose to accept this item locally; written by /specify's interactive path only, omitted otherwise}
 
 ## Overview
 
@@ -71,7 +78,7 @@ When `## Current State` names the callers, gates, or user-visible outcome the ch
 
 ## Release Note
 
-{One plain-language, verb-first sentence describing what this record delivers, written for someone reading the release notes — never a raw conventional-commit subject, an internal module name, a record number, or a file path. Required on every record, including one with no end-user-visible effect: describe what changed from the release-notes reader's perspective, even when that's "no user-visible change" phrased plainly (e.g. "Improved internal test coverage for the release composer") — never omitted.}
+{One plain-language, verb-first sentence describing what this record delivers, written for someone reading the release notes — never a raw conventional-commit subject, an internal module name, a record number, or a file path. Required on every record, including one with no end-user-visible effect: describe what changed from the release-notes reader's perspective, even when that's "no user-visible change" phrased plainly (e.g. "Improved internal test coverage for the release composer") — never omitted. The sentence claims no more than this record's Acceptance Criteria prove: use a universal word such as "always" or "every" only when an AC covers every path the claim names.}
 
 Example: "Added a visible warning when memory usage is critical" — verb-first, plain language, no record numbers or file paths. The `Release-Note:` trailer this section composes into at merge time is single-line by construction (`plugin/bin/lib/release/subject.js`'s `Release-Note:` paragraph) — write this section as one line even if drafting notes elsewhere run longer, since a single-record note is read to its first line only, and a bundled note is joined onto one line.
 
@@ -199,7 +206,7 @@ When a deliverable classifies inputs into named states — an eligibility verdic
 - **Refused with a named remedy** — an unlisted state is refused with one line naming the state and its remedy.
 - **Amendment, not escalation** — a plan review that finds another unlisted state applies this rule as a plan amendment (it adds that state's refusal line), never as a `needs-human` gap.
 
-Without it, every state the list leaves out is a gap whose settlement alters an observable contract, which `build/plan-review.md` classifies `needs-human` — so each review pass finds new ones and stops the build. #4588's eligibility verdict stopped four times on the `plan-review-needs-human` HARD-GATE until its spec added this rule; the next pass applied it to a newly found state and the build proceeded.
+Without it, every state the list leaves out is a gap whose settlement alters an observable contract, which `build/plan-review.md` classifies `needs-human` — so each review pass finds new ones and stops the build. #4588's eligibility verdict stopped four times on the `plan-review-needs-human` HARD-GATE until its spec added this rule; the next pass applied it to a newly found state and the build proceeded. The rule still matters on a record's first plan-review round; after one answered round, later rounds converge under `build/plan-review.md`'s convergence rule anyway, which treats a Closed rule as a recorded decision.
 
 ## Why Each Section Matters for `/superpowers:writing-plans`
 

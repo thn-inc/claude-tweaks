@@ -19,11 +19,14 @@
 
 const { parseRecordFacets, parseDependencies, parseSubIssues } = require('../issues/record');
 const { evaluateGrantGate } = require('../issues/grant-gate');
-const { trustRows, parseGitLog } = require('../issues/trust');
+const { trustRows, parseGitLog, TRUST_POLICY_KEYS } = require('../issues/trust');
 const { machineGrantOutlook } = require('../issues/backlog');
 const { fetchNativeSubIssues } = require('../issues/native-dependencies');
 const { probeSchemaStrict } = require('../issues/capabilities-probe');
 const recordSnapshot = require('../issues/record-snapshot');
+const { enrichRecords, ghTimeoutFor, warningLine } = require('../issues/author-association');
+const { foreignBlockerBlocks } = require('../issues/record-dependencies');
+const { bodyForeignBlockers } = require('../issues/cross-repo-states');
 
 const CANDIDATE_FIELDS = 'number,title,body,labels,createdAt';
 
@@ -40,16 +43,31 @@ function fetchReadyCandidates({ limit, runner }) {
   return jsonOut(runner, ['issue', 'list', '--label', 'ready', '--state', 'open', '--json', CANDIDATE_FIELDS, '--limit', String(limit)]);
 }
 
-// (issues, openNumbers) -> candidates surviving refine-headless.md Step 1's cheap
-// pre-pass: agent-filed origin, no existing grant, not already claimed, no
-// open 'Blocked by #N'. Each candidate carries its own parsed `facets`.
-function filterCandidates(issues, openNumbers) {
-  return issues
+// (candidates, foreignByRecord) -> the candidates with no open-or-unreadable
+// body-declared foreign blocker. The one definition of that rule, shared by
+// filterCandidates and computeOutlook's second step.
+function withoutForeignBlockers(candidates, foreignByRecord) {
+  return candidates.filter((c) => !(foreignByRecord.get(c.number) || []).some(foreignBlockerBlocks));
+}
+
+// (issues, openNumbers, foreignByRecord?) -> candidates surviving refine-headless.md
+// Step 1's cheap pre-pass: agent-filed origin, no existing grant, not already
+// claimed, no open 'Blocked by #N', and no open-or-unreadable body-declared
+// foreign blocker ('Blocked by owner/name#N'). `foreignByRecord` is the
+// precomputed Map<number, [{number, repository, state}]> from
+// bodyForeignBlockers (computeOutlook builds it, keeping this function pure).
+// It is required (pass `new Map()` for "no foreign refs yet"): a default of "no rule"
+// would fail open for a caller that forgot it, so a missing or non-Map value throws.
+// Each candidate carries its own parsed `facets`.
+function filterCandidates(issues, openNumbers, foreignByRecord) {
+  if (!(foreignByRecord instanceof Map)) throw new TypeError('filterCandidates: foreignByRecord must be a Map (pass new Map() for none)');
+  const cheapSurvivors = issues
     .map((i) => ({ ...i, facets: parseRecordFacets(i.labels) }))
     .filter((i) => i.facets.origin !== null)
     .filter((i) => !i.facets.grants.build && !i.facets.grants.merge)
     .filter((i) => !i.facets.bot.inProgress)
     .filter((i) => parseDependencies(i.body).every((d) => !openNumbers.has(d)));
+  return withoutForeignBlockers(cheapSurvivors, foreignByRecord);
 }
 
 // { limit, runner, sessionId, ttlSeconds, now? } -> the whole historical
@@ -61,13 +79,28 @@ function filterCandidates(issues, openNumbers) {
 // the trust-table fragment itself all read through, so one continuous
 // session pulling the whole issue set independently per skill invocation
 // doesn't burn a round-trip per call for identical data), else fetch live via
-// `UNION_FIELDS` and write the snapshot back for the next reader.
-function fetchAllRecords({ limit, runner, sessionId, ttlSeconds, now = Date.now() }) {
+// `UNION_FIELDS`, enrich the Origin records with their author's association
+// (#4577 — a live fetch only, never a cached snapshot), and write the snapshot
+// back for the next reader, a degraded enrichment included: the snapshot lives
+// for its TTL, so a transient failure leaves the gap in place for the same
+// window and only this first call prints the warning. owner/repo are
+// deliberately not passed to the enrichment: `--repo` addresses the native
+// calls while this list reads cwd's repo, so enrichRecords resolves the repo
+// with `repo view` on this same runner. A degraded enrichment fails open and
+// warns once on `stderr`.
+function fetchAllRecords({
+  limit, runner, sessionId, ttlSeconds, now = Date.now(), stderr = (s) => process.stderr.write(s),
+}) {
   const snapPath = recordSnapshot.snapshotPath(sessionId);
   if (snapPath && recordSnapshot.isFresh(snapPath, ttlSeconds, now)) {
     return recordSnapshot.readSnapshot(snapPath);
   }
-  const records = jsonOut(runner, ['issue', 'list', '--state', 'all', '--json', recordSnapshot.UNION_FIELDS, '--limit', String(limit)]);
+  const listed = jsonOut(runner, ['issue', 'list', '--state', 'all', '--json', recordSnapshot.UNION_FIELDS, '--limit', String(limit)]);
+  const bounded = (args) => runner(args, { timeout: ghTimeoutFor(args) });
+  const enriched = enrichRecords(listed, { runner: bounded });
+  const { records } = enriched;
+  const warning = warningLine(enriched);
+  if (warning) stderr(warning);
   if (snapPath) recordSnapshot.writeSnapshot(snapPath, records);
   return records;
 }
@@ -147,15 +180,19 @@ function computePhaseA({ candidates, policy, trustRowsArray }) {
 }
 
 // The full Step 0 -> Step 2 Phase A pipeline, one call. `policy` is
-// { ceiling, grantOriginationEnabled, riskFloor, sizeFloor, windowDays } —
+// { ceiling, grantOriginationEnabled, riskFloor, sizeFloor, trust } — `trust`
+// maps each of trust.js's TRUST_POLICY_KEYS to its resolved value —
 // already resolved by the caller (the CLI resolves it from
 // .claude-tweaks/policy.yml before calling in). `fetch` bundles every
 // injectable I/O dependency: { limit, workLinks, integrationBranch, owner,
-//   repo, runner, nativeRunner?, gitRunner, probeFn?, sessionId?, ttlSeconds? }
-//   — the last two feed the session-scoped record-snapshot cache
+//   repo, runner, nativeRunner?, gitRunner, probeFn?, sessionId?, ttlSeconds?,
+//   foreignDeps? }
+//   — sessionId/ttlSeconds feed the session-scoped record-snapshot cache
 //   (fetchAllRecords above); omitted or unresolvable, the cache is simply
 //   never fresh and every call fetches live, same as before this cache
-//   existed. nativeRunner: see resolveSubIssueNumbers.
+//   existed. nativeRunner: see resolveSubIssueNumbers. foreignDeps:
+//   { spawn?, stderr? } for the body-declared foreign blocker state lookup
+//   (cross-repo-states.js's resolveForeignStates); omitted, the real spawn.
 //
 // Returns the full envelope the CLI prints, and the exact shape
 // skills/backlog/refine-headless.md's Step 1 / Step 2 Phase A tmp files need
@@ -183,7 +220,7 @@ function computeOutlook(policy, fetch) {
   }
 
   const {
-    limit, workLinks, integrationBranch, owner, repo, host, runner, nativeRunner, gitRunner, probeFn, sessionId, ttlSeconds,
+    limit, workLinks, integrationBranch, owner, repo, host, runner, nativeRunner, gitRunner, probeFn, sessionId, ttlSeconds, foreignDeps, stderr,
   } = fetch;
 
   // One `--state all` fetch (session-cached) supplies both this run's
@@ -191,11 +228,17 @@ function computeOutlook(policy, fetch) {
   // record set trustRows grades — the same single-fetch shape refine-headless.md
   // originally derived openNumbers from, never a second bare `--state open`
   // call of its own.
-  const allRecords = fetchAllRecords({ limit, runner, sessionId, ttlSeconds });
+  const allRecords = fetchAllRecords({
+    limit, runner, sessionId, ttlSeconds, stderr,
+  });
   const openNumbers = new Set(allRecords.filter((r) => r.state === 'OPEN').map((r) => r.number));
 
   const readyIssues = fetchReadyCandidates({ limit, runner });
-  const candidates = filterCandidates(readyIssues, openNumbers);
+  // The foreign-blocker state lookup is one batched call over the cheap-filter
+  // survivors' body refs (none at all when no survivor declares one), then the
+  // foreign-blocker filter runs on those survivors with its result.
+  const cheapSurvivors = filterCandidates(readyIssues, openNumbers, new Map());
+  const candidates = withoutForeignBlockers(cheapSurvivors, bodyForeignBlockers(cheapSurvivors, foreignDeps));
 
   const subIssueNumbers = resolveSubIssueNumbers({
     workLinks, limit, runner, nativeRunner: nativeRunner || runner, owner, repo, host, probeFn,
@@ -206,7 +249,7 @@ function computeOutlook(policy, fetch) {
     labels: r.labels.map((l) => (typeof l === 'string' ? l : l.name)),
     hasParent: subIssueNumbers.has(r.number),
   }));
-  const rows = trustRows(records, gitLog, Date.now(), { 'trust-revert-window-days': pol.windowDays });
+  const rows = trustRows(records, gitLog, Date.now(), Object.fromEntries(TRUST_POLICY_KEYS.map((k) => [k, (pol.trust || {})[k]])));
 
   const phaseA = computePhaseA({ candidates, policy: pol, trustRowsArray: rows });
   const { eligible, refused } = machineGrantOutlook(candidates, pol, rows);

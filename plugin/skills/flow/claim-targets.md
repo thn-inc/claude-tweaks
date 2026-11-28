@@ -100,7 +100,7 @@ the same open-queue set `dispatch/SKILL.md` Step 2 uses (open + no `bot:*`, not 
 `auto:build` here — this is informational, not a selection), then run:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/preflight-records.js" {target} [{target} …] {other-open-issue} [{other-open-issue} …] [--repo owner/name]
+node "${CLAUDE_PLUGIN_ROOT}/bin/preflight-records.js" {target} [{target} …] {other-open-issue} [{other-open-issue} …] [--repo [host/]owner/name]
 ```
 
 passing every named target together with that open-queue's issue numbers as positional
@@ -371,8 +371,12 @@ stays best-effort and the claim read stays the authoritative hold check:
   the gh-absent MCP claim procedure does not reach this stop, and a refused claim there stays the transient `## Flow: Claim failed` card (#4899).
 - **2** — malformed invocation or missing dependency (a bad `--run-id`/`--targets` value, `gh`
   absent, or a non-timeout repo-slug resolution failure — a real auth error or 404, never a
-  timeout, which is exit 4 instead per #3065) — a bug in this call, not a claim outcome. Treat as
-  a hard stop.
+  timeout, which is exit 4 instead per #3065) — a bug in this call, not a claim outcome. The
+  exception is an origin host the origin-host gate refuses (`claim-targets: unknown-host —
+  {refusal}`, #4794): that is an environment stop, not a bug in the call — the refusal text names
+  its remedy (export `GH_HOST` as the host the origin really reaches, per the refusal), and nothing
+  was claimed. Treat as a hard stop. The gh-absent MCP claim procedure does not reach that refusal; it claims
+  on the GitHub MCP's host.
 
 **On exit 3, 4, 5, 6, or 7** — release nothing further (the CLI's `released`/`releaseFailed` already covers
 the attempt; a non-empty `releaseFailed` is not this step's problem to retry — the named claim
@@ -380,7 +384,7 @@ simply rides out its TTL). When this
 invocation minted the run dir itself (`PIPELINE_RUN_DIR` was unset on entry) and it still holds no
 `config.yml` (never adopted), remove the minted directory immediately — an empty mint left in
 place sorts newest and steals the hook fallback resolver's attribution until the reconciler's
-`isOrphanedMint` sweep catches it (~24h); a dispatch-minted dir (`PIPELINE_RUN_DIR` set on entry)
+`orphaned-mint` sweep catches it (~24h); a dispatch-minted dir (`PIPELINE_RUN_DIR` set on entry)
 belongs to the caller and is left in place. Then stop the pipeline before Step 3 (no worktree,
 nothing else left behind).
 

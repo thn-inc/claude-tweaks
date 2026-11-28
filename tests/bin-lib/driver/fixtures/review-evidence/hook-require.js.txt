@@ -1,0 +1,9 @@
+'use strict';
+const { describe, it, beforeEach } = require('node:test');
+
+describe('widget', () => {
+  beforeEach(() => {
+    require('./no-such-module');
+  });
+  it('runs after setup', () => {});
+});

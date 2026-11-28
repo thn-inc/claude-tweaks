@@ -7,13 +7,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 
 const { pluginRootReader, skillsPrefix } = require('../../../plugin/bin/lib/skill-audit/plugin-root-reader');
 
 function tempDir(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  return scratchDir(prefix);
 }
 
 function writeFile(file, text) {

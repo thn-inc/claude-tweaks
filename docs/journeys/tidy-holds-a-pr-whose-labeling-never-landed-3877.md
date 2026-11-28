@@ -46,7 +46,7 @@ files:
 - **Should understand:**
   - The checklist shows `Held (not armed): PR #{n} — acceptance labeling not landed ({reason})`, where `{reason}` is one of `verify.json missing`, `acceptance-labeling: {result}` (or `unparseable` / `row absent` for a malformed file), `no run dir`, or `unreadable: {verify.json | labels | comments}`.
   - The recommendation is `/claude-tweaks:dispatch close-out #{record}`, which runs `_shared/pr-first-merge.md` Step 1 before it merges.
-  - For `no run dir`, the recommendation is to run close-out from the checkout that holds the run a validated marker names. If no validated marker names one, run `/claude-tweaks:demo #{record}` and merge by hand.
+  - For `no run dir`, the recommendation is to run close-out from the checkout that holds the run a validated marker names. If no validated marker names one, run `/claude-tweaks:accept #{record}` and merge by hand.
   - When the tidy run has a run dir, its own `decisions.md` (not the PR's run) gains a `SKIP` line for `Step 7 Arm ready PR (skipped)`, naming the reason and the recommended command.
 - **Red flags:** an armed PR with no labeling evidence (no `pass`/`skip` row, no pending acceptance label on every `Fixes` record, no trusted `brief`/`try-it` run comment, no trusted acceptance packet on every `Fixes` record); a PR armed after a failed `verify.json` read, or on an empty `Fixes` set or a failed label or run-comment read with no other live check landing; a bare `close-out` with no target; a no-run-dir hold that recommends close-out from the same environment (close-out stops there too); a report or `SKIP` line that echoes an unvalidated marker value or a `verify.json` string that is not a bare word.
 

@@ -19,6 +19,7 @@
 // call that can throw is wrapped so a failure never escapes uncaught.
 'use strict';
 
+const fs = require('fs');
 const path = require('path');
 const claimStore = require('../issues/claim-store');
 const {
@@ -28,6 +29,9 @@ const { ensureLabelPayload } = require('../issues/labels');
 const { runClassified, isTimeoutError } = require('../shared-primitives');
 const { appendEntry, formatEntry, resolveTarget } = require('../log-decision/append');
 const { CLAIM_LOG_SECTION, CLAIM_LOG_STEP, claimLogText } = require('../log-decision/claim-log');
+const { toRepoName } = require('../station-events/emit');
+const { planEvent } = require('../station-events/plan');
+const { LANES, SESSION_BOUND_STATION, transitionsForLabel, releaseTransition } = require('../station-events/stations');
 const { tombstoneInFlightPr, refusalText } = claimStore;
 
 const BOT_IN_PROGRESS = 'bot:in-progress';
@@ -38,14 +42,15 @@ const BOT_IN_PROGRESS_DESC = 'Bot state: an agent currently holds the claim on t
 const BOT_IN_PROGRESS_COLOR = '6A737D';
 const ABORT_REASON = 'never-started: file-overlap group partial claim';
 
-const USAGE = 'usage: claim-targets.js --run-id <id> --targets <n,n,...> [--keep-going] [--run <run-dir>] [--steps <step,step,...>] [--resume-pr <url>] [--help]\n'
+const USAGE = 'usage: claim-targets.js --run-id <id> --targets <n,n,...> [--keep-going] [--run <run-dir>] [--steps <step,step,...>] [--resume-pr <url>] [--lane <lane>] [--help]\n'
+  + '  --lane <standard|express|driver|unknown>: the lane stamped on this claim\'s station events (default unknown)\n'
   + '  --steps <step,step,...>: the resolved /flow step list; one with neither build nor test claims\n'
   + '           nothing and exits 0 with {claimed:[],alreadyOwned:[],skipped:[],skipGuard:"no-build-or-test"}\n'
   + '  --resume-pr <url>: re-claims a stale claim whose in-flight PR is exactly <url> (dispatch resume, #4588);\n'
   + '           the envelope then carries resumedPr:[{issue,link}] and the claim-log line names the PR\n'
   + '  --run <run-dir>: writes the Step 2.8 claim-log line to that run dir\'s decisions.md for every claimed target\n'
   + '  exit 0 = all claimed (or, with --keep-going, partial; or the --steps skip-guard)\n'
-  + '  exit 2 = malformed invocation or missing dependency\n'
+  + '  exit 2 = malformed invocation or missing dependency (an origin host the origin-host gate refuses, `unknown-host`, included)\n'
   + '  exit 3 = contested, or in flight: a pr-opened tombstone whose linked PR is still open,\n'
   + '           or a stale claim whose run marker sits on an open same-repo PR\n'
   + '           (contested: {contested:[{issue,holder}], ...}; in-flight: {inFlight:[{issue,link}], ...})\n'
@@ -78,9 +83,29 @@ function parseJsonOrNull(text) {
   try { return JSON.parse(text); } catch { return null; }
 }
 
+// #6147: the lane and ceremony profile a run manifest already holds, for the
+// `planned` event. Each is a string or null; any read or parse failure is
+// both null (the plan then falls back to the default list). Never throws.
+// The run dir is anchored by the same `resolveTarget` check the claim log
+// uses ([IL-127]): a worktree-local shadow copy of a run dir is not read.
+// `anchor` is the `{ cwd, mainRoot }` seam, left empty in production.
+function readRunManifestPlanInputs(runDir, anchor = {}) {
+  const none = { lane: null, ceremonyProfile: null };
+  try {
+    const target = resolveTarget({ runDir, ...anchor });
+    if (!target.ok) return none;
+    const manifest = JSON.parse(fs.readFileSync(path.join(path.dirname(target.file), 'manifest.json'), 'utf8'));
+    if (manifest === null || typeof manifest !== 'object' || Array.isArray(manifest)) return none;
+    return {
+      lane: typeof manifest.lane === 'string' ? manifest.lane : null,
+      ceremonyProfile: typeof manifest.ceremonyProfile === 'string' ? manifest.ceremonyProfile : null,
+    };
+  } catch { return none; }
+}
+
 function parseArgs(argv) {
   const opts = {
-    runId: null, targetsRaw: null, keepGoing: false, help: false, runDir: null, stepsRaw: null, resumePr: null,
+    runId: null, targetsRaw: null, keepGoing: false, help: false, runDir: null, stepsRaw: null, resumePr: null, lane: 'unknown',
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -92,6 +117,7 @@ function parseArgs(argv) {
     else if (a === '--run') opts.runDir = next();
     else if (a === '--steps') opts.stepsRaw = next();
     else if (a === '--resume-pr') opts.resumePr = next();
+    else if (a === '--lane') opts.lane = next();
     else return { error: `unknown argument: ${a}` };
   }
   return opts;
@@ -315,6 +341,10 @@ function run(argv, deps) {
     return 2;
   }
 
+  // #5902: the lane is passed in, never inferred; a bare flag, a blank or an
+  // unknown name is malformed rather than silently read as `unknown`.
+  if (!LANES.includes(opts.lane)) { deps.stderr(USAGE); return 2; }
+
   // #4027: `flow/claim-targets.md`'s skip-guard — a step list with neither
   // `build` nor `test` (a dispatched group's second call, any wrap-up-only
   // resume) has nothing left to build, so nothing to lock. Checked after all
@@ -330,6 +360,18 @@ function run(argv, deps) {
       }));
       return 0;
     }
+  }
+
+  // #4794: the origin-host gate, run-level like a refused bootstrap: a refused
+  // origin (an unknown host, an SSH alias) exits 2 with or without `--keep-going`,
+  // before the first `gh` call — no claim read or write, no label, no claim-log
+  // line, so "never claimed" holds for every target. A `null` verdict or one with
+  // no refusal (no origin, an unparseable one such as a cloud sandbox's proxy
+  // remote) changes nothing: `gh repo view` resolves the repo as before.
+  const gate = typeof deps.gateOrigin === 'function' ? deps.gateOrigin() : null;
+  if (gate && gate.refusal) {
+    deps.stderr(`claim-targets: unknown-host — ${gate.refusal}\n`);
+    return 2;
   }
 
   // #3065: a `gh` timeout resolving the repo slug is retried once (same
@@ -370,6 +412,14 @@ function run(argv, deps) {
   // `link` against this exact owner/repo before ever calling `deps.gh` —
   // split once here rather than re-parsing `repoSlug` per target.
   const [repoOwner, repoName] = repoSlug.split('/');
+  // #4794: the run's one `{ host, ghRepo }` target, resolved once. The stale-claim
+  // listing's `--repo` and both PR-url matches (the tombstone's and the stale
+  // claim's) take it, so no path lists on one host and matches urls on another. The gate's
+  // admitted host rides along as the third argument: one origin read decides (never a second
+  // read of its own), and a gate with no spec passes null so the seam falls back to its own read.
+  const repoTarget = typeof deps.repoTarget === 'function'
+    ? deps.repoTarget(repoOwner, repoName, gate && gate.spec ? gate.spec.host : null)
+    : null;
 
   const claimedThisRun = [];
   const alreadyOwned = [];
@@ -422,6 +472,7 @@ function run(argv, deps) {
     const { released, releaseFailed } = releaseClaimedThisRun(
       deps, repoSlug, opts.runId, [...claimedThisRun, ...extraToRelease],
     );
+    for (const issue of released) emitRollbackExit(issue);
     deps.stdout(JSON.stringify({ ...envelope, released, releaseFailed }));
     return exitCode;
   }
@@ -528,6 +579,60 @@ function run(argv, deps) {
     return abort({ permissionDenied: { issue, operation, reason } }, 7);
   }
 
+  // #5902: station events through the optional `deps.stationEvent` (absent =
+  // none). Each emit is wrapped, so a throwing emitter never changes stdout,
+  // the exit code or `claimed`. The discriminator is the claim's own
+  // `claimedAt`, so a re-emit of the same claim keys identically.
+  const stationRepoName = toRepoName(repoSlug);
+  function emitStation(issue, claimedAt, fields) {
+    if (typeof deps.stationEvent !== 'function' || !claimedAt) return;
+    try {
+      deps.stationEvent({
+        repoName: stationRepoName, recordNumber: issue, outcome: null,
+        lane: opts.lane, sessionId: deps.sessionId, runId: opts.runId, ...fields,
+      });
+    } catch { /* best-effort: the claim stands */ }
+  }
+  function emitSessionBound(issue, claimedAt) {
+    if (typeof deps.sessionId !== 'string' || deps.sessionId === '') return;
+    emitStation(issue, claimedAt, { kind: 'session_bound', station: SESSION_BOUND_STATION, discriminator: claimedAt });
+  }
+  function emitInProgressTransition(issue, claimedAt) {
+    for (const row of transitionsForLabel(BOT_IN_PROGRESS, 'added')) {
+      emitStation(issue, claimedAt, { ...row, discriminator: `${claimedAt}:${row.kind}:${row.station}` });
+    }
+  }
+  // #6147: one `planned` per newly claimed record. The list is chosen by the
+  // passed --lane, else the run manifest's lane; the line's own lane stays
+  // --lane. The manifest is read once, on the first emit.
+  let manifestPlanInputs = null;
+  function emitPlanned(issue, claimedAt) {
+    if (typeof deps.stationEvent !== 'function' || !claimedAt) return;
+    try {
+      if (manifestPlanInputs === null) {
+        manifestPlanInputs = opts.runDir !== null ? readRunManifestPlanInputs(opts.runDir, { mainRoot: deps.mainRoot }) : { lane: null, ceremonyProfile: null };
+      }
+      const listLane = opts.lane !== 'unknown' ? opts.lane : (manifestPlanInputs.lane ?? opts.lane);
+      deps.stationEvent(planEvent({
+        repoName: stationRepoName, recordNumber: issue, lane: opts.lane, listLane,
+        ceremonyProfile: manifestPlanInputs.ceremonyProfile, sessionId: deps.sessionId, runId: opts.runId,
+      }));
+    } catch { /* best-effort: the claim stands */ }
+  }
+  // `abort()`'s rollback ends the build visit of every record this run had
+  // claimed and actually released; an unverified extra target was never
+  // claimed here, so it has no `claimedAt` entry and emits nothing.
+  const claimedAtByIssue = new Map();
+  function emitRollbackExit(issue) {
+    if (!claimedAtByIssue.has(issue)) return;
+    const claimedAt = claimedAtByIssue.get(issue);
+    const transition = releaseTransition(ABORT_REASON);
+    emitStation(issue, claimedAt, {
+      ...transition,
+      payload: { ...transition.payload, reason: ABORT_REASON }, discriminator: `${claimedAt}:abort`,
+    });
+  }
+
   for (let i = 0; i < targets.length; i += 1) {
     const issue = targets[i];
     const read = claimStore.readClaimBlob(deps, repoSlug, issue, knownTip);
@@ -563,7 +668,7 @@ function run(argv, deps) {
     // the check itself, falls straight through unchanged (fail open) —
     // see `tombstoneInFlightPr`'s own doc comment in claim-store.js.
     if (classified.state === 'tombstone') {
-      const inFlight = tombstoneInFlightPr(content, cachedPrReadGh, repoOwner, repoName);
+      const inFlight = tombstoneInFlightPr(content, cachedPrReadGh, repoOwner, repoName, repoTarget ? repoTarget.host : null);
       if (inFlight) {
         const stop = stopOrSkip(issue, 'in-flight', 'inFlight', 3, { link: inFlight.link });
         if (stop !== null) return stop;
@@ -606,7 +711,7 @@ function run(argv, deps) {
     if (classified.state === 'stale') {
       const inFlight = claimStore.staleClaimInFlightPr(content, cachedPrReadGh, repoOwner, repoName, (e) => {
         deps.stderr(`claim-targets: stale-claim open-PR check failed for #${issue} (reclaiming) — ${errText(e)}\n`);
-      });
+      }, repoTarget);
       if (inFlight && opts.resumePr !== null && inFlight.link === opts.resumePr) {
         // #4588: the one exception — the caller is resuming exactly this PR
         // (`/dispatch resume`), so the stale claim is re-claimed below instead
@@ -725,13 +830,27 @@ function run(argv, deps) {
     }
 
     claimedThisRun.push(issue);
+    const claimMarker = parseJsonOrNull(payload.fileContent);
+    const claimedAt = claimMarker && typeof claimMarker.claimedAt === 'string' && claimMarker.claimedAt !== ''
+      ? claimMarker.claimedAt : null;
+    if (claimedAt !== null) claimedAtByIssue.set(issue, claimedAt);
+    else if (typeof deps.stationEvent === 'function') {
+      deps.stderr(`claim-targets: station events skipped for #${issue} — claim payload has no claimedAt\n`);
+    }
+    emitSessionBound(issue, claimedAt);
     if (resumeLink !== null) resumedPr.push({ issue, link: resumeLink });
 
     try {
       ensureAndAddLabel(deps.gh, issue);
+      // A `--resume-pr` re-claim never left `build`: a new session binds,
+      // but there is no release exit or build entry to record.
+      if (resumeLink === null) emitInProgressTransition(issue, claimedAt);
     } catch (e) {
       labelFailures.push({ issue, error: errText(e) });
     }
+    // The claim landed whether or not the label add did, so the plan is written
+    // either way; a `--resume-pr` re-claim never left `build` and is not re-planned.
+    if (resumeLink === null) emitPlanned(issue, claimedAt);
 
     try {
       deps.gh(['issue', 'comment', String(issue), '--body', payload.commentBody]);
@@ -779,5 +898,5 @@ function run(argv, deps) {
 }
 
 module.exports = {
-  run, parseArgs, parseTargets, USAGE, FLOW_STEPS, BOT_IN_PROGRESS, ABORT_REASON, defaultAppendClaimLog,
+  run, parseArgs, parseTargets, USAGE, FLOW_STEPS, BOT_IN_PROGRESS, ABORT_REASON, defaultAppendClaimLog, readRunManifestPlanInputs,
 };

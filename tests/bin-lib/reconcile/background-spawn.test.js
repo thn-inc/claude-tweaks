@@ -8,13 +8,14 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const cp = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
 const { spawnBackgroundIfStale, STATUS_FILENAME } = require('../../../plugin/bin/lib/reconcile/background-spawn');
 
 function rootWithStatus(status) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bgspawn-'));
+  const root = scratchDir('ct-bgspawn-');
   if (status) {
     fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
     fs.writeFileSync(path.join(root, '.claude-tweaks', STATUS_FILENAME), JSON.stringify(status));
@@ -44,7 +45,7 @@ test('fresh status suppresses the spawn', () => {
   const root = rootWithStatus({ completedAt: Date.now() });
   const stub = stubSpawn(() => { throw new Error('must not spawn'); });
   try {
-    assert.deepEqual(spawnBackgroundIfStale({ root, cwd: root }), { spawned: false, reason: 'fresh' });
+    assert.deepEqual(spawnBackgroundIfStale({ root, cwd: root, env: process.env }), { spawned: false, reason: 'fresh' });
     assert.equal(stub.calls.length, 0);
   } finally { stub.restore(); }
 });
@@ -54,7 +55,7 @@ test('stale status spawns detached + windowsHide with an error listener', () => 
   const child = fakeChild();
   const stub = stubSpawn(() => child);
   try {
-    const r = spawnBackgroundIfStale({ root, cwd: root, sessionId: 'sess-123' });
+    const r = spawnBackgroundIfStale({ root, cwd: root, sessionId: 'sess-123', env: process.env });
     assert.deepEqual(r, { spawned: true, reason: 'spawned' });
     assert.equal(stub.calls.length, 1);
     const [cmd, argv, opts] = stub.calls[0];
@@ -78,11 +79,11 @@ test('a missing or malformed status file counts as stale; no session id leaves t
   const root = rootWithStatus(null);
   const stub = stubSpawn(() => fakeChild());
   try {
-    assert.equal(spawnBackgroundIfStale({ root, cwd: root }).reason, 'spawned');
+    assert.equal(spawnBackgroundIfStale({ root, cwd: root, env: process.env }).reason, 'spawned');
     assert.equal(stub.calls[0][2].env, process.env);
     fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
     fs.writeFileSync(path.join(root, '.claude-tweaks', STATUS_FILENAME), '{not json');
-    assert.equal(spawnBackgroundIfStale({ root, cwd: root }).reason, 'spawned');
+    assert.equal(spawnBackgroundIfStale({ root, cwd: root, env: process.env }).reason, 'spawned');
   } finally { stub.restore(); }
 });
 
@@ -91,8 +92,8 @@ test('an explicit now past the TTL makes a once-fresh status stale', () => {
   const root = rootWithStatus({ completedAt });
   const stub = stubSpawn(() => fakeChild());
   try {
-    assert.equal(spawnBackgroundIfStale({ root, cwd: root, now: completedAt }).reason, 'fresh');
-    assert.equal(spawnBackgroundIfStale({ root, cwd: root, now: completedAt + 24 * 60 * 60 * 1000 }).reason, 'spawned');
+    assert.equal(spawnBackgroundIfStale({ root, cwd: root, now: completedAt, env: process.env }).reason, 'fresh');
+    assert.equal(spawnBackgroundIfStale({ root, cwd: root, now: completedAt + 24 * 60 * 60 * 1000, env: process.env }).reason, 'spawned');
   } finally { stub.restore(); }
 });
 
@@ -100,14 +101,14 @@ test('a throwing spawn reports spawn-failed', () => {
   const root = rootWithStatus({ completedAt: 1 });
   const stub = stubSpawn(() => { throw new Error('EAGAIN'); });
   try {
-    assert.deepEqual(spawnBackgroundIfStale({ root, cwd: root }), { spawned: false, reason: 'spawn-failed' });
+    assert.deepEqual(spawnBackgroundIfStale({ root, cwd: root, env: process.env }), { spawned: false, reason: 'spawn-failed' });
   } finally { stub.restore(); }
 });
 
 test('no root reports no-root without spawning', () => {
   const stub = stubSpawn(() => { throw new Error('must not spawn'); });
   try {
-    assert.deepEqual(spawnBackgroundIfStale({ root: null, cwd: os.tmpdir() }), { spawned: false, reason: 'no-root' });
+    assert.deepEqual(spawnBackgroundIfStale({ root: null, cwd: os.tmpdir(), env: process.env }), { spawned: false, reason: 'no-root' });
     assert.equal(stub.calls.length, 0);
   } finally { stub.restore(); }
 });

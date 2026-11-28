@@ -12,6 +12,7 @@ const dispatchResume = require('../../../plugin/bin/dispatch-resume');
 const { resumeEligibility, refusalDetail } = require('../../../plugin/bin/lib/dispatch/resume-eligibility');
 const { claimPayload, releasePayload } = require('../../../plugin/bin/lib/issues/claims');
 const { findConflictingSession, findSessionOnWorktree } = require('../../../plugin/bin/lib/hooks/sibling-sessions');
+const { captureGhTimeout } = require('../../helpers/gh-timeout-probe');
 
 const label = (...names) => names.map((name) => ({ name }));
 
@@ -473,6 +474,29 @@ test('realDeps wires the real sibling reads, the claim read and the verdict CLI'
   for (const key of ['readFile', 'ghAvailable', 'repo', 'mainRoot', 'linked', 'resume', 'now', 'stdout', 'stderr']) {
     assert.equal(typeof realDeps[key], 'function', key);
   }
+});
+
+function linkedGhTimeoutFor(envValue) {
+  const cliPath = require.resolve('../../../plugin/bin/stuck-open-prs');
+  const resumePath = require.resolve('../../../plugin/bin/dispatch-resume');
+  return captureGhTimeout({
+    envValue,
+    modulePaths: [cliPath, resumePath],
+    exercise: (setEnv) => {
+      // stuck-open-prs reads the getter at require time, so the env var comes before the require.
+      setEnv();
+      const fresh = require(cliPath);
+      try { fresh.realDeps.linked({ numbers: [1], owner: 'o', repo: 'r', host: 'github.com' }); } catch { /* the '{}' reply is not a linked-PR batch; only the captured timeout matters */ }
+    },
+  });
+}
+
+test("#4815 AC1.1: realDeps.linked's gh runner passes GH_BATCH_TIMEOUT_MS", () => {
+  assert.equal(linkedGhTimeoutFor('45000'), 45000);
+});
+
+test('#4815 AC1.1: a gh-timeout-ms below the floor leaves the linked-PR runner at 30000', () => {
+  assert.equal(linkedGhTimeoutFor('10000'), 30000);
 });
 
 // ---- the origin gate (#4951): the real gate and the real linked-PR read; only gh is a recording fake ----

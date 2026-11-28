@@ -6,7 +6,8 @@
 // record) is read from the `### Key Files` subsection its body already carries.
 'use strict';
 
-const { normalizeLabelNames, extractSection } = require('./record');
+const { normalizeLabelNames } = require('./record');
+const { findSection } = require('../markdown-blocks');
 
 // A path referenced by at least this many items, OR at least this fraction
 // of the batch (whichever is larger — see the max() below), is treated as a
@@ -56,6 +57,8 @@ function computeHubPaths(items, getFiles, minCount, fraction) {
 // union-find step entirely — as is any bare directory-level entry, regardless
 // of count. Such a path can never bridge two items together, though each
 // item's other files still can.
+// `options.hubPaths` (a Set) replaces the batch-computed hub set entirely; any
+// other value is ignored and the batch computes its own hubs.
 function groupByFileOverlap(items, options = {}) {
   const hubPathMinCount = options.hubPathMinCount ?? HUB_PATH_MIN_COUNT;
   const hubPathFraction = options.hubPathFraction ?? HUB_PATH_FRACTION;
@@ -76,7 +79,11 @@ function groupByFileOverlap(items, options = {}) {
 
   for (const item of items) parent.set(item.id, item.id);
 
-  const hubPaths = computeHubPaths(items, (item) => item.keyFiles, hubPathMinCount, hubPathFraction);
+  // An external hub set (e.g. computed from the open backlog by backlogHubPaths)
+  // replaces the batch-computed one; absent, the batch decides as before.
+  const hubPaths = options.hubPaths instanceof Set
+    ? options.hubPaths
+    : computeHubPaths(items, (item) => item.keyFiles, hubPathMinCount, hubPathFraction);
 
   // Two independent, additive exclusions from bridging. Neither removes a file
   // from an item's keyFiles — only its eligibility to bridge two items here:
@@ -101,6 +108,19 @@ function groupByFileOverlap(items, options = {}) {
     groups.get(root).push(item.id);
   }
   return [...groups.values()];
+}
+
+// Hub paths of an open backlog: a path cited in `### Key Files` by at least
+// max(minCount, ceil(n * fraction)) of `openRecords`. Feeds groupByFileOverlap's
+// `hubPaths` option so a run's own proposals are judged against the backlog's
+// churn rather than their own small batch.
+function backlogHubPaths(openRecords, options = {}) {
+  return computeHubPaths(
+    openRecords,
+    (record) => extractKeyFiles(record),
+    options.hubPathMinCount ?? HUB_PATH_MIN_COUNT,
+    options.hubPathFraction ?? HUB_PATH_FRACTION,
+  );
 }
 
 // A group whose member count exceeds this threshold is oversized — a second,
@@ -194,12 +214,14 @@ function bundleFastLaneSingletons(groups, options = {}) {
     eligible.push(issue);
   }
 
-  // Bucket by (auto:merge presence, priority band) — never merge across
-  // either axis.
+  // Bucket by (merge grant, priority band) — never merge across either axis.
+  // A merge grant is auto:merge together with auto:build (#5734): a leftover
+  // auto:merge alone buckets with the ungranted records, so it cannot hold a
+  // granted bundle at pending-review.
   const buckets = new Map();
   for (const issue of eligible) {
     const names = normalizeLabelNames(issue.labels);
-    const autoMerge = names.includes('auto:merge');
+    const autoMerge = names.includes('auto:merge') && names.includes('auto:build');
     const priority = names.find((n) => n.startsWith('priority:')) || 'none';
     const key = `${autoMerge}|${priority}`;
     if (!buckets.has(key)) buckets.set(key, []);
@@ -429,40 +451,60 @@ const BACKTICKED_RE = /`([^`]+)`/;
 // still carrying the unfilled template must not union with every other one.
 const TEMPLATE_PLACEHOLDER_RE = /^\{.*\}$/;
 
-// Extracts the paths listed under a body's `### Key Files` subsection, or []
-// when the body has no such subsection — the documented absence case, not an
-// error (skills/specify/decomposition-mode.md: records without one "contribute
-// nothing to the map — skip silently"). Boundary-finding (tolerates `##`..`####`
-// so a re-nested body still parses; the section always ends at the next heading
-// of any level — Gotchas routinely names files in backticks, and scraping those
-// would union records on an incidental mention) comes from record.js's shared
-// extractSection, at its own default options — the same h2-h4/any-heading-stop
-// shape this function always used.
-function extractKeyFilesSection(body) {
-  const section = extractSection(body, 'Key Files');
-  if (!section) return [];
+// Reads a body's `### Key Files` subsection into {entries, unparsed}, or null when
+// the body has no such subsection — the documented absence case, not an error
+// (skills/specify/decomposition-mode.md: records without one "contribute nothing
+// to the map — skip silently"). null, "present but empty" ({entries: [], unparsed:
+// 0}) and "present but unreadable" (unparsed > 0) stay three distinct shapes: a
+// caller that needs to tell an unreadable section from an empty one (the micro-plan
+// gate) must not read them through extractKeyFilesSection's flat list.
+// Boundary-finding (tolerates `##`..`####` so a re-nested body still parses; the
+// section always ends at the next heading of any level — Gotchas routinely names
+// files in backticks, and scraping those would union records on an incidental
+// mention) comes from markdown-blocks.js's shared findSection, at its own default
+// options — the same h2-h4/any-heading-stop shape extractSection reads.
+// `unparsed` counts list items with no backticked span, template-placeholder or empty-span
+// items (no entry is produced for them), plus 1 when the section has non-blank text but no
+// list item at all.
+function extractKeyFileEntries(body) {
+  const section = findSection(body, 'Key Files');
+  if (section === null) return null;
 
-  const files = [];
+  const entries = [];
+  let unparsed = 0;
+  let sawListItem = false;
   for (const line of section.split('\n')) {
     const item = LIST_ITEM_RE.exec(line);
     if (!item) continue;
+    sawListItem = true;
     // First backticked span wins: it drops the trailing annotation, and an item
     // naming an alternative (``- `a/tests/` or `tests/` ``) yields the primary
     // path rather than both. Matching the annotation would also re-introduce
     // code-health's comma-splitting bug on "(modify — Step 1, Step 2)".
     const backticked = BACKTICKED_RE.exec(item[1]);
-    if (!backticked) continue;
+    if (!backticked) { unparsed += 1; continue; }
     const file = backticked[1].trim();
-    if (!file || TEMPLATE_PLACEHOLDER_RE.test(file)) continue;
-    files.push(file);
+    // An unfilled template item or an empty span names no file: no entry, but the
+    // section was not read, so it counts as unparsed (an unfilled template must not pass a gate).
+    if (!file || TEMPLATE_PLACEHOLDER_RE.test(file)) { unparsed += 1; continue; }
+    entries.push({ path: file, note: item[1].slice(backticked.index + backticked[0].length).trim() });
   }
-  return files;
+  if (!sawListItem && section.trim() !== '') unparsed += 1;
+  return { entries, unparsed };
+}
+
+// The paths listed under a body's `### Key Files` subsection, or [] when the body
+// has no such subsection. A flat view of extractKeyFileEntries for the callers
+// (file-overlap grouping, implementer tiering) that only need the paths.
+function extractKeyFilesSection(body) {
+  const r = extractKeyFileEntries(body);
+  return r ? r.entries.map((e) => e.path) : [];
 }
 
 // issue: { labels } shaped like `gh api .../issues/{n}` output. True when
 // extractKeyFiles reads this issue via the `### Key Files` fallthrough branch
 // below (a /specify-produced sub-issue, a /capture record, or a hand-filed
-// one) rather than one of the four health-sweep origin headers — i.e. when an
+// one) rather than one of the five health-sweep origin headers (code-, harness-, journey-, docs-, ci-health) — i.e. when an
 // empty extractKeyFiles([]) result for this issue is actually meaningful (the
 // record was supposed to carry a `### Key Files` subsection and doesn't) as
 // opposed to expected-and-correct (a health-sweep record's own header shape
@@ -470,13 +512,14 @@ function extractKeyFilesSection(body) {
 // that explicitly returns [] regardless). Callers that want to warn on an
 // empty extraction — multi-spec.md's Cross-spec conflict detection,
 // dispatch's queue-pull-script.md, help/status-scan.md's Conflict detection —
-// gate the warning on this, so the four health-sweep origins never trip it.
+// gate the warning on this, so the five health-sweep origins never trip it.
 function expectsKeyFilesSection(issue) {
   const names = normalizeLabelNames(issue && issue.labels);
   return !hasOrigin(names, 'code-health')
     && !hasOrigin(names, 'harness-health')
     && !hasOrigin(names, 'journey-health')
-    && !hasOrigin(names, 'docs-health');
+    && !hasOrigin(names, 'docs-health')
+    && !hasOrigin(names, 'ci-health');
 }
 
 // issue: { body, labels } shaped like `gh api .../issues/{n}` output.
@@ -519,12 +562,18 @@ function extractKeyFiles(issue) {
     return extractBoldHeaderFile(body);
   }
 
-  // Fallthrough — every record that is not one of the four health sweeps: a
+  // ci-health's header ("**Check:** {id} | **Workflow:** ...", bin/lib/ci-audit/
+  // issue-payload.js) names a checklist id first, not a file, so the bold-header
+  // extraction above would return that id as a path. A CI timing finding names no
+  // file it builds in, so it contributes nothing to the overlap map.
+  if (hasOrigin(names, 'ci-health')) return [];
+
+  // Fallthrough — every record that is not one of the five health sweeps (ci-health included): a
   // /claude-tweaks:specify-produced sub-issue, a /claude-tweaks:capture record, a
   // hand-filed one. These carry no by:* origin header to key off, but a shaped
   // body already lists its targets under `### Key Files`.
   //
-  // This must stay BELOW the four branches above, which all return early. An
+  // This must stay BELOW the five branches above, which all return early. An
   // origin-labelled record whose body happens to contain a `### Key Files`
   // heading is still read from its own header line, not from here ([IL-83]).
   return extractKeyFilesSection(body);
@@ -604,4 +653,4 @@ function selectGroupsForExplicitList(requestedNumbers, groups, batchSize) {
   return { selectedGroups, deferredByCap, notFound };
 }
 
-module.exports = { groupByFileOverlap, GROUP_SIZE_GUARD_DEFAULT, partitionGroupsBySizeGuard, bundleFastLaneSingletons, FASTLANE_BUNDLE_CAP_DEFAULT, extractKeyFiles, extractKeyFilesSection, expectsKeyFilesSection, parseExplicitIssueList, selectGroupsForExplicitList, hasOrigin, detectCrossPRFileOverlap, CROSS_PR_HUB_MIN_COUNT, CROSS_PR_HUB_FRACTION, directOverlaps, findInFlightNeighbours, buildDispatchGroups };
+module.exports = { groupByFileOverlap, backlogHubPaths, GROUP_SIZE_GUARD_DEFAULT, partitionGroupsBySizeGuard, bundleFastLaneSingletons, FASTLANE_BUNDLE_CAP_DEFAULT, extractKeyFiles, extractKeyFilesSection, extractKeyFileEntries, expectsKeyFilesSection, parseExplicitIssueList, selectGroupsForExplicitList, hasOrigin, detectCrossPRFileOverlap, CROSS_PR_HUB_MIN_COUNT, CROSS_PR_HUB_FRACTION, directOverlaps, findInFlightNeighbours, buildDispatchGroups };

@@ -15,11 +15,11 @@ The survey produces the **Creative Opportunities** block rendered before Next Ac
 
 ## When to run
 
-Run the survey before rendering the Pipeline Summary, after the resolve gate completes (nothing-left-behind), and only when `no-creative` was not set and `creative-survey` does not resolve to `off` — `CREATIVE_SURVEY=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values creative-survey)` — when skipped, omit decline detection, the wrapper call, and the block entirely. Decline detection runs **before** the survey call so the wrapper can suppress repeatedly-declined recommendations.
+Run the survey before rendering the Pipeline Summary, after the resolve gate completes (nothing-left-behind), and only when `no-creative` was not set and `creative-survey` does not resolve to `off` — `CREATIVE_SURVEY=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values creative-survey)` — when skipped, omit decline detection, the wrapper call, and the block entirely. Decline detection runs **after** the skill-load gate (a gate `skip` omits it — it only feeds the wrapper) and **before** the survey call so the wrapper can suppress repeatedly-declined recommendations.
 
 ## Survey procedure
 
-**Creative Opportunities survey (v4.5.0).** Before rendering the summary, invoke `/claude-tweaks:design-wrapper survey <changed-files>` against the full diff produced by the pipeline. The wrapper analyzes the diff heuristically (no screenshots are passed — `/flow` does not maintain its own browser session) and returns ranked recommendations for creative commands the user might want to run manually. Render the recommendations as a Creative Opportunities block (template in SKILL.md Step 5) before the Next Actions block.
+**Creative Opportunities survey (v4.5.0).** Before rendering the summary and before decline detection, run the gate per `_shared/skill-load-gate.md` with `--skill design-wrapper --mode survey`, `--files` the `<changed-files>` of the full diff produced by the pipeline, `--surface` where that file finds one, and `--run "$PIPELINE_RUN_DIR" --section "/flow" --step "Creative Opportunities survey"`. On `skip`, do not invoke the wrapper; skip decline detection and omit the block, as for a `{skipped: ...}` return below. On `proceed`, run decline detection, then invoke `/claude-tweaks:design-wrapper survey <changed-files>`. The wrapper analyzes the diff heuristically (no screenshots are passed — `/flow` does not maintain its own browser session) and returns ranked recommendations for creative commands the user might want to run manually. Render the recommendations as a Creative Opportunities block (template in SKILL.md Step 5) before the Next Actions block.
 
 Handle the wrapper return:
 

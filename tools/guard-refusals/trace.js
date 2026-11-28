@@ -5,7 +5,8 @@
 // classifyReason() reads the clause of Claude Code's worktree-isolation refusal ("… but this command
 // runs sed with a value computed at runtime …") and returns one id of REASONS. The patterns are
 // ordered: a specific clause is tested before a general one, because the general wording ("too complex
-// to verify") also appears inside the specific ones.
+// to verify") also appears inside the specific ones. #5587 added nine named reasons after the existing
+// patterns, so `other` only shrinks.
 //
 // buildFenceIndex()/traceFence() match by line. A refused command line of 20+ chars matches a fence
 // line when both are equal after normalization: the plugin root (a literal absolute path on the
@@ -15,11 +16,14 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const { walkMarkdown, shellFences } = require('./fences');
+const { REFUSAL_SIGNATURES } = require('../../plugin/bin/lib/hooks/harness-refusal');
 
 const REASONS = [
   'too-complex', 'names-git', 'git-redirect-shared', 'cd-shared', 'git-C-runtime', 'glob-git',
   'runs-eval', 'runs-complete', 'sed-runtime', 'node-runtime-operand', 'node-program-runtime',
-  'gh-runtime', 'gh-text', 'bash-construct', 'other',
+  'gh-runtime', 'gh-text', 'bash-construct',
+  'playwright-runtime', 'computed-command-name', 'env-text', 'python-git-text', 'git-twice',
+  'awk-program', 'subshell', 'arithmetic', 'other-worktree-cwd', 'other',
 ];
 
 // Ordered: first match wins. Each pattern reads the clause only (see clauseOf).
@@ -37,16 +41,29 @@ const REASON_TABLE = [
   ['gh-text', /\bruns gh with the text\b/],
   ['gh-runtime', /\bruns gh with a value computed at runtime/],
   ['bash-construct', /\bruns (?:bash|sh|zsh|dash|ksh|fish|pwsh)\b/],
-  // Anchored: "runs playwright-cli with a value … inside a construct too complex to verify" is `other`.
+  // Anchored: "runs playwright-cli with a value … inside a construct too complex to verify" is not too-complex.
   ['too-complex', /^(?:but )?this command is too complex to verify\b|\bthis command uses string content the parser did not tokenize\b/],
+  // #5587: nine clauses `other` used to absorb. Appended after every pattern above, so a refusal an
+  // existing id matches keeps that id. The clause is cut at 1500 chars (transcripts.js), so the two
+  // `[^\n]*` runs are bounded.
+  ['playwright-runtime', /\bruns playwright-cli with a value computed at runtime/],
+  ['computed-command-name', /\bruns a command whose name is computed at runtime/],
+  ['env-text', /\bruns env with the text\b/],
+  ['python-git-text', /\bfeeds python text naming git\b/],
+  ['git-twice', /\bnames git more than once in a single command\b/],
+  ['awk-program', /\bruns awk with a program that can execute commands\b/],
+  ['subshell', /\buses a subshell\b/],
+  ['arithmetic', /\bevaluates\b[^\n]*\barithmetically\b/],
+  ['other-worktree-cwd', /\bworking directory\b[^\n]*\bis in a different worktree\b/],
 ];
 
-// The part of a refusal from "but this command" up to "Refusing to run"; the whole text when it has
+// The part of a refusal from "but this command" up to the first of REFUSAL_SIGNATURES; the whole text when it has
 // no such frame (a caller handing over only the clause).
 function clauseOf(refusalText) {
   const text = String(refusalText);
   const start = Math.max(0, text.search(/\bbut this command/));
-  const end = text.indexOf('Refusing to run', start);
+  const hits = REFUSAL_SIGNATURES.map((sig) => text.indexOf(sig, start)).filter((i) => i !== -1);
+  const end = hits.length ? Math.min(...hits) : -1;
   return end === -1 ? text.slice(start) : text.slice(start, end);
 }
 

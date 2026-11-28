@@ -8,10 +8,22 @@ check" registration procedure, in the same spirit as `docs/hooks.md` for `plugin
 `plugin/bin/lib/hooks/`.
 
 - **Dispatch order is significant, not incidental.** `index.js` runs `mirror → red-tip → console →
-  release → post-merge → archive → archive-branches → remote-prune → ledger-residue → reap`, reap
+  release → post-merge → archive → archive-branches → remote-prune → ledger-residue → plan-refs → reap`, reap
   deliberately last because it physically removes worktrees — running it earlier would make every
   later check's live `git worktree list`-derived branch lookup fail for exactly the runs `reap` just
-  finished with. `post-merge` sits immediately before `archive` because it hands archive the run
+  finished with. The hollow-merge detection pre-step (#6143, `post-merge.js`'s `detectHollowMerges`) runs
+  immediately before `release` whenever `release`, `post-merge`, `archive`, `archive-branches`, `remote-prune` or
+  `reap` is in the pass: it finds merged PRs whose run was still in flight and hands release (`hollowRunIds`),
+  post-merge (`hollowRunDirs`) and archive (via `postMergeDeferred`) the runs to leave alone, hands
+  archive-branches and remote-prune (`heldBranches`) and reap (`heldWorktrees`, `heldBranches`) the branches and
+  worktrees those runs own (`hollowRunRefs`; each skips them `hollow-merge`), and fills `result.hollowMerges`. It
+  fails closed: a setup failure or a throw skips every one of those six checks in the pass with `{ check: '<the
+  requested ones, comma-joined>', reason: 'hollow-merge-check-failed' }`, except `no-remote` and `unknown-host` (an
+  origin the #4933 host gate refuses before any `gh` call, which release and post-merge refuse too), where the
+  check can never run and there is nothing to hold, so they run with empty sets. It runs on any work backend: only its record comment needs
+  `github-issues`, so another backend's hollow run is held with no comment. It reads the pass's one shared PR-state resolver,
+  warmed first with every non-terminal run's PR number (and each PR-less run's branch), and checks the pass budget
+  between runs: an exhausted budget returns `budget-exhausted`, so the pass fails closed rather than settle an unjudged run. `post-merge` sits immediately before `archive` because it hands archive the run
   dirs it must leave in place this pass (see the Post-merge closes section below).
   `red-tip` runs immediately after `mirror` so it reads the ref the shared fetch just refreshed
   instead of fetching a second time. See the ordering comment directly above the dispatch block in
@@ -65,10 +77,10 @@ check" registration procedure, in the same spirit as `docs/hooks.md` for `plugin
 - **The fast/background split (#820 D8).** `bin/lib/hooks/session-start.js`'s `FAST_CHECKS`
   (`mirror`, `red-tip`, `console` — cheap read/detect, run inline on every SessionStart) and
   `bin/hooks.js`'s `BACKGROUND_CHECKS` (`release`, `post-merge`, `archive`, `archive-branches`, `remote-prune`,
-  `ledger-residue`, `reap` — write-only/janitorial, run in a detached `reconcile-background` child
+  `ledger-residue`, `plan-refs`, `reap` — write-only/janitorial, run in a detached `reconcile-background` child
   process) must **partition `ALL_CHECKS` exactly** — no overlap, nothing silently dropped. A new
   check has to join one list or the other.
-  The unscoped `hooks.js reconcile` CLI defers three of the seven to that same background pass
+  The unscoped `hooks.js reconcile` CLI defers four of the eight to that same background pass
   (`CLI_DEFERRED_CHECKS`, #4032 — see the Timing contract below; `post-merge` is not among them
   and runs inline beside `archive`); an explicit `--checks` call is never deferred.
 
@@ -93,10 +105,16 @@ against reality than trusting it in the abstract; do that for whichever check yo
    `BACKGROUND_CHECKS`, pinned by `tests/bin-lib/hooks/reconcile-background.test.js`); a deferred
    check is then absent from the unscoped CLI's inline set. `plugin/skills/tidy/scan-procedures.md`'s
    Reconcile-first call lists every check explicitly for that reason, and
-   `tests/reconcile.test.js` pins that list to `ALL_CHECKS`.
+   `tests/reconcile-dispatch.test.js` pins that list to `ALL_CHECKS`. A check that joins
+   `CLI_DEFERRED_CHECKS` also joins the prose lists of the background-pass hand-off, which no test
+   pins: `plugin/skills/routine-kickoff/SKILL.md`'s Reconcile step (also its `local-merge` clause,
+   when the check runs there), `plugin/skills/dispatch/SKILL.md`'s second reconcile call, and
+   `plugin/skills/_shared/pr-first-merge-post-merge.md`'s background-pass list (#6055's review found
+   all three stale). A check that pushes a write to origin also takes a reconcile-converged row in
+   `plugin/skills/tidy/step-6-auto.md`'s Step 6 table.
 4. **`bin/hooks.js`'s `reconcile-threw` fallback** — a **hand-maintained duplicate** of
    `reconcile()`'s result shape (`{ mirror, redTip, worktrees, claims, postMerge, runs, branches,
-   remoteBranches, ledgerResidue, console, residuePlan, residueErrors, skipped, timings }`), substituted only when `reconcile()` itself
+   remoteBranches, ledgerResidue, planRefs, console, residuePlan, residueErrors, hollowMerges, skipped, timings }`), substituted only when `reconcile()` itself
    throws. If the new check populates a new top-level result key, this literal needs that key
    added too — an omission here doesn't throw or fail a lint; it just silently under-reports on the
    one code path (a genuine throw inside `reconcile()`) that almost never runs in normal testing,
@@ -112,8 +130,10 @@ against reality than trusting it in the abstract; do that for whichever check yo
 6. **`docs/hooks.md`'s Background convergence bullet** — it names every check twice in prose (the
    full set, then the background half). Add the new check to both lists.
 7. **Three shape-asserting test files:**
-   - `tests/reconcile.test.js` — dispatch order, `ALL_CHECKS` membership, the `local-merge-model`
-     skip list (a check with no local-merge fallback belongs in that skip line's check list).
+   - `tests/reconcile-dispatch.test.js` — dispatch order and `ALL_CHECKS` membership. It,
+     `tests/reconcile.test.js` and `tests/reconcile-preflight-fetch.test.js` all assert the
+     `local-merge-model` skip list (a check with no local-merge fallback belongs in that skip line's
+     check list).
    - `tests/console-execute.test.js` / `tests/console-execution.test.js` — only if the new check
      interacts with console execution.
    - The check's own `tests/bin-lib/reconcile/{check}.test.js`.
@@ -185,12 +205,23 @@ worktree PR, already archived the gitignored half while the tracked headers stay
   automatically (`git rm` when the twin's own copy is already tracked, `git mv -f` when it isn't)
   and the archival proceeds.
 - **`archived-pending-tracked-move`** — the split state itself: the archive twin exists AND the
-  live run dir holds nothing but tracked `work/` headers (no gitignored entries remain).  Under
-  `worktree-always: true` this sweep never commits the tracked-header move itself — it skips with
-  this reason and a paste-ready `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" archive-run --run
-  "<dir>"` command in `skipped[].command` instead of counting toward `move-failed` escalation.
-  Without `worktree-always`, the sweep completes the move itself via `archiveRunDir`'s normal
-  twin-resolution path above.
+  live run dir holds nothing but tracked `work/` headers (no gitignored entries remain).  Detection
+  covers a twin whose `run-state.json` is `clean` too (a spec shell, #3975) — only this sweep's loop
+  opts into that through `iterRunDirsWithState`'s `includeTrackedShells`. For a clean twin, under
+  `worktree-always: true` the sweep never commits the move itself: it skips with this reason and the
+  paste-ready `node "${CLAUDE_PLUGIN_ROOT}/bin/archive-tracked-shells.js" --root "<root>"` in
+  `skipped[].command` (with `shell: true`), which the compact summary prints once per pass as
+  `archive stranded shells: <command>`; the CLI moves every such shell through one housekeeping PR.
+  The detection here asks no git, so a live `work/` whose files are untracked is reported too; the
+  CLI leaves such a dir alone and names it in its envelope's `untracked`. The command never needs
+  `--no-pr`: under `local-merge` the archive check does not run at all.
+  Without `worktree-always`, the sweep completes at most one non-conflicting shell in place per pass
+  and skips the rest with the same entry, delegating them to the CLI; a shell whose twin `work/`
+  differs from the live copy is skipped without using that slot (`work-twin-conflict` is the CLI's
+  verdict for it). A twin present but not `clean` keeps the older behavior: under `worktree-always`
+  a skip with `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" archive-run --run "<dir>"` as its
+  `command`, instead of counting toward `move-failed` escalation; without it, the sweep completes the
+  move itself (uncapped) via `archiveRunDir`'s normal twin-resolution path above.
 
 **A merged PR is not a finished run (#3503).** When a run's PR is MERGED, the main loop's two
 paths still check one more thing before archiving: the branch-joined path (`archiveMergedRun`)
@@ -207,7 +238,7 @@ later by a second PR or at `/release`. When the PR's `closingIssuesReferences` i
 as on a non-default integration base where GitHub never links closing keywords, only a manifest
 spec still `pending`/`running` blocks (`inFlightRecords`).
 
-Three skip reasons come out of this check:
+Four skip reasons come out of this check:
 
 - **`merged-partial`**: carries `unclosed: number[]`, which `reconcile/index.js` passes through to
   `result.runs`. It is in `STRUCTURALLY_STUCK_REASONS`, so a run left waiting escalates after the
@@ -217,6 +248,10 @@ Three skip reasons come out of this check:
 - **`no-repo-slug`**: there is no resolvable `origin` slug. This reason is tracked, so it shows in
   the residue summary's stuck count. With no slug there is no repo to file the escalation issue in,
   so it never escalates.
+- **`unknown-host`**: the `origin` host is one the #4933 gate refuses (an SSH alias, an unknown
+  host), so the check makes no gh call. The gate's refusal text rides as the skip's `hint`. It is
+  tracked like `no-repo-slug`: it shows in the residue summary's stuck count, and its escalation
+  files nothing, because the residue repo is a refusal and there is no repo to file in.
 
 Run-state is never written on any of these skips. The `status: clean` sweep is exempt from this
 check: wrap-up already closed that run.
@@ -249,15 +284,15 @@ finding the run held would otherwise be lost at archive. `unfiledCantTellFinding
 `archive-merged.js`) returns `[]` unless `readTopLevelConsoleState` is `none` and
 `consoleReplacedByAutoMerge` is true; otherwise it names, via `console/finding-outcomes.js`'s
 `unfiledCantTell`, each finding of the run dir and of every `spec-*/` dir (prefixed `spec-N/`)
-with no `AUTO … filed as #{n} (work-fingerprint {fp})` line in that dir's `decisions.md`. A read
+with no `AUTO … filed as #{n} (work-fingerprint {fp})` line, and since #4679 no `AUTO … Queue write: {item} digested (work-fingerprint {fp})` line, in that dir's `decisions.md`. A read
 failure fails closed. `runTiebreakCoverage` carries the list as `unfiledCantTell`, and
-`archiveUnlessTiebreakGap`, the single choke point every archive decision that carries a run dir passes (`decideArchive`'s thin wrapper holds none, so it never evaluates the guard), evaluates it
+`archiveUnlessTiebreakGap`, the single choke point every archive decision that carries a run dir passes (a `decideArchiveCore` call that passes no `coverage` skips the guard: `archiveUnlessTiebreakGap` returns `archive` for an absent `coverage`), evaluates it
 last, after the artifact checks above: the skip reason is **`cant-tell-unfiled`**, carrying
 `unfiled` and `CANT_TELL_UNFILED_HINT`. It is in `STRUCTURALLY_STUCK_REASONS`, the `status: clean`
 sweep's `onSkip` tracks it, and a rendered console (a `console.json` or a `Review Console:
 terminal decision` line) turns the guard off. `hooks.js archive-run` refuses the same condition, inside its
 `console-never-rendered-staged-pending` block and after that refusal, printing the hint with the
-real run dir in place of `{run-dir}`. The remedy is to file each finding through
+real run dir in place of `{run-dir}`. The remedy is to settle each finding (filed, or for a `drop` recommendation digested) through
 `wrap-up/review-console.md`'s Can't-tell filings: a `spec-N/`-prefixed id is filed and logged with
 `--run {run-dir}/spec-N` (its own `decisions.md`). Every other run archives exactly as before.
 
@@ -269,7 +304,7 @@ Every site that skips `console-unresolved` — `decideArchiveCore`, the `status:
 sweep, `hooks.js archive-run` — skips or refuses `console-residue` too, which a human clears with
 `console-residue.js --ack` (an unreadable `console.json` must be repaired or removed instead). The
 skip carries a `hint` naming the open items and any unreadable
-`console.json`, which `reconcile/index.js` passes through to `result.runs` (#4172). Since #4170, when a planned can't-tell filing has no record (`filing-pending`), the hint also names the paste-ready `console-filings.js --only` re-run (`filingRerunRemedy`); the `hooks.js archive-run` refusal prints the same remedy. `console-residue` is
+`console.json`, which `reconcile/index.js` passes through to `result.runs` (#4172). Since #4170, when a planned can't-tell filing has no record (`filing-pending`), the hint also names the paste-ready default-selection `console-filings.js` re-run (`consoleRerunCommand`, no `--only`; `rerunRemedies`), and for a `digest-pending` entry the digest log remedy; since #6284, a follow-up re-check item's `recheck-followups.js` `approve` and/or `execute` commands (`recheckRemediesOf`), the local-merge note as its own remedy part after them; the `hooks.js archive-run` refusal prints the same remedies. `console-residue` is
 deliberately not in `STRUCTURALLY_STUCK_REASONS`: an acknowledgement (or, for a `filing-pending` item, logging its filed line), not a reconcile re-run, converges it. A run whose archival attempt committed carries `commit: { sha, branch }` on its `result.runs` entry, archived or skipped, from `archiveMerged`'s `archiveCommits` (#3721).
 
 **Residue pruning.** After every `archive` pass, `cache.js`'s `pruneResidueFailures` drops any
@@ -278,11 +313,12 @@ whose tracked path no longer exists on disk: a path can never fail or succeed th
 must stop counting toward a fresh escalation streak. An entry that was already `escalated` also
 gets its filed backlog record resolved — `escalate-residue.js`'s `resolveResidue` comments ("no
 longer exists on disk — resolved by other means") and closes it, best-effort (a resolution failure
-still drops the cache entry; a per-path record is left for a human to close manually, while a path
+keeps the escalated entry, counting `residueRetries` on it, and later passes retry the resolve —
+the pass recording the 5th failed retry, `RESIDUE_RETRY_LIMIT`, drops it, #4209; a per-path record is left for a human to close manually, while a path
 left on the consolidated `structurally-stuck` record comes off at the next escalate or resolve edit
 a pass in this checkout makes — see the consolidated-escalation bullet below). A successful
 archive also resolves an escalated `structurally-stuck` entry, through `clearResidue` (#4202): it
-is kept on a failed resolve, retried once by the same pass's prune, then dropped. Escalation itself
+is kept on a failed resolve, retried by the same pass's prune, and, if that fails too, by later passes until the bound above drops it. Escalation itself
 (`escalateResidue`) now dedups against **closed** records too, not just open ones: a marker match
 that is already closed gets a comment + reopened rather than a duplicate filing — one record per
 path across its whole open/closed/reopened lifetime.
@@ -309,15 +345,18 @@ that owns every mtime-TTL comparison (via `isStaleDir`), the events-log recency 
 `liveness` argument, default `adHocSessionLiveness`), and the run-liveness verdict `abandoned-interrupted`
 consults (through `ctx.runVerdict`, default `defaultRunVerdict`, #4421), returning `{ kind, ttlMs, evidence }` with
 `kind ∈ { 'orphaned-mint', 'abandoned-interrupted', 'adhoc-superseded', 'adhoc-session-ended',
-'merged', 'structurally-stuck', 'none' }` — a first-match list evaluated in that exact precedence order.
-The five pre-consolidation predicates (`isOrphanedMint`, `isAbandonedInterrupted`,
-`isAdHocStandaloneSuperseded`, `decideArchive`, `isStructurallyStuck`) are now thin wrappers that
-call `classifyRunDir` with `ctx.kinds` scoped to their own one kind — this is what keeps a
-standalone call (a unit test constructing a bare fixture dir, or `trackStuckSkip`'s own narrower
-question) answering exactly what it always asked, unaffected by whether the same dir would ALSO
-match some other, higher-precedence kind under the full order. `adhoc-session-ended` was added
-later (#4179) and has no wrapper predicate. Only `archiveMerged()`'s own main
-loop passes the full, ordered kind set.
+'structurally-stuck', 'none' }` — a first-match list evaluated in that exact precedence order.
+`classifyRunDir` and `decideArchiveCore` are the two seams tests and production both call. Every
+caller scopes `ctx.kinds`, so a call answers exactly what it asks, unaffected by whether the same
+dir would ALSO match some other, higher-precedence kind under the full order: the main loop passes
+`['orphaned-mint', 'abandoned-interrupted', 'adhoc-superseded', 'adhoc-session-ended']`, its
+companion re-classify (when the `checkRunIntegrity` gate fails) passes
+`['adhoc-superseded', 'adhoc-session-ended']`, and `isStructurallyStuck`, the one remaining
+wrapper, passes `['structurally-stuck']` for `trackStuckSkip`. The merged-PR decision is
+`decideArchiveCore`, called by `archiveMergedRun` and by the main loop's by-number fallback
+(`byNumberRecordSkip`, for a run with no resolvable branch), and is not a classifier kind.
+`adhoc-session-ended` joined the precedence order later (#4179), between `adhoc-superseded` and
+`structurally-stuck`.
 
 The `checkRunIntegrity` shipped-unclosed evidence gate for `abandoned-interrupted` stays
 call-site-only, never folded into the classifier itself (folding it in would misattribute the
@@ -363,7 +402,38 @@ A `runVerdict` that throws, returns no evidence array, or returns any other verd
 
 `ownerlessNonCleanZeroSince` is an ISO date in the same cache, set by `applyOwnerlessNonClean`: the first pass that counts `0` stamps it, later passes that count `0` keep that stamp, and a count above `0` drops the key — so it always dates the current unbroken run of zero readings. `readCache` keeps either key only when valid (an integer of at least 0; a parseable date string), and the cache writes them only when present.
 
-**Removal condition for the 72-hour legacy route** (`run-liveness/index.js`'s `legacy` witness): remove it when `ownerlessNonCleanZeroSince` is at least 7 days old in this repository's `reconcile-cache.json`, on a plugin build newer than v6.153.0. After the route is removed, fallback (b) still classifies those owner-less `interrupted` runs as `abandoned-interrupted` at the same 72 hours, so removing it changes no archive decision. It does not drain them on its own: archival still needs the `shipped-unclosed` gate, and owner-less runs in any other status have no drain (tracked in the legacy-route removal record).
+**Removal condition for the 72-hour legacy route** (`run-liveness/index.js`'s `legacy` witness): remove it when `ownerlessNonCleanZeroSince` is at least 7 days old in this repository's `reconcile-cache.json`, on a plugin build newer than v6.153.0. After the route is removed, fallback (b) still classifies those owner-less `interrupted` runs as `abandoned-interrupted` at the same 72 hours, so removing it changes no archive decision (but `teardown-run --merged` (#5293) reads that route for an owner-less legacy run, so removing it leaves such a run `unknown` there and refused until the reconciler reaps it; #4436's executor must account for that; `review-lens/history.js` (#5998) reads `unknown` and `dead` alike as closed, so removing the route changes no history outcome). It does not drain them on its own: archival still needs the `shipped-unclosed` gate, and owner-less runs in any other status have no drain (tracked in the legacy-route removal record).
+
+## The `live` skip and report-only run dispositions (#3977)
+
+Settle findings aggressively, close runs conservatively: closing a run a live sibling session is still driving ends its enforcement and event logging invisibly, while a run left open by mistake costs one more banner line.
+
+**The `live` skip.** `archiveMerged`'s main loop asks the run-liveness verdict once per run dir, at the top of the loop (`verdictAtGuard`, through the `runVerdict` hook — `defaultRunVerdict`), and skips a `live` run with reason `live` before any archive path sees it — `orphaned-mint`, `abandoned-interrupted`, `adhoc-superseded`, `adhoc-session-ended` and the merged path alike. A run dir with no `run-state.json` is `unknown` without asking. `unknown` and `dead` fall through unchanged: each existing path keeps its own evidence (a merged PR, a mint that never wrote `config.yml`, a worktree gone for 30 days, the #4421 verdict floors). The verdict is handed to `classifyRunDir` as `ctx.runLivenessResult`, so `abandoned-interrupted` does not ask a second time. The clean-status sweep has no `live` skip: a clean run is wrap-up's own just-closed run, archived post-merge by the session that is still alive.
+
+**Run dispositions.** After both archive loops, `reportRunDispositions` evaluates `run-liveness/disposition.js` for every non-clean run dir still present (a dir this pass archived is excluded, so a dry run never reports it twice). Its facts come from `run-liveness/facts.js` — the PR state from the same by-number-then-branch join the merged path uses, the branch's local and origin refs and its commit count past the integration branch, the worktree's existence and `git status`, the staged inventory, and the quiet time since the last owner-attributed event. Any probe that fails is the "cannot determine" value, never a value that closes: `pr: 'unknown'` (a `gh`-absent environment, an API error, a run with neither a stamped `pr.number` nor a branch name), `uniqueCommits: null`, `dirty: null`. The rules, in order, first match wins, default `leave` ("staged ok" means `staged/` and every `spec-*/staged/` is empty or holds only review findings — `review-unconfirmed-`, `review-contested-`, `review-debate-`; "other staged" is any other kind, or a `staged/` that cannot be read):
+
+| # | Run shape | Conditions | Disposition |
+|---|---|---|---|
+| 1 | any | verdict `live` | `leave`; never touched by any archive path |
+| 2 | any | verdict `unknown` | `leave` for the new rows; existing paths keep acting on `unknown` |
+| 3 | `-adhoc-standalone` | verdict `dead`, staged ok | `close` (`adhoc-dead`, no 30-day wait); `events.jsonl` moves with it |
+| 4 | `-adhoc-standalone` | verdict `dead`, other staged | `orphan`, reason `staged items need an outcome` |
+| 5 | other standalone (`-tidy-`, `-sweep-`, `-release-standalone`, any other `-standalone`) | verdict `dead`, `staged/` empty | `close` (`standalone-dead`) |
+| 6 | other standalone | verdict `dead`, `staged/` not empty | `leave` (the existing staged-proposals banner and #3898 own it) |
+| 7 | formal | PR merged | `leave` here; the existing merged path acts, unchanged |
+| 8 | formal | verdict `dead`, PR closed unmerged, staged ok | `close`, reason `pr-closed-unmerged`, `dropFindings` set |
+| 9 | formal | verdict `dead`, PR closed unmerged, other staged | `orphan`, reason `staged items need an outcome` |
+| 10 | formal | verdict `dead`, PR open (draft or ready) | `orphan`, reason `draft PR #N, session gone` or `PR #N open, session gone`; never closed |
+| 11 | formal | verdict `dead`, no PR, (`uniqueCommits` greater than 0 or worktree dirty) | `orphan`, reason `unpushed commits on {branch}` or `uncommitted changes in {worktree}` |
+| 12 | formal | verdict `dead`, no PR, (branch absent locally and on origin, or `uniqueCommits` 0), (worktree absent or clean), no owner-attributed event for 24 hours, staged ok | `close`, reason `nothing-to-resume`, `dropFindings` set |
+| 13 | formal | verdict `dead`, no PR, otherwise as row 12 but other staged | `orphan`, reason `staged items need an outcome` |
+| 14 | any | anything else (including any unknown fact) | `leave` |
+
+Row 12's 24-hour floor reuses `STALE_INTERRUPTED_TTL_MS` (`disposition.js`'s `QUIET_FLOOR_MS`, pinned equal by a test); it only narrows what can close. Its branch fact uses the branch name the run recorded (`run-state.json`'s `pr.branch`, or a `decisions.md` PR-early line) even when that branch is gone — "gone everywhere" is what the row asks. `dropFindings` lists the review findings rows 8 and 12 would drop with reason `run-abandoned`; that vocabulary is registered in `_shared/auto-decision-log.md` by #3978, where the drop becomes real.
+
+**Report-only in this release.** The new rows close nothing. `RUN_AUTO_CLOSE_REPORT_ONLY = true` in `archive-merged.js` is read at exactly one site (a source-scan test pins one read), and the pass writes nothing to any run dir — no `run-state.json` change, no `decisions.md` line, no archive move, no staged drop. It is a release step, not a policy key: every consumer project gets a dry run on its own pile first, and the record that enables closing (#3978) flips that one read to the act path and deletes the switch. `archiveMerged` returns the report as `runDispositions: { reportOnly, wouldClose: [{ runId, runDir, reason, evidence, dropFindings }], orphaned: [{ runId, runDir, reason, pr }], unknown }`; `reconcile()` copies it onto its result (and the `--json` output), `format-summary.js` renders one `would close {run} ({reason}, evidence: ...)` line per run plus `orphaned: N run dirs` and `unknown liveness: N run dirs` (each only above 0), and a real (non-dry) pass persists `wouldClose`, `orphaned` and `reportOnlyPassAt` to `reconcile-cache.json` (`applyRunDispositions`, also on the over-budget early return). `reportOnlyPassAt` is the marker #3978 reads: auto-close never acts on a checkout that has not first had a report-only pass. A `would close` line you disagree with is a false positive — report it through `/claude-tweaks:feedback`.
+
+**The SessionStart banner reads the cache.** `session-residue.js`'s `collectStaleRuns` lists a non-clean, non-ad-hoc run only when the cached `orphaned` list names it AND its verdict, re-checked offline now (the lock probe reads SessionStart's one shared `git worktree list`), is still `dead`; newest first, three rows, then `- … and N more orphaned run(s) (newest 3 shown): node "{root}/bin/hooks.js" reconcile --dry-run --json --checks archive`. Nothing is listed before the first reconcile pass. Each row names its reason and a resume command (`PIPELINE_RUN_DIR="{dir}" /claude-tweaks:flow {records}` — `/flow` adopts an anchored run dir with `config.yml` as its Step 3 case 1), keeping the shipped-unclosed and consolidated-pass line texts where they apply.
 
 ## No-run-state.json terminal path and consolidated escalation (#1811)
 
@@ -372,7 +442,8 @@ handling regardless of whether a worktree was ever stamped — see the by-number
 main loop, landed via #1962/#2226/#2228/#2231):
 
 - **`isClosedSlugStuck`** — a run dir with `config.yml` but NO `run-state.json` at all (slug
-  `{timestamp}-record-{n}[-{m}...]`, e.g. the shape underlying #1811's own original report) has no
+  `{timestamp}-record-{n}[-{m}...]`, e.g. the shape underlying #1811's own original report, or
+  `{timestamp}-spec-{n}[-{m}...]`, a state-less multi-spec run dir, #4191) has no
   branch, no PR, and nothing the classifier or the by-number probe can resolve — it escalates at
   `structurally-stuck` forever with no path to resolution. Terminal once every record number named
   in the slug (`recordNumbersFromSlug`) independently resolves `CLOSED` via `gh issue view` (not a
@@ -402,10 +473,10 @@ main loop, landed via #1962/#2226/#2228/#2231):
   `missing` ids and a `hint`, which `reconcile/index.js` passes through to `result.runs`, and the body
   carries their remedy line after the `merged-partial` one), and #4171's `cant-tell-unfiled` (an
   auto-merge run holding a can't-tell finding with no filed record, carried as `unfiled` on the
-  skip, with its own remedy line after the tiebreak one). `no-repo-slug` is also in
-  `STRUCTURALLY_STUCK_REASONS` but is not listed here: it can never be filed into this record, because
-  with no repo slug `findOrCreateIssue` returns `escalation-failed`, so it shows only in the residue
-  summary's stuck count. Each path's own reason is its
+  skip, with its own remedy line after the tiebreak one). `no-repo-slug` and `unknown-host` are also in
+  `STRUCTURALLY_STUCK_REASONS` but are not listed here: neither can ever be filed into this record, because
+  with no repo slug, or a refused origin, `findOrCreateIssue` returns `escalation-failed`, so they show only
+  in the residue summary's stuck count. Each path's own reason is its
   residue entry's `lastError` (`stuck at {reason}`), not rendered per path. The body also carries
   a fixed remedy line for `console-never-rendered-staged-pending` — a merged run that never
   rendered a Review Console (an auto-merge path — the fast-lane short-circuit or the dispatch bundle Auto-merge gate — writes no `console.json`) while
@@ -437,9 +508,9 @@ main loop, landed via #1962/#2226/#2228/#2231):
 skill — it cannot reach an agent session's MCP tools, only `gh`. When `gh` is absent (a cloud
 Routine sandbox with GitHub MCP tools instead of the CLI), every GitHub-dependent check —
 `red-tip`, `reap`, `release`, `post-merge`, `archive`, `archive-branches`, `remote-prune`, `ledger-residue`,
-`console` — is skipped
+`plan-refs`, `console` — is skipped
 via the preflight gate (`ghHealthCheck`/`ghHealthCheckAsync`, `preflight.js`), reported as
-`{"skipped":[{"check":"red-tip,reap,release,post-merge,archive,archive-branches,remote-prune,ledger-residue,console","reason":"preflight-gh-absent"}]}`.
+`{"skipped":[{"check":"red-tip,reap,release,post-merge,archive,archive-branches,remote-prune,ledger-residue,plan-refs,console","reason":"preflight-gh-absent"}]}`.
 `mirror` is the one exception — pure git, no `gh` call — and keeps running.
 
 This is an **accepted gap, not a bug to fix here**: unlike `/claude-tweaks:dispatch`'s own queue-pull
@@ -578,14 +649,18 @@ Decision `docs/decisions/0026-ledger-residue-converges-in-reconcile.md` records 
 
 ## Post-merge closes (#4599)
 
-`post-merge.js` runs `_shared/pr-first-merge-post-merge.md`'s Step 4.0 (`bin/closing-links.js
---mode post-merge`) and Step 4.0b (`lib/issues/below-floor-parent-close.js`) once for a PR GitHub
-merged after its session ended: an armed auto-merge, a merge-queue merge, or a human clicking merge
-in the browser. No session saw that merge, so no session ran the steps, and a below-floor parent
-whose last sub-issue merged this way used to wait for a human to approve a tidy row. Step 4.0b's
-gate is `lib/issues/parent-gate.js`, the same code the prose runs through `bin/parent-gate.js`
-(#4603). The module only decides when the steps run and records that they did. Tidy's
-`parent-gate` backstop is unchanged, and every fail-open path below leaves the parent open for it.
+`post-merge.js` runs `_shared/pr-first-merge-post-merge.md`'s Step 4.0 in-process through
+`bin/closing-links.js`'s `closingLinks()` core (post-merge mode) and Step 4.0b
+(`lib/issues/below-floor-parent-close.js`) once for a PR GitHub merged after its session ended: an
+armed auto-merge, a merge-queue merge, or a human clicking merge in the browser. No session saw
+that merge, so no session ran the steps, and a below-floor parent whose last sub-issue merged this
+way used to wait for a human to approve a tidy row. Step 4.0b's gate is
+`lib/issues/parent-gate.js`, the same code the prose runs through `bin/parent-gate.js` (#4603). The
+module only decides when the steps run and records that they did. Tidy's `parent-gate` backstop is
+unchanged, and every fail-open path below leaves the parent open for it. The late Step 4.0 also
+reopens a kept-open record the merge closed (a fixes-span `Refs` record, or one only a
+Development-sidebar link names), within the 10-minute reopen window after `mergedAt`
+(`CLOSE_WINDOW_MS`, below), so an armed merge leaves no kept-open record closed by either of those two channels (#4251).
 
 - **Population (keyed on the recorded PR, exactly once).** Every top-level run dir, `clean` status
   included (a closed run is the usual armed-auto-merge shape), whose `run-state.json` records a
@@ -595,8 +670,8 @@ gate is `lib/issues/parent-gate.js`, the same code the prose runs through `bin/p
   any other value, or none, skips the whole check as `not-github-issues` and writes nothing. A
   checkout without an `origin` slug fails as `no-remote`, an `origin` on a host that is not a known
   GitHub host fails as `unknown-host` (#4933; no gh call is made, and the failure carries a `detail`
-  holding the refusal text, which names the `GH_HOST=<host>` opt-in; `reconcile()` copies it onto
-  the `skipped` entry and `format-summary.js` renders it flattened and bounded as
+  holding the refusal text, which names the `GH_HOST` opt-in; `reconcile()` copies it onto
+  the `skipped` entry and `format-summary.js` renders it flattened (bounded, except an `unknown-host` detail, which renders whole, #4794) as
   `skipped: post-merge — unknown-host ({detail})`), and a caller that passes no
   PR-state resolver fails as `no-pr-states` (a programming error, handled like the others).
 - **Marker rule.** A run is done when a `decisions.md` line, read through `parseEntry`, has the
@@ -632,9 +707,35 @@ gate is `lib/issues/parent-gate.js`, the same code the prose runs through `bin/p
     a still-open record (`settledOpen`) instead of logging it pending.
   - *Per-run claim file* (`{runDir}/.post-merge.lock`, created `wx`). Background passes serialize on
     `background-lock.js`, but inline passes (Step 4.2's `--checks mirror,release,archive`, tidy's
-    explicit list) do not. A live claim (under `CLAIM_STALE_MS`, 10 minutes) skips `in-flight`; a stale
-    one is taken over atomically (renamed aside, so of two takeovers only the rename winner retries
-    the create); any other I/O error skips `claim-failed`. The lock is removed after the marker write.
+    explicit list) do not.
+    - *Heartbeat.* The claim file holds its owner token, `{pid}-{random}`. While a run holds the
+      claim, every `gh` call it makes and every `decisions.md` write first checks that the claim still
+      names it and refreshes the claim's mtime (the heartbeat). A claim missing only because another pass
+      moved it aside to judge it is re-checked (the aside, then the path once more), never read as a
+      takeover.
+    - *Judging a held claim.* A claim whose holder pid is alive skips `in-flight` unless it has gone
+      unrefreshed for `CLAIM_MAX_IDLE_MS` (a reused pid or a suspended holder; the derivation sits beside
+      the constant). A dead holder's claim is taken over at once. A claim naming no holder (an older
+      reconciler's empty file, or a file that cannot be read) keeps the `CLAIM_STALE_MS` (10 minutes)
+      rule. A takeover is still atomic: renamed aside, re-judged, and only the rename winner retries the
+      create. Any other I/O error skips `claim-failed`.
+    - *A holder taken over.* A holder whose claim was taken over refuses its next `gh` call and every
+      later one, and skips `in-flight`, deferred. It writes no marker, attempt line or degraded SKIP; each
+      GitHub change it already made (a parent closed below the floor, a record reopened or closed) is
+      still logged, its location suffixed `(superseded holder)`, which is never read as the marker, and
+      rides on its entry as `parentsClosed`, `recordsReopened`, `recordsClosed`. A call already in flight
+      when it was suspended still completes. Known residual: Step 4.0b posts a parent's close comment and
+      then closes it with a separate `gh` call, so a takeover landing between the two leaves a posted
+      comment with no close and no `decisions.md` line from the superseded holder; the successor's own
+      pass then finds the comment already posted and finishes the close.
+    - *Release.* The lock is removed after the marker write, and only by its owner (a compare-and-delete
+      on the token), so a taken-over pass does not delete its successor's claim. Known residual: the compare
+      and the delete are two calls, so a holder suspended past the idle backstop exactly between them is
+      taken over in that gap and still deletes its successor's claim.
+    - *Mixed versions.* Until every installed build upgrades, an older reconciler still takes over by age
+      alone and releases unconditionally, so a mixed-version pair keeps the old race for a claim idle past
+      `CLAIM_STALE_MS`.
+
     The dotfile name keeps it out of archive's `staged/` checks.
 - **Archive defers what post-merge deferred.** An archived run is never walked again, so a run
   skipped for a retryable reason must not be archived in the same pass, or the "later pass" never
@@ -642,38 +743,65 @@ gate is `lib/issues/parent-gate.js`, the same code the prose runs through `bin/p
   `postMergeDeferred`, and `archiveMerged` skips each listed run `post-merge-pending`, resolved-path
   compared, in both the main loop and the clean-status sweep. That skip is never fed to the
   stuck-skip tracker: it is transient, and must never escalate as residue. A run that post-merge
-  failed or did not run leaves `deferred` empty, so a failed check never holds archive back.
-- **How the guard clears.** Exactly six reasons defer a run: `merge-grace`, `in-flight`,
-  `claim-failed`, `network-failure` (the transient PR-state failure), `transient-failure` (below)
-  and `budget-exhausted` (below). A run leaves the set once `post-merge` acts on it, which for
-  `merge-grace` is within one grace window and for `transient-failure` within `MAX_ATTEMPTS` (3)
-  more passes. Nothing else defers. Each reason is normally cleared by a later pass, but two cases
-  are not: a persistent `claim-failed` (an `EACCES` or `EROFS` on the run dir every pass) and a
-  deterministic per-PR throw (the lookup maps any throw to `network-failure`) defer the run on
-  every pass, untracked, so archive never moves it. That is the residual risk of the guard, kept
-  because the alternative is archiving a run the reconciler still owes its steps:
+  failed or did not run leaves `deferred` empty, so a failed post-merge never holds archive back; the one
+  exception is the hollow-merge hold below, which `index.js` adds to the set itself.
+- **Hollow merges join the archive hold set (#6143).** `detectHollowMerges` lists the runs whose PR merged
+  while the run's `build` or `test` phase was unfinished, and the runs whose hollow-merge check failed, so their
+  merge state is unknown; `index.js` passes them to `postMerge` as `hollowRunDirs` (skipped, reason
+  `hollow-merge`), to `releaseMerged` as `hollowRunIds`, and unions them into `postMergeDeferred` whether or not
+  `post-merge` ran, so archive skips them `post-merge-pending` and leaves the run dir in place. `postMerge`
+  itself skips each such run `hollow-merge` and defers it; `index.js` unions the same runs into the archive set
+  again so the hold also applies when `post-merge` did not run. The branches and worktrees those runs own
+  (`post-merge.js`'s `hollowRunRefs`: the recorded `worktree`, its live branch, `pr.branch`) go to
+  archive-branches, remote-prune and reap, which skip them `hollow-merge`, so the run stays resumable. A `hollow-merge` run's records are
+  each commented on once: the comment and its marker are written under the run's post-merge claim
+  (`takeClaim`/`releaseClaim`, the lock Steps 4.0/4.0b take), with the marker read after the claim is taken, so an
+  inline reconcile racing `reconcile-background` cannot post twice; a claim another pass holds posts nothing that
+  pass, and the run is still held. A `hollow-merge` run merged within `MERGE_GRACE_MS` is held with no comment
+  (`detail` says the comment is deferred); a pass past the grace posts it. A `hollow-check-failed` run is held too, and any records commented on before the check
+  failed are listed in its `commented`. Both show in `result.hollowMerges`, `formatSummary`, and the background
+  status file's `hollowMerges` list. A held run leaves the set on a later pass, when detection no longer reports
+  it: its phase exits were recorded or the run reached a terminal state, or (for `hollow-check-failed`) a later
+  check succeeds and finds no hollow merge — the lookup recovers, the PR is not MERGED, or the marker names
+  another run.
+- **How the guard clears.** Exactly seven reasons defer a run in `post-merge`: `merge-grace`, `in-flight`,
+  `claim-failed`, `network-failure` (the transient PR-state failure), `transient-failure` (below),
+  `budget-exhausted` (below) and `hollow-merge` (the run's PR merged while it was in flight, or its hollow-merge
+  check failed, so its merge state is unknown, above). A run leaves the set once `post-merge` acts on it, which
+  for `merge-grace` is within one grace window and for `transient-failure` within `MAX_ATTEMPTS` (3) more
+  passes; a `hollow-merge` run leaves once detection stops reporting it. Nothing else defers. Each reason is
+  normally cleared by a later pass, but two cases are not: a persistent `claim-failed` (an `EACCES` or
+  `EROFS` on the run dir every pass) and a deterministic per-PR throw (the lookup maps any throw to
+  `network-failure`) defer the run on every pass, untracked, so archive never moves it. That is the residual
+  risk of the guard, kept because the alternative is archiving a run the reconciler still owes its steps:
 
   | Skip reason | Deferred | Why |
   |---|---|---|
   | `merge-grace`, `in-flight`, `claim-failed`, `network-failure`, `transient-failure`, `budget-exhausted` | yes | Retryable: the next pass can act. |
+  | `hollow-merge` | yes | The PR merged while the run's `build` or `test` phase was unfinished, or the run's hollow-merge check failed, so its merge state is unknown (#6143); held until detection stops reporting it. Also unioned into archive's set by `index.js`. |
   | `pr-not-found`, `invalid-arguments`, `no-pr-state` and any other non-network PR-state failure string | no | A definitive answer a retry will not change. Archive keeps tracking the run as structurally stuck (#3543), so it is not hidden. |
   | `gh-absent`, `dry-run`, `error` | no | Not retryable within the pass. |
   | `marker-write-failed` | no | See the marker-write bullet below. |
 
 - **Transient failures retry, bounded (`transient-failure`).** `closing-links`'s exit codes split
   in two. Exit 5 (`gh pr view` / `gh pr edit` failed, or a required read came back malformed) is gh
-  or its transport, so it is transient. Exits 2 (malformed invocation) and 3 (run dir not anchored)
-  are deterministic, as is an unreadable exit-0 envelope; exit 4 is pre-merge only. An exit-0
-  `baseUnchecked: true` envelope (`base-unchecked`, or `reopen-failed` with that flag: the PR's base
-  or the default branch could not be read, so Step 4.0 closed nothing and printed no closing set,
-  #4549) is a failed read, so it is transient too; once its retries are spent its marker entry
-  carries `step40Failed: true`. A `gh-failed` skip for one parent or record in Step 4.0b is that
-  parent's, and the marker is written as usual. A transient failure appends a `SKIP … reconcile
-  post-merge attempt` line (`condition: … (attempt N of 3) → fallback: the next reconcile pass
-  retries …`), never the marker, and the run is deferred. Once three attempt lines exist, the next transient failure
-  writes the marker as a deterministic one does, so the retry is bounded and the parent falls to
-  tidy's backstop. A retry re-runs Step 4.0 too, which is idempotent past the close window: a
-  record it reopened last time reads open and is settled open.
+  or its transport, so it is transient. Exit 3 (run dir not anchored) is deterministic; exit 4 (run
+  marker mismatch: pre-merge, or post-merge on a base known to be non-default) is deterministic too. A post-merge exit 4 for an
+  earlier run that a later one superseded (the PR body now names the later run) is an accepted
+  limit, reported as the ordinary failure it is (`step40Failed`, verdict `failed`) with no distinct
+  outcome word (#4817). It is reachable only when the superseded run is left unarchived, since the
+  reconciler never scans `archive/` and `dispatch resume` archives the prior run first, and it is
+  loud, not silent: nothing is closed or reopened for a PR the run cannot prove is its own. An
+  exit-0 `baseUnchecked: true` envelope (`base-unchecked`, or `reopen-failed` with that flag: the PR's base or the default branch
+  could not be read, so Step 4.0 closed nothing and printed no closing set, #4549) is a failed read,
+  so it is transient too; once its retries are spent its marker entry carries `step40Failed: true`.
+  A `gh-failed` skip for one parent or record in Step 4.0b is that parent's, and the marker is
+  written as usual. A transient failure appends a `SKIP … reconcile post-merge attempt` line
+  (`condition: … (attempt N of 3) → fallback: the next reconcile pass retries …`), never the
+  marker, and the run is deferred. Once three attempt lines exist, the next transient failure
+  writes the marker as a deterministic one does, so the retry is bounded and the parent falls
+  to tidy's backstop. A retry re-runs Step 4.0 too, which is idempotent past the close window:
+  a record it reopened last time reads open and is settled open.
 - **Budget (`budget-exhausted`).** `index.js` hands `postMerge` the pass's own wall-clock budget as
   `budgetExceeded`. It is checked before each run's steps, never mid-run, so a catch-up or several
   armed merges cannot run the inline 18 s passes (the unscoped CLI, Step 4.2, dispatch's calls) past
@@ -682,7 +810,11 @@ gate is `lib/issues/parent-gate.js`, the same code the prose runs through `bin/p
   subset runs with an unbounded budget, so it never trips there.
 - **Marker-write failure means "nothing re-closes", not "nothing runs twice".** When appending the
   marker fails, the entry is `skipped` / `marker-write-failed` and the run is not deferred. The entry
-  still carries `parentsClosed`: those parents are closed on GitHub, only the marker is missing. If
+  still carries `parentsClosed`: those parents are closed on GitHub, only the marker is missing. It
+  also keeps the run's `parentFailures` and `stepSkips` (#4798), so a parent Step 4.0b left open is
+  still named although no count includes that run. A `skipped` / `error` entry from a throw after
+  Step 4.0b's closes ran keeps `parentsClosed`, `parentFailures` and `stepSkips` too, for the same
+  reason (its marker is unwritten as well); a throw before Step 4.0b carries none of them. If
   archive archives it in the same pass, archived runs are never walked again and the steps do not
   repeat. If archive leaves the run in place for its own reasons, Steps 4.0 and 4.0b run again on
   each pass while the write keeps failing. That is safe because both are idempotent: a parent
@@ -712,8 +844,10 @@ gate is `lib/issues/parent-gate.js`, the same code the prose runs through `bin/p
   GitHub Enterprise origin (`*.ghe.com`, a gh `hosts.yml` key, or the exported `GH_HOST`) the gate's
   reads and the two writes name `host/owner/repo` (`--hostname` on the `gh api` reads); an origin on
   any other host returns `{ refusal }` and the check fails `unknown-host` before any gh call
-  (`teardown-run.js`'s remote-ref step skips with the same refusal text). A remote the gate cannot
-  read (an `ssh://` URL) keeps the bare slug it always resolved to (#4857).
+  (`teardown-run.js`'s remote-ref step skips with the same refusal text). An `ssh://`,
+  credentialed or ported origin is judged on its host like its plain spelling (#4794); a remote the gate
+  cannot read at all (a cloud sandbox's proxy remote, a local path) keeps the bare slug it always resolved
+  to (#4857).
 - **Accepted residual risk: tidy-approval race.** A human approving a tidy `parent-gate` row for the
   same parent in the seconds while a post-merge pass is mid-close can post a second `## Closed below
   the oversight floor` comment, because the two writers share no lock beyond Step 4.0b's own
@@ -726,29 +860,41 @@ gate is `lib/issues/parent-gate.js`, the same code the prose runs through `bin/p
   entries it reads `clean`), `postMergeFailed` (the `ran` entries it reads `failed`, plus the runs
   whose check threw (`skipped` / `error`: no marker, the run is not deferred)),
   `postMergeFailedRecords` (below), `postMergeParentsClosed` (the parents closed below the floor by
-  every `ran` entry, a failed one included) and `postMergeUnmarkedParentsClosed` (the parents closed
-  by `marker-write-failed` runs, a disjoint count). A `ran` entry reads `failed` when its Step 4.0
+  every `ran` entry, a failed one included), `postMergeUnmarkedParentsClosed` (the parents closed
+  by `marker-write-failed` runs and by `skipped` / `error` runs whose throw came after Step 4.0b's
+  closes ran, both with no marker written; a disjoint count) and `postMergeSuperseded` (per run whose
+  claim another pass took over after it changed GitHub: its PR, parents closed, records reopened and
+  closed; rendered by SessionStart and the reconcile CLI summary as one line, so no surface reports
+  such a pass as having done nothing). A `ran` entry reads `failed` when its Step 4.0
   did not finish clean: `step40Failed: true` (a non-zero `closing-links` exit, exit 5 or a
-  `base-unchecked` envelope only once its retries are spent, or an unreadable envelope), or a
+  `base-unchecked` envelope only once its retries are spent), or a
   `closing-links` word outside the clean set (`close-failed`, say). For `step40Failed`, a SKIP
   marker is written and Step 4.0b is skipped, so the parent waits for tidy's backstop. For a
   non-clean word whose envelope carries a `closingSet`, Step 4.0b still runs: the records Step 4.0
   could not settle (`failed`, `closeFailed`, `pendingClose`) hold their parent open, the summary
   marker is written as for a clean run, and the entry still reads `failed`. It also reads `failed`
-  when Step 4.0b reported a parent failure (`parentFailures`; #4798 adds that field to loop entries,
-  so until it lands only Step 4.0 can fail one). An envelope that merely carries no closing set,
-  such as `not-merged`, is not a failure. A failure is never counted in `postMergeRan`, and a
+  when Step 4.0b reported a parent failure: a loop entry carries `parentFailures` whenever it is
+  non-empty (#4798), one element per non-deliberate Step 4.0b skip that may have left a parent open. An envelope that merely carries no
+  closing set, such as `not-merged`, is not a failure. A failure is never counted in `postMergeRan`, and a
   `transient-failure` retry is in none of them. `postMergeFailedRecords` is the sorted, unique
   record numbers of Step 4.0's `failed`, `closeFailed`, `pendingClose` and `unchecked` lists across
   the failed `ran` entries (`[]` when none carried any); a loop entry whose Step 4.0 printed a
   non-clean word carries `records` (and `logFailed` when set), where a clean one keeps its short
-  shape; a non-zero exit or unreadable envelope carries none. The next
-  SessionStart renders them in its prior-pass line (`post-merge steps ran for N merged run(s),
+  shape; a non-zero exit carries none.
+  A Step 4.0b skip that is not deliberate lands in one of two fields (#4798). A skip naming no parent
+  and no record, on an empty effective closing set (`closingSet` minus `closedAfterWindow`), is a
+  step-wide skip with no parent left to leave open (nothing left to close), and goes to `stepSkips`;
+  every other non-deliberate skip is a `parentFailures` element, a step-wide one on a non-empty
+  closing set included. The summary adds `postMergeParentsLeftOpen` (`[{ pr, parent?, issue?,
+  reason }]`) and `postMergeStepSkips` (`[{ pr, reason }]`), flattened from every entry that carries
+  the field, a `marker-write-failed` one (its parents stay open although no count includes that run)
+  and a `skipped` / `error` one included, whatever the entry's verdict. A step skip alone never makes a run read `failed`. The
+  next SessionStart renders them in its prior-pass line (`post-merge steps ran for N merged run(s),
   closing M parent record(s) below the oversight floor`, where M counts every `ran` run's closes, a
   failed run's included; when no run read clean the closes render alone as `post-merge steps closed
   M parent record(s) below the oversight floor`; then `post-merge steps closed M parent record(s)
   below the oversight floor in run(s) whose decisions.md marker could not be written` for the
-  rest). The failed line reads `post-merge steps failed for N merged run(s) (records #101, #102 need a
+  rest: a `marker-write-failed` run, or a `skipped` / `error` run whose throw came after the closes). The failed line reads `post-merge steps failed for N merged run(s) (records #101, #102 need a
   hand reopen or close per _shared/pr-first-merge-post-merge.md Step 4.0, each with its action in the
   run's decisions.md, and no later pass retries them; tidy's parent-gate backstop recovers the
   parents)`: the record clause renders only when `postMergeFailedRecords` is a non-empty array, so
@@ -758,10 +904,18 @@ gate is `lib/issues/parent-gate.js`, the same code the prose runs through `bin/p
   per record for `failed`, `closeFailed` and `pendingClose`; one line for the `unchecked` set, which
   names every record in it). When a failed run's `logFailed` says that append failed, the summary's
   `postMergeFailedLogMissing` drops the `each with its action in the run's decisions.md` clause, so
-  the line never points at an entry that may not exist. The unscoped `hooks.js reconcile` CLI runs `post-merge` inline and
+  the line never points at an entry that may not exist. Right after it, two lines of their own
+  (#4798), each printed whatever the entry's verdict and each absent for an older status file or a
+  value that is not a list: `post-merge Step 4.0b left parent record(s) open: #100 (gh-failed, PR
+  #11), the parent of record #103 (internal-error, PR #11), every parent (unreadable-policy, PR #12) —
+  tidy's parent-gate backstop recovers them` (an item reads `#N` for an element naming a `parent`,
+  `the parent of record #N` for one naming an `issue`, and `every parent` for one naming neither),
+  and `post-merge Step 4.0b skipped step-wide, leaving no parent open (nothing left to close):
+  invalid-risk-floor (PR #13)`. The unscoped `hooks.js reconcile` CLI runs `post-merge` inline and
   renders the same records on its compact failed row, `post-merge steps failed: 2 merged runs
   (records #101, #102)`, through the same `failedRecordNumbers`; with no records the row stays
-  `post-merge steps failed: 2 merged runs`. Without these a background parent close, or a failed
+  `post-merge steps failed: 2 merged runs`. It prints the same two Step 4.0b lines after the category rows,
+  through the same `parentsLeftOpenLine` and `stepSkipsLine`. Without these a background parent close, or a failed
   attempt, would never be visible outside GitHub and `decisions.md`.
 - **Single-run path (#4692).** The pass above walks the live run dirs only, so a run `/wrap-up`
   already archived is never reached by it. `postMergeOne` (exported from `post-merge.js`) is the
@@ -776,9 +930,10 @@ gate is `lib/issues/parent-gate.js`, the same code the prose runs through `bin/p
   failed closes (`parentFailures`), and the `verdict` and `next` that `classifyEntry` derives for
   merge mode to route on — plus, on a `failed` `ran` entry, `failedSteps` (`4.0` and/or `4.0b`), so
   merge mode reports only the step that failed. A `postMergeOne` `ran` entry carries `records`
-  whenever Step 4.0 printed a readable envelope, and `logFailed` when set; a loop entry whose
-  Step 4.0 printed a non-clean word carries them too, and `parentFailures`, `verdict`, `next` and
-  `failedSteps` stay single-run.
+  whenever Step 4.0 returned an envelope, and `logFailed` when set; a loop entry whose
+  Step 4.0 printed a non-clean word carries them too. A loop entry carries `parentFailures` only when
+  it is non-empty (a `postMergeOne` entry that reached Step 4.0b always carries it) and `stepSkips`, on either path, only
+  when it is non-empty, while `verdict`, `next` and `failedSteps` stay single-run.
 
 ## Timing contract (#4032)
 
@@ -790,8 +945,8 @@ An unscoped `hooks.js reconcile` call took about 52.5 s; the contract below is w
   { count, ms, maxMs } } } } }` (`timing.js`'s `summarizeTimings`, milliseconds to one decimal), or
   `null` when the summarizer itself faulted: measurement never changes what a pass does.
   `hooks.js`'s `reconcile-threw` fallback carries `timings: null` for the same shape reason.
-- **Phase names** are `setup`, `mirror`, `red-tip`, `console`, `release`, `post-merge`, `archive`,
-  `archive-branches`, `remote-prune`, `ledger-residue`, `reap` and `finalize`; only phases that ran
+- **Phase names** are `setup`, `mirror`, `red-tip`, `console`, `hollow-merge`, `release`, `post-merge`, `archive`,
+  `archive-branches`, `remote-prune`, `ledger-residue`, `plan-refs`, `reap` and `finalize`; only phases that ran
   appear. `setup` is the residual — wall time outside every timed phase — so an early return still
   reports where its time went. `subprocessMs` can exceed `ms` for a phase that runs subprocesses
   concurrently (the `gh-pool.js` mappers), so read it as cost, not as a share of the phase.
@@ -810,7 +965,7 @@ An unscoped `hooks.js reconcile` call took about 52.5 s; the contract below is w
   | `MERGED` PR | number or branch | `PR_STATE_RETENTION_MS` (30 days) |
   | `pr-not-found` | number | `PR_STATE_RETENTION_MS` |
   | no PR (`null`) | branch | `NO_PR_TTL_MS` (5 min) — a PR can be opened at any time |
-  | `OPEN` / `CLOSED` PR, any failure string (`gh-absent`, `network-failure`, `invalid-arguments`) | either | never persisted; failures are not memoized either, so a transient failure is never replayed as an answer |
+  | `OPEN` / `CLOSED` PR, any failure string (`gh-absent`, `network-failure`, `invalid-arguments`, `unknown-host`) | either | never persisted; failures are not memoized either, so a transient failure is never replayed as an answer |
 
   `release` alone never consumes a persisted by-branch `null`: it passes `{ freshNull: true }`
   to `byBranchAsync` and `prefetch`, which re-query such a key live (a PR opened inside the
@@ -831,7 +986,9 @@ An unscoped `hooks.js reconcile` call took about 52.5 s; the contract below is w
   page, a malformed node or any other error leaves that key out, and the per-item `gh` twins
   resolve it, so they stay the sole owner of `pr-not-found` and every failure string. It runs only
   when `origin` is provably on `github.com`, and the query is pinned there with `--hostname
-  github.com` so a `GH_HOST` cannot redirect it; any other host takes the per-item path.
+  github.com` so a `GH_HOST` cannot redirect it; any other host takes the per-item path. It also
+  does not run when a non-empty exported `GH_HOST` names another host (#4794): the per-item calls
+  follow `GH_HOST`, so one pass would otherwise read PR state from two hosts.
   `post-merge` dispatches ahead of `archive`'s warm-up, so it prefetches the recorded PR number of
   every unmarked run itself (`prefetchPostMergePrStates`, clean runs included) before its per-run
   lookups; otherwise each active run would cost one live `gh pr view` per pass.
@@ -854,25 +1011,26 @@ An unscoped `hooks.js reconcile` call took about 52.5 s; the contract below is w
   loop and every per-dir `checkRunIntegrity` spawn `git worktree list` once between them. `reap`
   lists afresh itself, since it removes worktrees.
 - **CLI deferral.** The unscoped `hooks.js reconcile` runs `ALL_CHECKS` minus `CLI_DEFERRED_CHECKS`
-  (`archive-branches`, `remote-prune`, `ledger-residue` — `archive-branches`' and `remote-prune`'s
-  per-branch GraphQL lookups measured 14.8 s and 20.4 s, and `remote-prune` needs the all-refs fetch) and hands those to the detached `reconcile-background`
+  (`archive-branches`, `remote-prune`, `ledger-residue`, `plan-refs` — `archive-branches`' and `remote-prune`'s
+  per-branch GraphQL lookups measured 14.8 s and 20.4 s, `remote-prune` needs the all-refs fetch, and `plan-refs` lists
+  and writes remote refs) and hands those to the detached `reconcile-background`
   pass through `background-spawn.js`'s `spawnBackgroundIfStale`, gated by that pass's own status
   file, as SessionStart does. The JSON gains `background: { checks, spawned, reason }`
   (`reason`: `spawned`, `fresh`, `spawn-failed`, `no-root`, `dry-run`, `not-converged`) and a
-  `skipped` entry `deferred-to-background` for the three; an explicit `--checks` call is never
+  `skipped` entry `deferred-to-background` for the four; an explicit `--checks` call is never
   deferred and carries neither. Nothing is spawned when the pass did not converge —
   `NOT_CONVERGED_REASONS` (`no-repo`, `no-remote`, `fresh-cache`, `local-merge-model`,
   `preflight-gh-absent`, `preflight-github-unreachable`, `reconcile-threw`); report-only skips such
   as `non-canonical-run-dir` or `budget-exceeded` do not count — nor under `--dry-run`, which
-  therefore previews none of the three (`skipped` still names them; `background.reason` reads
+  therefore previews none of the four (`skipped` still names them; `background.reason` reads
   `dry-run`, saying nothing was handed over; an explicit `--checks … --dry-run` previews them). The
   background pass runs under `BACKGROUND_BUDGET_MS` (`budget.js`, 120 s) because the 18 s hot-path
   ceiling skipped its last three checks every pass. Without `remote-prune` the inline set is
   mirror-only-shaped, so the unscoped CLI now takes `mirror`'s single-ref `git fetch origin
   {integration}` (5 s `FETCH_TIMEOUT_MS`, concurrent with preflight) where it used to run
   `fetch --prune origin` (10 s); other `refs/remotes/origin/*` refs refresh when the background
-  pass's `--prune` fetch runs. `/tidy`'s Reconcile-first call names all ten
-  checks explicitly, because the unscoped call defers three.
+  pass's `--prune` fetch runs. `/tidy`'s Reconcile-first call names all eleven
+  checks explicitly, because the unscoped call defers four.
 - **Measured (AC1.1, #4032).** `node plugin/bin/hooks.js reconcile --json`, 20 sequential unscoped
   calls against this repo's main checkout (live network, HEAD baf2964, 2026-10-25): wall time min
   6786 / p50 7266 / p90 7931 / max 8845 ms, against about 52.5 s before (63 s in the record).
@@ -883,6 +1041,33 @@ An unscoped `hooks.js reconcile` call took about 52.5 s; the contract below is w
   120 s ceiling lets finish. A live-network wall-time property of this repo's state, so verified by
   this measurement rather than a committed `npm test` assertion; re-measure after changing any
   contract above.
+
+## Plan refs (#6055)
+
+`plan-refs.js` deletes `refs/claude-tweaks/plans/{n}` on origin once record `{n}` is CLOSED. A
+plan ref is shared state on origin and a pushed deletion is unrecoverable from this checkout, so
+the evidence bar is strict:
+
+- **Listing.** `git ls-remote origin 'refs/claude-tweaks/plans/*'`. Only a ref whose name parses as
+  an exact positive integer counts (`parsePlanRefName`); a non-hex sha claims no record, and the
+  first valid sha per record wins.
+- **State.** One aliased GraphQL batch per 50 records, made in the same call immediately before the
+  pushes. Only a proven `CLOSED` deletes. An open record, a PR number, a missing issue, or a
+  truncated or errored chunk keeps the ref (`record-open`, `state-unreadable`).
+- **Lease.** Each delete is `git push --force-with-lease=<ref>:<sha>` on the sha `ls-remote`
+  observed, so a plan re-written between the listing and the push survives: the push is rejected
+  and the entry is `delete-failed`, carrying git's reason as `detail`.
+- **Dry run.** `would-delete` entries; nothing is pushed.
+- **Whole-check failures** land in `skipped` as `{check: 'plan-refs', reason}`: `local-files-backend`
+  (no GitHub records to be closed), `no-origin` (no `origin` remote at all — the URL probe fails too),
+  `ls-remote-failed` (origin is configured but its listing fails), `origin-unresolvable`, `gh-absent` (no push),
+  `unexpected-error`. The check never throws.
+- **Backend.** Runs under `pr-first` on the background tier, and under `local-merge` as a fallback
+  beside `reap`'s; it is not in the `local-merge-model` skip list. The unscoped CLI defers it to the
+  background pass with the other three CLI-deferred checks; an explicit `--checks plan-refs` runs
+  it inline.
+- **No prerequisite.** It lists `origin` itself and reads no state another check produces, so it
+  has no `PREREQUISITES` entry.
 
 ## Referenced by
 

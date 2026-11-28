@@ -15,7 +15,7 @@
 // continuous session pulling the whole issue set independently per skill
 // invocation doesn't burn a round-trip per call for identical data.
 //
-// Usage: backlog-grant-gate.js [--repo owner/name] [--limit N] [--help]
+// Usage: backlog-grant-gate.js [--repo [host/]owner/name] [--limit N] [--help]
 // Output: one JSON envelope on stdout —
 //   { ceiling, grantOriginationEnabled, shortcut, candidates, trustRows,
 //     phaseA, eligible, refused }
@@ -35,16 +35,17 @@
 'use strict';
 
 const fs = require('fs');
-const path = require('path');
 const { execFileSync } = require('child_process');
 const { resolvePolicyKeys } = require('./lib/policy-schema');
+const { locatePolicyFile } = require('./lib/policy-file');
 const {
   parseRepo, ghAvailable, remoteUrl, ghOptions, explicitRepoGhHost, gateOriginRepo,
 } = require('./lib/repo-resolve');
 const { computeOutlook } = require('./lib/backlog-grant-gate/backlog-grant-gate');
 const { LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
+const { TRUST_POLICY_KEYS } = require('./lib/issues/trust');
 
-const USAGE = 'usage: backlog-grant-gate.js [--repo owner/name] [--limit N] [--help]\n';
+const USAGE = 'usage: backlog-grant-gate.js [--repo [host/]owner/name] [--limit N] [--help]\n';
 
 function parseArgs(argv) {
   const opts = { repo: null, limit: null, help: false };
@@ -101,18 +102,20 @@ const realDeps = {
   // `unattended` ceiling this runs with no human to retry, so a spurious
   // timeout-kill is worse than the slow-but-eventually-successful unbounded
   // call it would replace.
-  runner: (args, o = {}) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, ...o, windowsHide: true })),
-  // #4505: an explicit --repo's host for the native owner/repo calls only, as
-  // GH_HOST on their env. The issue lists read cwd's own repo, so they keep
-  // `runner`: a GH_HOST that matches none of cwd's remotes would break them.
+  runner: (args, o = {}, seam = {}) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, ...o, windowsHide: true }, seam)),
+  // #4505: an explicit --repo's host for the native owner/repo calls only; it
+  // rides ghOptions's per-call `explicitHost` (#4795). This CLI deliberately
+  // wires no `pinGhHost`: a recorded pin would reach every call, and the issue
+  // lists read cwd's own repo, so they keep `runner` without a host: a GH_HOST
+  // that matches none of cwd's remotes would break them.
   nativeRunnerFor: (repoSpec) => {
     const host = explicitRepoGhHost(repoSpec);
-    return host ? (args) => realDeps.runner(args, { env: { ...process.env, GH_HOST: host } }) : null;
+    return host ? (args) => realDeps.runner(args, {}, { explicitHost: host }) : null;
   },
   // maxBuffer widened for the same reason: fetchGitLog dumps every commit
   // message on the integration branch in one call.
   gitRunner: (args) => execFileSync('git', args, { encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true }),
-  readPolicyRaw: () => readFileSafe(path.join(repoRoot(), '.claude-tweaks', 'policy.yml')),
+  readPolicyRaw: () => readFileSafe(locatePolicyFile(repoRoot()).path),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
@@ -126,7 +129,7 @@ function run(argv, deps = realDeps) {
 
   const policyRaw = deps.readPolicyRaw();
   const resolved = resolvePolicyKeys(
-    ['autonomy', 'grant-origination-enabled', 'risk-floor', 'size-floor', 'backlog-fetch-limit', 'trust-revert-window-days', 'work-links', 'integration-branch', 'record-snapshot-ttl-seconds'],
+    ['autonomy', 'grant-origination-enabled', 'risk-floor', 'size-floor', 'backlog-fetch-limit', ...TRUST_POLICY_KEYS, 'work-links', 'integration-branch', 'record-snapshot-ttl-seconds'],
     { policyRaw },
   );
   const ceiling = resolved.autonomy.value;
@@ -136,7 +139,7 @@ function run(argv, deps = realDeps) {
     grantOriginationEnabled,
     riskFloor: resolved['risk-floor'].value,
     sizeFloor: resolved['size-floor'].value,
-    windowDays: resolved['trust-revert-window-days'].value,
+    trust: Object.fromEntries(TRUST_POLICY_KEYS.map((k) => [k, resolved[k].value])),
   };
 
   // Ceiling gate short-circuits before any network call — the ceiling and
@@ -163,7 +166,7 @@ function run(argv, deps = realDeps) {
       if (gated.refusal) { deps.stderr(`backlog-grant-gate.js: ${gated.refusal}\n`); return 2; }
       repoSpec = gated.spec;
     }
-    if (!repoSpec) { deps.stderr('backlog-grant-gate.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
+    if (!repoSpec) { deps.stderr('backlog-grant-gate.js: could not resolve owner/repo — pass --repo [host/]owner/name\n'); return 2; }
     // #1443: parseRepo's regex accepts any non-'/' owner/repo segment, including '.'/'..'
     // (#1153 review finding). resolveSubIssueNumbers's REST fallback (lib/backlog-grant-gate/
     // backlog-grant-gate.js) builds a `repos/${owner}/${repo}/issues/.../sub_issues` path via
@@ -206,6 +209,7 @@ function run(argv, deps = realDeps) {
       gitRunner: deps.gitRunner,
       sessionId: process.env.CLAUDE_CODE_SESSION_ID,
       ttlSeconds: resolved['record-snapshot-ttl-seconds'].value,
+      stderr: (s) => deps.stderr(s),
     });
   } catch (err) {
     deps.stderr(`backlog-grant-gate.js: ${errorText(err)}\n`);

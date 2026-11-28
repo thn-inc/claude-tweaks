@@ -2,6 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -14,7 +15,7 @@ const { run, parseArgs } = require('../../../plugin/bin/check-pr-bookkeeping');
 // is enough for the anchor-ok / shadow-refused cases below. `mainRoot: main`
 // is injected explicitly so resolveTarget never has to spawn real git either.
 function anchoredFixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-prbk-cli-'));
+  const root = scratchDir('ct-prbk-cli-');
   const main = path.join(root, 'main');
   fs.mkdirSync(path.join(main, '.git'), { recursive: true });
   return main;
@@ -50,14 +51,14 @@ function makeDeps({ cwd, mainRoot } = {}) {
 // this is the #2472 core DENY scenario, exercised here through the CLI's
 // run() rather than calling checkPrBookkeepingPrecondition directly.
 function gitRepoWithCommit() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-prbk-cli-git-'));
+  const dir = scratchDir('ct-prbk-cli-git-');
   execFileSync('git', ['-C', dir, 'init', '-q']);
   execFileSync('git', ['-C', dir, 'commit', '--allow-empty', '-m', 'init', '-q']);
   return fs.realpathSync(dir);
 }
 
 function linkedWorktreeOf(main) {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-prbk-cli-wtparent-'));
+  const parent = scratchDir('ct-prbk-cli-wtparent-');
   const wt = path.join(parent, 'wt');
   execFileSync('git', ['-C', main, 'worktree', 'add', '-q', wt, '-b', `wt-branch-${path.basename(parent)}`]);
   return fs.realpathSync(wt);

@@ -5,7 +5,7 @@
 'use strict';
 
 const {
-  shapeGate, stripCodeSpans, ORIGINAL_REQUEST_RE,
+  shapeGate, stripCodeSpans, originalRequestOffset,
 } = require('./materialize-format');
 
 // The opening of a red-team marker (specify/red-team.md's write-back). Same
@@ -24,7 +24,7 @@ const OPEN_QUESTIONS_HEADING_RE = /^(#{2,4})[ \t]+open questions\b.*$/im;
 // materialize-format.js's shapeGate tests for placeholders. A marker quoted
 // in a code span or inherited in the original request is not an open one.
 function authoredText(body) {
-  const at = body.search(ORIGINAL_REQUEST_RE);
+  const at = originalRequestOffset(body);
   return stripCodeSpans(at === -1 ? body : body.slice(0, at));
 }
 

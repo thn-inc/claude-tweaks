@@ -5,6 +5,7 @@ const {
   CHECK_HEADER, PROPOSED_ACTION, classifyCheckResult, checkBody, checkReleaseNoteLine,
   bodySha, labelNames, scanRecords, summaryLine,
 } = require('../../../plugin/bin/lib/release-note-repair/detect');
+const { shapeGate } = require('../../../plugin/bin/lib/issues/materialize-format');
 const F = require('./fixtures');
 
 const gapsStderr = (...gaps) => `${CHECK_HEADER}\n${gaps.map((g) => `  - ${g}`).join('\n')}\n`;
@@ -38,6 +39,20 @@ test('checkBody runs the real compose-record.js --check contract', () => {
   assert.equal(checkBody(F.MISSING_RN_AND_AC).verdict, 'other-gaps');
   assert.equal(checkBody(F.CONFORMING).verdict, 'conforming');
   assert.equal(checkBody(F.MISSING_RN_WITH_TBD).verdict, 'other-gaps');
+});
+
+test('checkBody: a Release Note hidden by an unclosed fence is other-gaps naming the fence, never release-note-only (#4350)', () => {
+  const body = F.join(F.CS, F.DEL, '## Acceptance Criteria\n\n- [ ] a\n\n```\nnever closed\n', F.RN);
+  const result = checkBody(body);
+  assert.equal(result.verdict, 'other-gaps');
+  assert.deepEqual(result.gaps, ['unclosed-fence at line 13']);
+});
+
+test('a missing Release Note beside an unterminated fence routes to specify and stays off the repair worklist (#4350)', () => {
+  assert.deepEqual(shapeGate(F.UNTERMINATED_FENCE_BODY), { ok: false, missing: ['Release Note', 'unclosed-fence at line 13'] });
+  const result = checkBody(F.UNTERMINATED_FENCE_BODY);
+  assert.equal(result.verdict, 'other-gaps');
+  assert.deepEqual(result.gaps, ['missing section: ## Release Note', 'unclosed-fence at line 13']);
 });
 
 test('checkBody: a checker that exits 2 or throws is a scan error', () => {

@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { run, parseArgs } = require('../../../plugin/bin/closing-links');
+const { run, parseArgs, closingLinks } = require('../../../plugin/bin/closing-links');
 
 const RUN_ID = '2026-10-25T000001-record-4199';
 const FOREIGN_RUN_ID = '2026-01-01T000000-record-9';
@@ -140,7 +140,10 @@ const PRE = ['--mode', 'pre-merge'];
 const POST = ['--mode', 'post-merge'];
 
 test('parseArgs: shapes and rejections', () => {
-  assert.deepEqual(parseArgs(['--run', 'r', '--mode', 'pre-merge']), { run: 'r', mode: 'pre-merge', settleMs: 15000, closeWindowMs: null, help: false });
+  assert.deepEqual(parseArgs(['--run', 'r', '--mode', 'pre-merge']), {
+    run: 'r', mode: 'pre-merge', settleMs: 15000, closeWindowMs: null, bodyFile: null, help: false,
+  });
+  assert.equal(parseArgs(['--mode', 'screen', '--body-file', 'b']).bodyFile, 'b');
   assert.equal(parseArgs(['--run', 'r', '--mode', 'post-merge', '--settle-ms', '0']).settleMs, 0);
   assert.equal(parseArgs(['--help']).help, true);
   assert.ok(parseArgs(['--bogus']).error);
@@ -154,6 +157,111 @@ test('parseArgs: shapes and rejections', () => {
   // Object.hasOwn: an inherited key is not a flag.
   assert.ok(parseArgs(['constructor']).error);
   assert.ok(parseArgs(['--toString', 'x']).error);
+});
+
+test('AC1.1/AC1.2: closingLinks returns the post-merge envelope run() prints, and prints nothing itself', () => {
+  const setup = () => {
+    const { main, runDir } = fixture({ pr: { number: 7 } });
+    const h = makeDeps(main, { prReads: [mergedView(body(), [2724, 3997])], issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_AFTER }] } });
+    return { runDir, h };
+  };
+  const a = setup();
+  assert.equal(run(['--run', a.runDir, ...POST], a.h.deps), 0);
+  const b = setup();
+  const r = closingLinks({ run: b.runDir, mode: 'post-merge' }, b.h.deps);
+  assert.equal(r.code, 0);
+  assert.deepEqual(r.envelope, a.h.json());
+  assert.equal(r.envelope.action, 'reopened');
+  assert.deepEqual(b.h.out, []);
+});
+
+test('AC1.1: closingLinks returns the pre-merge envelope run() prints', () => {
+  const setup = () => {
+    const { main, runDir } = fixture({ pr: { number: 7 } });
+    const h = makeDeps(main, { prReads: [preView(body(), [3997])] });
+    return { runDir, h };
+  };
+  const a = setup();
+  assert.equal(run(['--run', a.runDir, ...PRE], a.h.deps), 0);
+  const b = setup();
+  const r = closingLinks({ run: b.runDir, mode: 'pre-merge' }, b.h.deps);
+  assert.equal(r.code, 0);
+  assert.deepEqual(r.envelope, a.h.json());
+  assert.equal(r.envelope.action, 'clean');
+  assert.deepEqual(b.h.out, []);
+});
+
+test('each mode reads the PR with its own exact --json field list', () => {
+  // The fake gh answers either shape, so only the recorded argv tells the two lists apart.
+  const prView = (h) => h.calls.filter((c) => c.args[0] === 'pr' && c.args[1] === 'view').map((c) => c.args);
+  const pre = fixture({ pr: { number: 7 } });
+  const hPre = makeDeps(pre.main, { prReads: [preView(body(), [3997])] });
+  assert.equal(run(['--run', pre.runDir, ...PRE], hPre.deps), 0);
+  assert.deepEqual(prView(hPre), [['pr', 'view', '7', '--json', 'body,closingIssuesReferences,url']]);
+  const post = fixture({ pr: { number: 7 } });
+  const hPost = makeDeps(post.main, { prReads: [mergedView(body({ span: ['Fixes #3997'] }), [3997])] });
+  assert.equal(run(['--run', post.runDir, ...POST], hPost.deps), 0);
+  assert.deepEqual(prView(hPost), [['pr', 'view', '7', '--json', 'state,mergedAt,body,closingIssuesReferences,url,mergeCommit,baseRefName']]);
+});
+
+test('AC1.1: closingLinks defaults settleMs to the CLI default (5 re-reads) and honors an explicit 0', () => {
+  const still = () => {
+    const { main, runDir } = fixture({ pr: { number: 7 } });
+    return { runDir, h: makeDeps(main, { prReads: [mergedView(body(), [2724, 3997])], issues: { 2724: [{ state: 'OPEN', closedAt: null }] } }) };
+  };
+  const a = still();
+  assert.equal(closingLinks({ run: a.runDir, mode: 'post-merge' }, a.h.deps).envelope.action, 'close-pending');
+  assert.deepEqual(a.h.sleeps, [3000, 3000, 3000, 3000, 3000]);
+  const b = still();
+  closingLinks({ run: b.runDir, mode: 'post-merge', settleMs: 0 }, b.h.deps);
+  assert.deepEqual(b.h.sleeps, []);
+});
+
+test('AC1.1: closingLinks exit 5 returns no envelope and still logs its /wrap-up SKIP', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { prReads: [new Error('network down')] });
+  assert.deepEqual(closingLinks({ run: runDir, mode: 'post-merge' }, h.deps), { code: 5, envelope: null });
+  assert.deepEqual(h.out, []);
+  assert.match(h.log(runDir), /SKIP .*Closing links \(post-merge\) \(degraded\)/);
+});
+
+test('AC1.1: closingLinks exit 3 (missing run dir) returns no envelope', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { prReads: [mergedView(body(), [3997])] });
+  const missing = path.join(runDir, 'does-not-exist');
+  assert.deepEqual(closingLinks({ run: missing, mode: 'post-merge' }, h.deps), { code: 3, envelope: null });
+  assert.deepEqual(h.calls, []);
+  assert.deepEqual(h.out, []);
+});
+
+test('closingLinks has no stdout seam: with none injected it writes nothing to process.stdout, on an exit-0 and an exit-3 path', () => {
+  const written = [];
+  const real = process.stdout.write;
+  const withoutStdout = (deps) => { const { stdout: _omit, ...rest } = deps; return rest; };
+  try {
+    process.stdout.write = (chunk) => { written.push(String(chunk)); return true; };
+    const { main, runDir } = fixture({ pr: { number: 7 } });
+    const ok = makeDeps(main, { prReads: [mergedView(body(), [2724, 3997])], issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_AFTER }] } });
+    const r = closingLinks({ run: runDir, mode: 'post-merge' }, withoutStdout(ok.deps));
+    const missing = closingLinks({ run: path.join(runDir, 'does-not-exist'), mode: 'post-merge' }, withoutStdout(ok.deps));
+    assert.equal(r.code, 0);
+    assert.equal(r.envelope.action, 'reopened');
+    assert.equal(missing.code, 3);
+    assert.deepEqual(written, []);
+  } finally {
+    process.stdout.write = real;
+  }
+});
+
+test('closingLinks throws a TypeError for a mode that is not pre-merge or post-merge, before any gh call or log', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { prReads: [preView(body(), [3997])] });
+  for (const mode of ['bogus', undefined, null, '']) {
+    assert.throws(() => closingLinks({ run: runDir, mode }, h.deps), (e) => e instanceof TypeError && /mode must be one of pre-merge, post-merge/.test(e.message));
+  }
+  assert.deepEqual(h.calls, []);
+  assert.deepEqual(h.err, []);
+  assert.equal(h.log(runDir), '');
 });
 
 test('AC2.1 pre-merge unlinks a stale closing reference', () => {
@@ -1265,6 +1373,86 @@ test('post-merge non-default: an issue view with no string state is closeFailed 
   assert.equal(j.action, 'close-failed');
 });
 
+// ---- #4817: post-merge proves the PR is this run's before any non-default-base write ----
+
+test('#4817 AC1.1: post-merge on a non-default base refuses another run\'s PR — exit 4, no reopen, no close, no issue read', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ runId: FOREIGN_RUN_ID }), [2724, 3997], NON_DEFAULT)],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_AFTER }], 3997: [OPEN_ISSUE] },
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 4);
+  assert.equal(h.out.join(''), '');
+  assert.match(h.err.join(''), /run marker mismatch on PR #7: body names run 2026-01-01T000000-record-9/);
+  assert.equal(h.reopens().length, 0);
+  assert.equal(h.closes().length, 0);
+  assert.equal(h.issueReads().length, 0);
+});
+
+test('#4817 AC1.1 (no marker): a non-default-base body with no run-marker line is exit 4, body names run none', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const noMarker = body({ span: FIXES_ONLY }).split('\n').slice(1).join('\n');
+  const h = makeDeps(main, { prReads: [mergedView(noMarker, [], NON_DEFAULT)], issues: { 3997: [OPEN_ISSUE] } });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 4);
+  assert.match(h.err.join(''), /body names run none, expected 2026-10-25T000001-record-4199/);
+  assert.equal(h.closes().length, 0);
+  // The SKIP names both ids too: the reconciler discards stderr, so this line is the only trace.
+  assert.match(h.log(runDir), /condition: closing-links\.js exit 4 run marker mismatch \(body names run none, expected 2026-10-25T000001-record-4199\)/);
+});
+
+test('#4817 guard: a default-base post-merge does not check the marker — a foreign body still reopens a deferred record', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ runId: FOREIGN_RUN_ID }), [2724, 3997])],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_AFTER }] },
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  assert.equal(h.json().action, 'reopened');
+  assert.equal(h.reopens().length, 1);
+});
+
+test('#4817 guard (base unchecked): an unreadable default branch is treated like the default base — a foreign body still reopens, no exit 4', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ runId: FOREIGN_RUN_ID }), [2724, 3997], NON_DEFAULT)],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_AFTER }] },
+    defaultBranchThrows: true,
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.baseUnchecked, true);
+  assert.equal(h.reopens().length, 1);
+  assert.equal(h.closes().length, 0);
+  assert.doesNotMatch(h.err.join(''), /run marker mismatch/);
+});
+
+test('#4817 guard (default base, no marker): a default-base body with no run-marker line still reopens a deferred record — no exit 4', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const noMarker = body().split('\n').slice(1).join('\n');
+  const h = makeDeps(main, {
+    prReads: [mergedView(noMarker, [2724, 3997])],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_AFTER }] },
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  assert.equal(h.json().action, 'reopened');
+  assert.equal(h.reopens().length, 1);
+  assert.doesNotMatch(h.err.join(''), /run marker mismatch/);
+});
+
+test('#4817 guard (no baseRefName): a PR with no baseRefName is treated like the default base — a foreign body still reopens, no exit 4', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ runId: FOREIGN_RUN_ID }), [2724, 3997], { baseRefName: undefined })],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_AFTER }] },
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.baseUnchecked, true);
+  assert.equal(h.reopens().length, 1);
+  assert.equal(h.closes().length, 0);
+  assert.doesNotMatch(h.err.join(''), /run marker mismatch/);
+});
+
 // ---- #4026: gh-absent, exit 4 and exit 5 log their own SKIP line ----
 
 // Characterization (pre-#4026 behaviour that must not move): each refusal and
@@ -1275,7 +1463,13 @@ const EXIT_SITES = [
     name: 'exit 4 run marker mismatch (pre-merge)', code: 4, mode: 'pre-merge',
     opts: { prReads: [preView(body({ runId: FOREIGN_RUN_ID }), [2724, 3997])] },
     stderr: `closing-links.js: run marker mismatch on PR #7: body names run ${FOREIGN_RUN_ID}, expected ${RUN_ID} — nothing written\n`,
-    condition: 'exit 4 run marker mismatch',
+    condition: `exit 4 run marker mismatch (body names run ${FOREIGN_RUN_ID}, expected ${RUN_ID})`,
+  },
+  {
+    name: 'exit 4 run marker mismatch (post-merge, non-default base)', code: 4, mode: 'post-merge',
+    opts: { prReads: [mergedView(body({ runId: FOREIGN_RUN_ID, span: FIXES_ONLY }), [], NON_DEFAULT)], issues: { 3997: [OPEN_ISSUE] } },
+    stderr: `closing-links.js: run marker mismatch on PR #7: body names run ${FOREIGN_RUN_ID}, expected ${RUN_ID} — nothing written\n`,
+    condition: `exit 4 run marker mismatch (body names run ${FOREIGN_RUN_ID}, expected ${RUN_ID})`,
   },
   {
     name: 'exit 5 pr view failed (pre-merge)', code: 5, mode: 'pre-merge',
@@ -1418,4 +1612,67 @@ test('a failed SKIP append keeps every exit code, adds one stderr line, and mark
     assert.deepEqual(h.json(), { action: 'gh-absent', pr: 7, logFailed: true }, mode);
     assert.equal(h.err.join(''), 'closing-links.js: could not append the decisions.md entry: disk full\n', mode);
   }
+});
+
+// --mode screen (#4467): a not-yet-posted PR body that should close no record
+// (tidy's housekeeping PR) -- no run dir, no gh, rewritten in place.
+function screenDeps(overrides = {}) {
+  const out = [];
+  const err = [];
+  const deps = {
+    stdout: (s) => out.push(s),
+    stderr: (s) => err.push(s),
+    gh: () => { throw new Error('screen must not call gh'); },
+    ghAvailable: () => { throw new Error('screen must not probe gh'); },
+    ...overrides,
+  };
+  return { deps, out, err };
+}
+
+function bodyFile(text) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-closinglinks-screen-'));
+  created.push(dir);
+  const file = path.join(dir, 'body.md');
+  fs.writeFileSync(file, text);
+  return file;
+}
+
+test('screen neutralizes every closing phrase in a body file and rewrites it', () => {
+  const file = bodyFile('Tidy: closed #12 (stale), resolves owner/repo#7\r\nsee #9\r\n');
+  const h = screenDeps();
+  assert.equal(run(['--mode', 'screen', '--body-file', file], h.deps), 0);
+  assert.equal(fs.readFileSync(file, 'utf8'), 'Tidy: closed issue #12 (stale), resolves issue owner/repo#7\r\nsee #9\r\n');
+  const j = JSON.parse(h.out.join(''));
+  assert.equal(j.action, 'neutralized');
+  assert.deepEqual(j.neutralized.map((x) => x.number), [12, 7]);
+  assert.equal(h.err.join(''), '');
+});
+
+test('screen leaves a clean body byte-identical and reports clean', () => {
+  const text = 'no keywords here, see #3\r\n';
+  const file = bodyFile(text);
+  const h = screenDeps({ writeFile: () => { throw new Error('a clean body must not be written'); } });
+  assert.equal(run(['--mode', 'screen', '--body-file', file], h.deps), 0);
+  assert.deepEqual(JSON.parse(h.out.join('')), { action: 'clean', neutralized: [] });
+  assert.equal(fs.readFileSync(file, 'utf8'), text);
+});
+
+test('screen invocation errors exit 2 with no stdout', () => {
+  const phrase = bodyFile('closes #4\n');
+  const cases = [
+    { name: 'no body file', argv: ['--mode', 'screen'] },
+    { name: 'screen with --run', argv: ['--mode', 'screen', '--body-file', phrase, '--run', 'r'] },
+    { name: 'screen with --settle-ms', argv: ['--mode', 'screen', '--body-file', phrase, '--settle-ms', '0'] },
+    { name: 'screen with --close-window-ms', argv: ['--mode', 'screen', '--body-file', phrase, '--close-window-ms', '1'] },
+    { name: 'pre-merge with --body-file', argv: ['--run', 'r', '--mode', 'pre-merge', '--body-file', phrase] },
+    { name: 'unreadable body file', argv: ['--mode', 'screen', '--body-file', phrase], overrides: { readFile: () => { throw new Error('EACCES'); } } },
+    { name: 'unwritable body file', argv: ['--mode', 'screen', '--body-file', phrase], overrides: { writeFile: () => { throw new Error('EROFS'); } } },
+  ];
+  for (const c of cases) {
+    const h = screenDeps(c.overrides);
+    assert.equal(run(c.argv, h.deps), 2, c.name);
+    assert.equal(h.out.join(''), '', c.name);
+    assert.match(h.err.join(''), /^closing-links\.js: /, c.name);
+  }
+  assert.equal(fs.readFileSync(phrase, 'utf8'), 'closes #4\n');
 });

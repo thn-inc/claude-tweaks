@@ -5,9 +5,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
-  computeLevers, writeManifesto, renderFyi, mergeAuthorizationRefusal, AdoptedRunError, ManifestoInputError, POLICY_REQUEST_KEYS,
+  computeLevers, writeManifesto, renderFyi, mergeAuthorizationRefusal, AdoptedRunError, ManifestoInputError, POLICY_REQUEST_KEYS, checkRecords,
 } = require('../../../plugin/bin/lib/flow/manifesto-write');
-const { run } = require('../../../plugin/bin/manifesto-write');
+const { run, parseCeremony } = require('../../../plugin/bin/manifesto-write');
 const { MANIFESTO_LEVERS } = require('../../../plugin/bin/lib/set-config/write');
 const { formatEntry } = require('../../../plugin/bin/lib/log-decision/append');
 const { classifyDecisions } = require('../../../plugin/bin/lib/log-decision/claim-log');
@@ -146,9 +146,9 @@ test('computeLevers runs only the auto FYI path: confirm, hybrid and interactive
   }
 });
 
-test('POLICY_REQUEST_KEYS is preflight\'s LEVER_KEYS minus the two non-policy levers, plus autonomy and the run pin', () => {
+test('POLICY_REQUEST_KEYS is preflight\'s LEVER_KEYS minus the two non-policy levers, plus autonomy, the run pin and auto-mode', () => {
   const policyLevers = LEVER_KEYS.filter((k) => k !== 'ceremony-profile' && k !== 'merge-authorization');
-  assert.deepStrictEqual(POLICY_REQUEST_KEYS, [...policyLevers, 'autonomy', 'integration-model']);
+  assert.deepStrictEqual(POLICY_REQUEST_KEYS, [...policyLevers, 'autonomy', 'integration-model', 'auto-mode']);
 });
 
 test('computeLevers refuses an unresolved policy lever rather than guessing', () => {
@@ -195,11 +195,99 @@ test('config.yml holds the 13 levers in canonical order, then the run pin, then 
   assert.ok(fs.statSync(path.join(fx.runDir, 'staged')).isDirectory(), 'staged/ created');
 });
 
+// --- run manifest fill (#5903) -----------------------------------------------
+
+const { initRunManifest, MANIFEST_FILE } = require('../../../plugin/bin/lib/run-manifest/write');
+const readManifest = (runDir) => JSON.parse(fs.readFileSync(path.join(runDir, MANIFEST_FILE), 'utf8'));
+const seedManifest = (runDir, lane) => initRunManifest(runDir, { lane, cwd: runDir }, {
+  gatherFacts: () => ({ pluginVersion: '6.200.0', policyHash: 'abc123', baseCommit: 'deadbeef', modelProfile: 'standard' }),
+  stderr: () => {},
+});
+
+test('writeManifesto fills the seeded manifest: ceremonyProfile is the ceremony-profile lever, lane is standard, the facts stay', () => {
+  for (const [ceremony, expected] of [['fast-lane', 'fast-lane'], ['standard', 'standard']]) {
+    const fx = fixture();
+    seedManifest(fx.runDir);
+    const { levers } = write(fx, { records: [{ n: 4027, ceremony, ceremonySource: 'label' }] });
+    assert.strictEqual(lever(levers, 'ceremony-profile').value, expected);
+    const m = readManifest(fx.runDir);
+    assert.strictEqual(m.ceremonyProfile, expected);
+    assert.strictEqual(m.lane, 'standard');
+    assert.strictEqual(m.pluginVersion, '6.200.0');
+    assert.strictEqual(m.baseCommit, 'deadbeef');
+  }
+});
+
+test('writeManifesto with no manifest creates one carrying only ceremonyProfile and lane; every other field stays null', () => {
+  const fx = fixture();
+  write(fx);
+  const m = readManifest(fx.runDir);
+  assert.strictEqual(m.lane, 'standard');
+  assert.strictEqual(m.ceremonyProfile, 'standard');
+  for (const key of ['pluginVersion', 'policyHash', 'baseCommit', 'modelProfile']) assert.strictEqual(m[key], null, key);
+});
+
+test('writeManifesto does not overwrite a known lane: an express or driver run keeps it', () => {
+  for (const lane of ['express', 'driver']) {
+    const fx = fixture();
+    seedManifest(fx.runDir, lane);
+    write(fx);
+    const m = readManifest(fx.runDir);
+    assert.strictEqual(m.lane, lane);
+    assert.strictEqual(m.ceremonyProfile, 'standard');
+  }
+});
+
+test('writeManifesto fills no lane when the config.yml write fails mid-batch', () => {
+  const fx = fixture({ decisions: CLAIM });
+  seedManifest(fx.runDir);
+  let n = 0;
+  const { setConfigLever } = require('../../../plugin/bin/lib/set-config/write');
+  const flaky = (args) => { if (++n === 5) throw new Error('EIO: simulated'); return setConfigLever(args); };
+  assert.throws(() => write(fx, { deps: { setConfigLever: flaky } }), /EIO/);
+  assert.strictEqual(readManifest(fx.runDir).lane, 'unknown');
+});
+
+test('a writeManifesto failure after the ceremony-profile lever keeps the filled ceremonyProfile while config.yml is removed', () => {
+  const fx = fixture({ decisions: CLAIM });
+  seedManifest(fx.runDir);
+  const { setConfigLever } = require('../../../plugin/bin/lib/set-config/write');
+  const flaky = (args) => { if (args.key === 'merge-authorization') throw new Error('EIO: simulated'); return setConfigLever(args); };
+  assert.throws(() => write(fx, { deps: { setConfigLever: flaky } }), /EIO/);
+  assert.ok(!fs.readdirSync(fx.runDir).includes('config.yml'), 'partial config.yml rolled back');
+  // The fill rides setConfigLever, so it already landed; a re-run rewrites the same value.
+  const m = readManifest(fx.runDir);
+  assert.strictEqual(m.ceremonyProfile, 'standard');
+  assert.strictEqual(m.lane, 'unknown', 'the lane fill is after the whole batch, so it did not run');
+});
+
 test('an existing config.yml -> AdoptedRunError and nothing in the run dir changes', () => {
   const fx = fixture({ decisions: CLAIM, config: 'mode: auto\n' });
   const before = snapshot(fx.runDir);
   assert.throws(() => write(fx), (e) => e instanceof AdoptedRunError);
   assert.deepStrictEqual(snapshot(fx.runDir), before);
+});
+
+test('a skipped record logs the skip line, whose prefix materialize.md reads as the verdict (#4118)', () => {
+  const fx = fixture({ decisions: CLAIM });
+  const records = [{ n: 4027, ceremony: 'standard', ceremonySource: 'label' }, { n: 4031, ceremony: 'standard', ceremonySource: 'skipped' }];
+  write(fx, { records });
+  const flow = fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8');
+  const text = '#4031 carries no ceremony:* label -> CEREMONY: standard (judgment skipped: the run-wide fold is already standard from a labelled record and #4031 is not size:low)';
+  assert.ok(flow.includes(formatEntry({ status: 'AUTO', now: NOW, step: 'Manifesto ceremony-check (skipped)', spec: null, text, reversibility: 'n/a', lever: null })));
+  assert.ok(flow.includes('#4031 carries no ceremony:* label -> CEREMONY: standard'));
+});
+
+test('a skipped record is refused without a labelled standard record, or with fast-lane (#4118)', () => {
+  assert.throws(() => checkRecords([{ n: 1, ceremony: 'standard', ceremonySource: 'skipped' }]), ManifestoInputError);
+  assert.throws(() => checkRecords([{ n: 1, ceremony: 'standard', ceremonySource: 'judged' }, { n: 2, ceremony: 'standard', ceremonySource: 'skipped' }]), ManifestoInputError);
+  assert.throws(() => checkRecords([{ n: 1, ceremony: 'standard', ceremonySource: 'label' }, { n: 2, ceremony: 'fast-lane', ceremonySource: 'skipped' }]), ManifestoInputError);
+  assert.doesNotThrow(() => checkRecords([{ n: 1, ceremony: 'standard', ceremonySource: 'label' }, { n: 2, ceremony: 'standard', ceremonySource: 'skipped' }]));
+});
+
+test('parseCeremony reads :skipped (#4118)', () => {
+  assert.deepStrictEqual(parseCeremony('7=standard,8=standard:skipped').records,
+    [{ n: 7, ceremony: 'standard', ceremonySource: 'label' }, { n: 8, ceremony: 'standard', ceremonySource: 'skipped' }]);
 });
 
 test('a judged record logs the ceremony-check line; a label record logs none; then the levers line names the absolute config.yml path', () => {
@@ -276,9 +364,97 @@ test('writeManifesto: a degraded-sourced merge-verification lever writes wait an
   assert.ok(!fs.readFileSync(path.join(clean.runDir, 'decisions.md'), 'utf8').includes('derived from a degraded forge detection'));
 });
 
+test('manifesto-write: a factory lever renders Source factory', () => {
+  const { resolvePolicyKeys } = require('../../../plugin/bin/lib/policy-schema');
+  const fromFactory = resolvePolicyKeys(['tidy-aggressiveness', 'review-auto-apply-ceiling', 'autonomy'], {
+    factoryRaw: 'tidy-aggressiveness: conservative\nreview-auto-apply-ceiling: low\nautonomy: unattended\n',
+  });
+  const levers = computeLevers({ mode: 'auto', modeSource: 'default', records: ONE_STANDARD, resolved: resolved(fromFactory) });
+  assert.deepStrictEqual(lever(levers, 'tidy-aggressiveness'), { key: 'tidy-aggressiveness', value: 'conservative', source: 'factory' });
+  // A factory ceiling is set, not the default, so the unattended-default lift to medium does not apply.
+  assert.deepStrictEqual(lever(levers, 'review-auto-apply-ceiling'), { key: 'review-auto-apply-ceiling', value: 'low', source: 'factory' });
+  assert.match(renderFyi(levers), /\| Tidy aggressiveness \| conservative \| factory \|/i);
+});
+
+test('manifesto-write: a factory-only auto-mode renders the Mode row with Source factory (#6006)', () => {
+  const { resolvePolicyKeys } = require('../../../plugin/bin/lib/policy-schema');
+  const modeRow = (raws, modeSource = 'policy') => {
+    const levers = computeLevers({ mode: 'auto', modeSource, records: ONE_STANDARD, resolved: resolved(resolvePolicyKeys(['auto-mode'], raws)) });
+    return renderFyi(levers).split('\n').find((line) => line.startsWith('| Mode |'));
+  };
+  assert.strictEqual(modeRow({ factoryRaw: 'auto-mode: default-on\n' }), '| Mode | auto | factory |');
+  assert.strictEqual(modeRow({ policyRaw: 'auto-mode: default-on\n', factoryRaw: 'auto-mode: default-off\n' }), '| Mode | auto | policy |');
+  // Only rung 3 reads the layer: an arg-sourced mode stays arg whatever auto-mode resolved.
+  assert.strictEqual(modeRow({ factoryRaw: 'auto-mode: default-on\n' }, 'arg'), '| Mode | auto | arg |');
+});
+
 test('renderFyi shows a degraded-sourced lever with the source column degraded', () => {
   const levers = computeLevers({ mode: 'auto', modeSource: 'default', records: ONE_STANDARD, resolved: resolved({ 'merge-verification': { value: 'off', source: 'default', degraded: 'timeout' } }) });
   assert.match(renderFyi(levers), /\| Merge verification \| wait \| degraded \|/i);
+});
+
+// --- replanned (#6148): the Manifesto write replans a claimed record once, after its batch and lane fill ---
+
+const { STARTING_LISTS } = require('../../../plugin/bin/lib/station-events/plan');
+const { STATION, KIND } = require('../../../plugin/bin/lib/station-events/stations');
+
+function claimedFixture() {
+  const fx = fixture({ decisions: CLAIM });
+  seedManifest(fx.runDir);
+  fs.writeFileSync(path.join(fx.root, '.claude-tweaks', 'station-events.jsonl'), JSON.stringify({
+    v: 1, repoName: 'acme/w', recordNumber: 7, kind: KIND.PLANNED, station: STATION.BUILD, lane: 'unknown',
+    runId: RUN_ID, payload: { stations: STARTING_LISTS.standard },
+  }) + '\n');
+  return fx;
+}
+const FAST = [{ n: 4027, ceremony: 'fast-lane', ceremonySource: 'label' }];
+
+test('writeManifesto with a fast-lane ceremony after a standard claim writes one replanned', () => {
+  const fx = claimedFixture();
+  const events = [];
+  write(fx, { records: FAST, deps: { stationEvent: (e) => events.push(e), stationMainRoot: fx.root } });
+  assert.strictEqual(events.length, 1);
+  assert.strictEqual(events[0].payload.cause.ref, 'ceremony-profile');
+  assert.strictEqual(events[0].payload.reasonCode, 'ceremony-downgrade');
+});
+
+test('writeManifesto with no stationEvent in deps appends one replanned through the real default sink', () => {
+  const fx = claimedFixture();
+  const logFile = path.join(fx.root, '.claude-tweaks', 'station-events.jsonl');
+  write(fx, { records: FAST });
+  const lines = fs.readFileSync(logFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const replans = lines.filter((l) => l.kind === KIND.REPLANNED);
+  assert.strictEqual(lines.length, 2);
+  assert.strictEqual(replans.length, 1);
+  assert.strictEqual(replans[0].payload.stations.includes('polish'), false);
+  assert.strictEqual(replans[0].payload.reasonCode, 'ceremony-downgrade');
+});
+
+test('writeManifesto with a standard ceremony after a standard claim writes nothing', () => {
+  const fx = claimedFixture();
+  const events = [];
+  write(fx, { deps: { stationEvent: (e) => events.push(e), stationMainRoot: fx.root } });
+  assert.deepStrictEqual(events, []);
+});
+
+test('a writeManifesto that fails mid-batch writes no replanned', () => {
+  const fx = claimedFixture();
+  const events = [];
+  const { setConfigLever } = require('../../../plugin/bin/lib/set-config/write');
+  const flaky = (args) => { if (args.key === 'spec') throw new Error('EIO: simulated'); return setConfigLever(args); };
+  assert.throws(() => write(fx, { records: FAST, deps: { setConfigLever: flaky, stationEvent: (e) => events.push(e), stationMainRoot: fx.root } }), /EIO/);
+  assert.deepStrictEqual(events, []);
+});
+
+test('a throwing stationEvent leaves writeManifesto\'s result, config.yml and decisions.md as with stationEvent null', () => {
+  const runOnce = (stationEvent) => {
+    const fx = claimedFixture();
+    const { out } = write(fx, { records: FAST, deps: { stationEvent, stationMainRoot: fx.root } });
+    return { table: out.table, config: fs.readFileSync(path.join(fx.runDir, 'config.yml'), 'utf8'), log: fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8').split(fx.root).join('<root>') };
+  };
+  const off = runOnce(null);
+  const thrown = runOnce(() => { throw new Error('sink exploded'); });
+  assert.deepStrictEqual(thrown, off);
 });
 
 test('a config.yml write that fails mid-batch removes the partial config.yml, so the run reads as case 3, never case 1', () => {
@@ -394,6 +570,19 @@ test('CLI: an existing config.yml exits 3 and nothing changes', () => {
   assert.strictEqual(out.join(''), '');
   assert.match(err.join(''), /config\.yml already present/);
   assert.strictEqual(resolveCalls, 0, 'refused before resolving policy');
+});
+
+test('CLI: --ceremony :skipped on a fast-lane record, or without a labelled standard record, exits 2 (#4118)', () => {
+  for (const ceremony of ['4027=standard,8=fast-lane:skipped', '8=standard:skipped', '4027=standard:judged,8=standard:skipped']) {
+    const fx = fixture({ decisions: CLAIM });
+    const { err, deps } = cliDeps(fx);
+    assert.strictEqual(run(['--run', fx.runDir, '--mode', 'auto', '--mode-source', 'default', '--ceremony', ceremony], deps), 2, ceremony);
+    assert.match(err.join(''), /skipped ceremony judgment/, ceremony);
+    assert.ok(!fs.existsSync(path.join(fx.runDir, 'config.yml')), `${ceremony}: nothing written`);
+  }
+  const ok = fixture({ decisions: CLAIM });
+  const { err, deps } = cliDeps(ok);
+  assert.strictEqual(run(['--run', ok.runDir, '--mode', 'auto', '--mode-source', 'default', '--ceremony', '4027=standard,8=standard:skipped'], deps), 0, err.join(''));
 });
 
 test('CLI: --ceremony :judged marks a judged record; several records parse', () => {

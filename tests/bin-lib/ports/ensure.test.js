@@ -2,16 +2,20 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const net = require('net');
 
-const { ensure, isRegionCurrent } = require('../../../plugin/bin/lib/ports/ensure');
+const portsEnsure = require('../../../plugin/bin/lib/ports/ensure');
+const { isRegionCurrent } = portsEnsure;
+// #5377: ensure() takes `env` from its caller (SessionStart's hook context); these cases run it under the real one.
+const ensure = (cwd, opts) => portsEnsure.ensure(cwd, { env: process.env, ...opts });
 const { registryPath } = require('../../../plugin/bin/lib/ports/registry');
 const { writeEnvFiles, serviceVars, LEASE_KEY, readManagedRegion, mergeManagedRegion } = require('../../../plugin/bin/lib/ports/env-file');
 
 function tmpHome() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'ports-ensure-'));
+  return scratchDir('ports-ensure-');
 }
 function tmpCheckout(home, name) {
   const p = path.join(home, 'checkouts', name);
@@ -226,7 +230,7 @@ test('ensure: an orphaned region with no matching registry lease and a different
 });
 
 test('isRegionCurrent: false when .env.local is missing, has no region, has the wrong PORT, or a different services list', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ports-region-'));
+  const dir = scratchDir('ports-region-');
   assert.equal(isRegionCurrent(dir, 20000, ['web'], ['web']), false, 'no .env.local at all');
 
   fs.writeFileSync(path.join(dir, '.env.local'), 'FOO=bar\n');

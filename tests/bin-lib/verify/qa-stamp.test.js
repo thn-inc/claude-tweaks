@@ -124,6 +124,33 @@ test('decideQaSkip: each mismatch runs QA', () => {
   assert.deepEqual(d({ selected: [...SEL, { id: 'admin', file: 'admin.yaml', sha256: H1 }] }), { skip: false, reason: 'story-not-covered: admin' });
 });
 
+test('decideQaSkip: characterization — a moved HEAD without bookkeepingDelta stays sha-mismatch (AC3.1)', () => {
+  const d = (over) => decideQaSkip({ stamp: STAMP, head: OTHER, dirty: false, storiesDir: 'stories', selected: SEL, ...over });
+  assert.deepEqual(d({}), { skip: false, reason: 'sha-mismatch' });
+  assert.deepEqual(d({ bookkeepingDelta: false }), { skip: false, reason: 'sha-mismatch' });
+  assert.deepEqual(d({ bookkeepingDelta: 'yes' }), { skip: false, reason: 'sha-mismatch' });
+  assert.deepEqual(d({ head: null, bookkeepingDelta: true }), { skip: false, reason: 'sha-mismatch' });
+});
+
+test('decideQaSkip: bookkeepingDelta satisfies the sha check and reports covered-bookkeeping-delta (AC1.1)', () => {
+  const r = decideQaSkip({ stamp: STAMP, head: OTHER, dirty: false, storiesDir: 'stories', selected: SEL, bookkeepingDelta: true });
+  assert.deepEqual(r, { skip: true, reason: 'covered-bookkeeping-delta' });
+});
+
+test('decideQaSkip: bookkeepingDelta still runs every later check (AC4.1)', () => {
+  const d = (over) => decideQaSkip({ stamp: STAMP, head: OTHER, dirty: false, storiesDir: 'stories', selected: SEL, bookkeepingDelta: true, ...over });
+  assert.deepEqual(d({ selected: [{ id: 'login', file: 'app.yaml', sha256: H2 }] }), { skip: false, reason: 'story-changed: login' });
+  assert.deepEqual(d({ storiesDir: 'other' }), { skip: false, reason: 'stories-dir-mismatch' });
+  assert.deepEqual(d({ dirty: true }), { skip: false, reason: 'dirty-tree' });
+  assert.deepEqual(d({ stamp: null }), { skip: false, reason: 'no-stamp' });
+  assert.deepEqual(d({ selected: [] }), { skip: false, reason: 'nothing-selected' });
+});
+
+test('decideQaSkip: bookkeepingDelta at the stamped HEAD still reports covered', () => {
+  const r = decideQaSkip({ stamp: STAMP, head: HEAD, dirty: false, storiesDir: 'stories', selected: SEL, bookkeepingDelta: true });
+  assert.deepEqual(r, { skip: true, reason: 'covered' });
+});
+
 test('decideQaSkip: a stamped id under a different file is not covered (Review Focus 2)', () => {
   const r = decideQaSkip({ stamp: STAMP, head: HEAD, dirty: false, storiesDir: 'stories', selected: [{ id: 'login', file: 'other.yaml', sha256: H1 }] });
   assert.deepEqual(r, { skip: false, reason: 'story-not-covered: login' });

@@ -31,8 +31,9 @@ function hasMergedMention(linkedPRs, number) {
 
 // file: where to persist the { [number]: isoString } map.
 // candidates: issue objects ({ number }). linkedPRs: { [number]: { mentions: [{ merged, ... }] } }.
-// deps: { reader?: { read(n) -> {content}|{failure} }, log?: (line) => void }.
-// Returns the map, whether or not it could be written.
+// deps: { reader?: { read(n) -> {content}|{failure} }, log?: (line) => void, unreadable?: string[] }.
+// With deps.unreadable the unreadable claims ('#N (cause)') are pushed there for the caller to report
+// (#5304: one line per pull), else logged here. Returns the map, whether or not it could be written.
 function writeReleaseTimes(file, candidates, linkedPRs, deps = {}) {
   const log = deps.log || ((line) => console.error(line));
   const targets = candidates.filter((c) => hasMergedMention(linkedPRs, c.number));
@@ -59,9 +60,8 @@ function writeReleaseTimes(file, candidates, linkedPRs, deps = {}) {
     }
   }
 
-  if (unreadable.length > 0) {
-    log('AUTO — dispatch: shipped-candidate claim read failed for ' + unreadable.join(', ') + '; release time unknown, no downgrade');
-  }
+  if (deps.unreadable) deps.unreadable.push(...unreadable);
+  else if (unreadable.length > 0) log('AUTO — dispatch: shipped-candidate claim read failed for ' + unreadable.join(', ') + '; release time unknown, no downgrade');
   try {
     fs.writeFileSync(file, JSON.stringify(times));
   } catch (err) {

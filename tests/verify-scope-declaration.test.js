@@ -19,14 +19,40 @@ const { selectScope } = require(path.join(REPO_ROOT, 'plugin', 'bin', 'lib', 've
 const { encodeImpactMap, parseImpactMap } = require(path.join(REPO_ROOT, 'plugin', 'bin', 'lib', 'verify', 'impact.js'));
 const { BOOKKEEPING_RULES } = require(path.join(REPO_ROOT, 'plugin', 'bin', 'lib', 'init', 'verify-scope-starter.js'));
 const { readText } = require('./helpers/read-skill');
+const VERIFY_JS = path.join(REPO_ROOT, 'plugin', 'bin', 'verify.js');
 const STAMP = { sha: 'a'.repeat(40), fullSha: 'a'.repeat(40), scope: 'full' };
+
+test('AC6.1: this repo declares localRuns "on-request" beside its ci block (#5370)', () => {
+  const r = readDeclaration(DECL);
+  assert.strictEqual(r.ok, true, JSON.stringify(r.errors));
+  assert.strictEqual(r.decl.localRuns, 'on-request');
+  assert.deepStrictEqual(Object.keys(r.decl.ci), ['tests']);
+});
+
+test('AC6.1: verify.js --stamp-status --scope reads this checkout\'s declaration with no validation error (#5370)', () => {
+  const out = execFileSync(process.execPath, [VERIFY_JS, '--stamp-status', '--scope', '.claude-tweaks/verify-scope.json'],
+    { cwd: REPO_ROOT, encoding: 'utf8', env: { ...process.env, CT_TEST_SUITE_SLOT_HELD: '1' } });
+  assert.strictEqual(JSON.parse(out).scopeError, null);
+  // Control: the same file with its ci block removed fails on the key, so this check can go red.
+  const raw = JSON.parse(fs.readFileSync(DECL, 'utf8'));
+  delete raw.ci;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'decl-5370-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'verify-scope.json'), JSON.stringify(raw));
+    const bad = readDeclaration(path.join(dir, 'verify-scope.json'));
+    assert.strictEqual(bad.ok, false);
+    assert.match(bad.errors[0], /^localRuns: needs a ci block/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test('this repo declares its own verify scope and it passes readDeclaration (#1924 AC5, #3337)', () => {
   assert.ok(fs.existsSync(DECL), 'missing .claude-tweaks/verify-scope.json');
   const r = readDeclaration(DECL);
   assert.strictEqual(r.ok, true, JSON.stringify(r.errors));
   assert.deepStrictEqual(r.decl.suites, ['tests', 'journeys']);
-  assert.strictEqual(r.decl.checks.tests.tests, 'npm test');
+  assert.strictEqual(r.decl.checks.tests.tests, 'node tools/run-tests.js --full');
   for (const rule of r.decl.rules) {
     if (rule.match === 'docs/journeys/**') {
       assert.deepStrictEqual(rule.suites, ['journeys'], 'docs/journeys/** maps to the journeys suite only');
@@ -63,6 +89,107 @@ test('this repo declares its own verify scope and it passes readDeclaration (#19
   assert.ok(r.decl.impact.fetch.includes('tools/test-impact.js fetch'), r.decl.impact.fetch);
 });
 
+// #4347: the full `tests` run is taken from the PR's test.yml `test` job whenever
+// HEAD is that PR's head. The suite runs in parallel `shard` jobs (`npm test --
+// --shard i/n`), and the `test` job prints their merged log, so that one job's log
+// still carries the whole suite verify.js reads.
+const TEST_WORKFLOW = path.join(REPO_ROOT, '.github', 'workflows', 'test.yml');
+const SHARD_FACTS = {
+  // A job's name is its key unless it sets `name:`, and the ci source matches the name.
+  'a job keyed `test` with no name: override, run after a red shard but not after a cancel':
+    /^ {2}test:\n {4}needs: shard\n {4}if: \$\{\{ !cancelled\(\) \}\}\n {4}runs-on: [^\n]+\n(?: {4}timeout-minutes: \d+\n)? {4}steps:\n/m,
+  'each shard runs npm test on its slice, keeping the exit code through tee': /^ {8}shell: bash\n {8}run: npm test --silent -- --shard \$\{\{ matrix\.shard \}\}\/\$\{\{ strategy\.job-total \}\} \| tee "\$RUNNER_TEMP\/shard-\$\{\{ matrix\.shard \}\}\.tap"\n/m,
+  'shards do not cancel each other': /^ {6}fail-fast: false\n/m,
+  'each shard uploads its log even when red': /^ {6}- uses: actions\/upload-artifact@v\d+\n {8}if: always\(\)\n {8}with:\n {10}name: shard-tap-\$\{\{ matrix\.shard \}\}\n/m,
+  'test prints the merged log': /^ {8}run: node tools\/merge-shard-logs\.js --expect (\d+) "\$RUNNER_TEMP\/shards"\n/m,
+  'test is red when any shard was': /^ {6}- name: Fail when any shard did not succeed\n {8}if: needs\.shard\.result != 'success'\n/m,
+  'pull_request trigger': /^on:\n {2}pull_request:\n/m,
+};
+const missingShardFacts = (text) => Object.keys(SHARD_FACTS).filter((k) => !SHARD_FACTS[k].test(text));
+
+test('the tests suite declares test.yml\'s test job as its CI source, and that job prints the whole sharded npm test run (#4347)', () => {
+  const r = readDeclaration(DECL);
+  assert.strictEqual(r.ok, true, JSON.stringify(r.errors));
+  assert.deepStrictEqual(Object.keys(r.decl.ci), ['tests']);
+  assert.strictEqual(r.decl.ci.tests.workflow, 'test.yml');
+  assert.strictEqual(r.decl.ci.tests.job, 'test');
+  assert.strictEqual(r.decl.checks.tests.tests, 'node tools/run-tests.js --full', 'the shards run the suite the declaration names');
+  const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'));
+  assert.strictEqual(pkg.scripts.test, 'node tools/run-tests.js', 'npm test (the shards) and the declaration run the same runner');
+  const workflow = readText(TEST_WORKFLOW);
+  assert.deepStrictEqual(missingShardFacts(workflow), []);
+  // The shard count is written twice; a mismatch drops a slice or waits on one that never ran.
+  const matrix = /^ {8}shard: \[([\d, ]+)\]\n/m.exec(workflow);
+  assert.ok(matrix, 'test.yml must list its shards as `shard: [1, 2, ...]`');
+  const shards = matrix[1].split(',').map((s) => Number(s.trim()));
+  assert.deepStrictEqual(shards, shards.map((_, i) => i + 1), 'shards must be numbered 1..n');
+  assert.strictEqual(Number(SHARD_FACTS['test prints the merged log'].exec(workflow)[1]), shards.length,
+    '--expect must equal the number of matrix shards');
+  // Each fact goes red on its own: strip only its match and the predicate names exactly it.
+  for (const [fact, re] of Object.entries(SHARD_FACTS)) {
+    const doctored = workflow.replace(re, '');
+    assert.notStrictEqual(doctored, workflow, fact);
+    assert.deepStrictEqual(missingShardFacts(doctored), [fact]);
+  }
+});
+
+// #5319: a bare local `npm test` runs only the impact-selected files, so every caller that needs the whole
+// suite must say so (--shard, --record-durations or --full) or rely on CI being set. Scans the live workflows.
+const WORKFLOW_DIR = path.join(REPO_ROOT, '.github', 'workflows');
+const SUITE_RUN = /\bnpm test\b(?!:)|\bnode\s+\S*run-tests\.js/;
+const TRACER_RUN = /\bnode\s+\S*test-impact\.js\s+trace\b/;
+const WHOLE_SUITE_FLAG = /--(shard|full|record-durations)\b/;
+function workflowSuiteLines() {
+  const found = [];
+  for (const name of fs.readdirSync(WORKFLOW_DIR).filter((f) => f.endsWith('.yml')).sort()) {
+    const text = readText(path.join(WORKFLOW_DIR, name));
+    for (const line of text.split(/\r?\n/)) {
+      if (/^\s*#/.test(line)) continue;
+      if (SUITE_RUN.test(line)) found.push({ name, line, kind: 'suite' });
+      else if (TRACER_RUN.test(line)) found.push({ name, line, kind: 'tracer' });
+    }
+  }
+  return found;
+}
+
+test('AC6.1: every workflow that runs the suite asks for the whole suite (#5319)', () => {
+  const found = workflowSuiteLines();
+  assert.ok(found.length > 0, 'the scan matched no suite-running line');
+  assert.ok(found.some((f) => f.name === 'test.yml' && f.kind === 'suite' && /--shard\b/.test(f.line)), 'test.yml shard line not found');
+  assert.ok(found.some((f) => f.name === 'windows-regression.yml' && f.kind === 'suite'), 'windows-regression.yml npm test line not found');
+  assert.ok(found.some((f) => f.name === 'test-impact-map.yml' && f.kind === 'tracer'), 'test-impact-map.yml tracer line not found');
+  for (const f of found.filter((x) => x.kind === 'suite')) {
+    assert.match(f.line, WHOLE_SUITE_FLAG, `${f.name} runs the suite without --shard, --full or --record-durations: ${f.line.trim()}`);
+  }
+  // The tracer's whole-suite guarantee is its own spawn of run-tests.js, not the workflow line.
+  const tracer = readText(path.join(REPO_ROOT, 'tools', 'test-impact.js'));
+  assert.match(tracer, /'run-tests\.js'\)\s*,\s*'--full'\s*\]/, "tools/test-impact.js must spawn run-tests.js with '--full'");
+  // The remaining whole-suite callers rely on CI being set.
+  for (const name of fs.readdirSync(WORKFLOW_DIR).filter((f) => f.endsWith('.yml'))) {
+    const text = readText(path.join(WORKFLOW_DIR, name));
+    assert.doesNotMatch(text, /^\s*CI:\s*(''|""|false)?\s*$/m, `${name} blanks CI`);
+    assert.doesNotMatch(text, /\bunset CI\b/, `${name} unsets CI`);
+  }
+});
+
+test('AC5.1: verify.js\'s selection still picks a test that reads a changed module, and the tests check\'s full command ends with --full (run-tests.js\'s whole-suite flag, pinned by tests/run-tests-default-run.test.js) (#5319)', () => {
+  const { decl } = readDeclaration(DECL);
+  const parsed = parseImpactMap(JSON.stringify(encodeImpactMap({
+    commit: 'b'.repeat(40), tracedAt: '2026-11-13T00:00:00Z', exitCode: 0, node: 'v20.0.0',
+    tests: {
+      'tests/bin-lib/dispatch/queue-pull.test.js': { f: ['plugin/bin/lib/dispatch/queue-pull.js'] },
+      'tests/other.test.js': { f: ['plugin/bin/verify.js'] },
+    },
+  })));
+  assert.strictEqual(parsed.ok, true);
+  const ctx = { map: parsed.map, problem: null, headTests: ['tests/bin-lib/dispatch/queue-pull.test.js', 'tests/other.test.js'] };
+  const sel = (files) => selectScope({ decl, files, stamp: STAMP, impact: ctx });
+  assert.ok(sel(['plugin/bin/lib/dispatch/queue-pull.js']).impact.files.includes('tests/bin-lib/dispatch/queue-pull.test.js'));
+  assert.ok(!sel(['plugin/bin/verify.js']).impact.files.includes('tests/bin-lib/dispatch/queue-pull.test.js'));
+  assert.ok(decl.checks.tests.tests.endsWith('--full'), decl.checks.tests.tests);
+  assert.ok(decl.impact.command.includes('--files-from {files}'), decl.impact.command);
+});
+
 // #4024 expand-contract: the installed plugin build reads this committed file with code that predates
 // `impact`, and that reader rejects any rule lacking `suites` (a usage error, not a full-run fallback).
 // Every impact rule therefore also carries `"suites": "*"` — older readers run full, current ones ignore it.
@@ -79,8 +206,8 @@ test('a ledger-row delta resolves to none; a skill-prose delta is impact-selecte
   const sel = (files, impact = null) => selectScope({ decl, files, stamp: STAMP, impact });
   assert.strictEqual(sel(['docs/plans/2026-09-05-spec-1921-ledger.md']).mode, 'none');
   assert.strictEqual(sel(['.claude-tweaks/pipelines/2026-09-05T193518-x/spec-1/work/1-spec.md']).mode, 'none');
-  // No catch-all: a path no rule names (a workflow, package.json) fails closed to full.
-  for (const p of ['.github/workflows/x.yml', 'package.json', '.claude-tweaks/verify-scope.json']) {
+  // No catch-all: a path no rule names (package.json, .gitignore) fails closed to full.
+  for (const p of ['package.json', '.gitignore', '.claude-tweaks/verify-scope.json']) {
     assert.strictEqual(sel([p]).mode, 'full', p);
     assert.deepStrictEqual(sel([p]).unmatched, [p]);
   }
@@ -107,6 +234,48 @@ test('a ledger-row delta resolves to none; a skill-prose delta is impact-selecte
   // A changed test runner is never impact-selected: every suite runs.
   assert.strictEqual(sel(['tools/run-tests.js'], ctx).mode, 'full');
   assert.strictEqual(sel(['tools/test-impact/tracer.js'], ctx).mode, 'full');
+});
+
+test('the common superseding paths are static impact rules (#4321)', () => {
+  const { decl } = readDeclaration(DECL);
+  for (const m of ['.claude/**', '.github/workflows/**', 'perf/**', '.release-please-manifest.json']) {
+    const rule = decl.rules.find((x) => x.match === m);
+    assert.ok(rule && rule.impact === true, `${m} must be an impact rule`);
+    assert.strictEqual(rule.static, true, `${m} keeps the static checks`);
+  }
+});
+
+// Selects `file` as the only change, against a map where tests/a.test.js alone traces it.
+function selectTracedBy(decl, file) {
+  const parsed = parseImpactMap(JSON.stringify(encodeImpactMap({
+    commit: 'b'.repeat(40), tracedAt: '2026-11-02T00:00:00Z', exitCode: 0, node: 'v20.0.0',
+    tests: { 'tests/a.test.js': { f: [file] }, 'tests/b.test.js': { f: ['plugin/bin/verify.js'] } },
+  })));
+  assert.strictEqual(parsed.ok, true);
+  const ctx = { map: parsed.map, problem: null, headTests: ['tests/a.test.js', 'tests/b.test.js'] };
+  return selectScope({ decl, files: [file], stamp: STAMP, statuses: { [file]: 'M' }, impact: ctx });
+}
+
+test('AC3.1: a project-skill-only delta is impact-selected, not superseded (#4321)', () => {
+  const { decl } = readDeclaration(DECL);
+  const sel = selectTracedBy(decl, '.claude/skills/x/SKILL.md');
+  assert.strictEqual(sel.mode, 'scoped');
+  assert.deepStrictEqual(sel.unmatched, []);
+  assert.strictEqual(sel.impact.superseded, false);
+  assert.deepStrictEqual(sel.impact.files, ['tests/a.test.js']);
+});
+
+// The rule-shape test above would still pass if an earlier rule shadowed one of these globs; this one
+// runs the engine, so a shadowed or missing rule leaves the path unmatched and superseding.
+test('each common superseding path reaches the impact path, matched and not superseded (#4321)', () => {
+  const { decl } = readDeclaration(DECL);
+  for (const p of ['.github/workflows/x.yml', 'perf/x.test.js', '.release-please-manifest.json']) {
+    const sel = selectTracedBy(decl, p);
+    assert.strictEqual(sel.mode, 'scoped', p);
+    assert.deepStrictEqual(sel.unmatched, [], p);
+    assert.strictEqual(sel.impact.superseded, false, p);
+    assert.deepStrictEqual(sel.impact.files, ['tests/a.test.js'], p);
+  }
 });
 
 test('the spec AC1 pair — a skill template plus root CLAUDE.md — is impact-selected, not forced full (#4024)', () => {
@@ -213,8 +382,22 @@ function latestReleaseTag(cwd, env = GIT_ENV) {
   }
 }
 
+// Whether {tag}:{rel} names an object. `git cat-file -e` exits non-zero for a path the tag lacks; a git that
+// never ran (no exit status) is a broken call, not an absence.
+function existsAtTag(tag, rel, cwd) {
+  try {
+    execFileSync('git', ['cat-file', '-e', `${tag}:${rel}`], { cwd, env: GIT_ENV, stdio: 'ignore', windowsHide: true });
+    return true;
+  } catch (err) {
+    if (typeof err.status !== 'number') throw err;
+    return false;
+  }
+}
+
 // Materialize {tag}'s declaration.js and every relative require it reaches, transitively, at their
 // repo-relative paths under `dir`, then load the materialized copy. A release that adds a require is followed.
+// An extensionless target resolves as Node does: {target}.js when the tag has it, else {target}/index.js
+// (#6332: v6.180.0's reader requires the `../path-guard` directory).
 function loadReleaseReader(tag, dir, cwd = REPO_ROOT) {
   const seen = new Set();
   const queue = [READER_PATH];
@@ -230,7 +413,8 @@ function loadReleaseReader(tag, dir, cwd = REPO_ROOT) {
     fs.writeFileSync(dest, src);
     for (const m of src.matchAll(/require\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*\)/g)) {
       const target = path.posix.join(path.posix.dirname(rel), m[1]);
-      queue.push(/\.(js|json)$/.test(target) ? target : `${target}.js`);
+      if (/\.(js|json)$/.test(target)) queue.push(target);
+      else queue.push(existsAtTag(tag, `${target}.js`, cwd) ? `${target}.js` : `${target}/index.js`);
     }
   }
   return require(path.join(dir, ...READER_PATH.split('/'))).readDeclaration;
@@ -292,5 +476,35 @@ test('AC3.1: a clone with no reachable release tag skips with its reason (#4135)
     assert.match(found.skip, /no release tag reachable/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('#6332: the release reader loader follows a directory require to its index.js and prefers {target}.js when the tag has both', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-scope-dirreq-'));
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-scope-reader-'));
+  try {
+    const files = {
+      [READER_PATH]: "const d = require('../dirmod');\nconst f = require('../filemod');\nmodule.exports = { readDeclaration: () => ({ dir: d.name, file: f.name }) };\n",
+      'plugin/bin/lib/dirmod/index.js': "module.exports = { name: require('./part').name };\n",
+      'plugin/bin/lib/dirmod/part.js': "module.exports = { name: 'dirmod/part.js' };\n",
+      'plugin/bin/lib/filemod.js': "module.exports = { name: 'filemod.js' };\n",
+      'plugin/bin/lib/filemod/index.js': "module.exports = { name: 'filemod/index.js' };\n",
+    };
+    for (const [rel, src] of Object.entries(files)) {
+      const dest = path.join(repo, ...rel.split('/'));
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.writeFileSync(dest, src);
+    }
+    const git = (...args) => execFileSync('git', args, { cwd: repo, env: TEMP_REPO_ENV, windowsHide: true });
+    git('init', '-q');
+    git('add', '-A');
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'x');
+    git('tag', 'v0.0.1');
+    const reader = loadReleaseReader('v0.0.1', out, repo);
+    assert.deepStrictEqual(reader(), { dir: 'dirmod/part.js', file: 'filemod.js' });
+    assert.ok(!fs.existsSync(path.join(out, 'plugin', 'bin', 'lib', 'filemod', 'index.js')), 'filemod.js exists at the tag, so its index.js sibling is never materialized');
+  } finally {
+    removeReaderDir(out);
+    fs.rmSync(repo, { recursive: true, force: true });
   }
 });

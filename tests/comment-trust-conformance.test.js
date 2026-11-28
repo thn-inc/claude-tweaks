@@ -20,6 +20,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
+const { runJq } = require('./helpers/run-jq');
 
 const {
   TRUSTED_AUTHOR_ASSOCIATIONS,
@@ -179,7 +180,7 @@ test("tidy's tombstone check names each skipped untrusted tombstone", () => {
 // ---- Task 5: demo, parent-gate and grant-maturation readers (#3358) ----
 
 const PLUGIN_ROOT = path.join(__dirname, '..', 'plugin');
-const ENTRY_PATHS = readText(path.join(SKILLS, 'demo', 'entry-paths.md'));
+const ENTRY_PATHS = readText(path.join(SKILLS, 'accept', 'entry-paths.md'));
 const PARENT_GATE = readText(path.join(SKILLS, 'wrap-up', 'verification-brief-parent-gate.md'));
 const GRANT_GATE = readText(path.join(SKILLS, 'dispatch', 'grant-maturation-gate.md'));
 const SHORT_CIRCUIT = readText(path.join(SKILLS, 'wrap-up', 'auto-merge-short-circuit.md'));
@@ -208,7 +209,7 @@ const PRE_CHANGE_DEMO_LOOKUP = `2. **Read its comments by marker** — \`_shared
 3. **Fail open, visibly.** No PR.`;
 const PRE_CHANGE_PARENT_GATE = `**Then check whether a brief is already posted, before posting one** — and, when re-entering for
 a parent that may already be partially applied, before even composing it above. Fetch the parent's comments
-(\`gh issue view $PARENT_NUM --json comments\`, the same lookup \`/claude-tweaks:demo\`'s Step 1
+(\`gh issue view $PARENT_NUM --json comments\`, the same lookup \`/claude-tweaks:accept\`'s Step 1
 already does) and test whether **any** of them contains a \`## Verification Brief\` heading **with
 a \`### Confirmed\` section** — every comment on the parent.`;
 const PRE_CHANGE_SNIPPET_COMMENTS_LINE = `// comments: this member's fetched comment body array (issue.comments[].body).
@@ -310,7 +311,7 @@ for (const [file, doc] of SNIPPETS) {
     const script = body
       .replace(/\$\{CLAUDE_PLUGIN_ROOT\}/g, PLUGIN_ROOT)
       .replace(/\$GRANT_VETO_WINDOW_HOURS/g, '24');
-    const prelude = `const labels = ['auto:merge-pending']; const comments = ${JSON.stringify(comments)};\n`;
+    const prelude = `const labels = ['auto:build', 'auto:merge-pending']; const comments = ${JSON.stringify(comments)};\n`;
     const run = spawnSync(process.execPath, ['-e', prelude + script], { encoding: 'utf8' });
     assert.strictEqual(run.status, 0, `snippet failed: ${run.stderr}`);
     // Only the 48h-old MEMBER grant counts -> matured; an unfiltered read would see the 1h-old NONE marker as latest.
@@ -461,16 +462,16 @@ for (const [file, doc, frozen] of JQ_READERS) {
       // A resolved untrusted lookalike is not a pending decision either way — it must not be noted.
       { id: 'IC_resolved', url: 'https://x/c/3', author: { login: 'eve' }, authorAssociation: 'NONE', body: `**Resolved:** done — 2026-10-17\n\n${marker}` },
     ];
-    const runJq = (line) => {
+    const runLine = (line) => {
       const program = jqProgram(line).replace(/\{unit\}/g, 'backlog-refine');
-      const r = spawnSync('jq', ['-r', program], { input: JSON.stringify({ comments }), encoding: 'utf8' });
+      const r = runJq(['-r', program], JSON.stringify({ comments }));
       assert.strictEqual(r.status, 0, `jq failed: ${r.stderr}`);
       return r.stdout;
     };
-    assert.strictEqual(runJq(idLine(doc)), 'IC_member\n', `${file}: only the MEMBER decision comment may be returned`);
-    assert.strictEqual(runJq(noteLine(doc)), `${untrustedSkipNote(comments[0])}\n`, `${file}: exactly the NONE comment is named`);
+    assert.strictEqual(runLine(idLine(doc)), 'IC_member\n', `${file}: only the MEMBER decision comment may be returned`);
+    assert.strictEqual(runLine(noteLine(doc)), `${untrustedSkipNote(comments[0])}\n`, `${file}: exactly the NONE comment is named`);
     // Go-red: the pre-change lookup returns the forged comment too.
-    assert.strictEqual(runJq(idLine(frozen)), 'IC_none\nIC_member\n', 'control must return the untrusted comment (proves the run discriminates)');
+    assert.strictEqual(runLine(idLine(frozen)), 'IC_none\nIC_member\n', 'control must return the untrusted comment (proves the run discriminates)');
   });
 }
 

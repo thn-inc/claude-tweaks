@@ -48,6 +48,13 @@ test('digest states it never overrides its canonical sources', () => {
     'must state the restate-not-override relationship to its canonical sources');
 });
 
+test('#4359: the Step 6.7 row names late-findings-routing.md, where its body now lives', () => {
+  const md = read('plugin/skills/_shared/fast-lane-digest.md');
+  const row = md.split('\n').find((l) => l.startsWith('| Step 6.7 '));
+  assert.ok(row, 'no Step 6.7 row in the review table');
+  assert.ok(row.includes('`late-findings-routing.md`'), row);
+});
+
 test('review/SKILL.md points fast-lane runs at the digest before code-mode-steps.md', () => {
   const md = read('plugin/skills/review/SKILL.md');
   assert.ok(md.includes('fast-lane-digest.md'), 'review/SKILL.md must cite fast-lane-digest.md');

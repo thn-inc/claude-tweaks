@@ -2,10 +2,11 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  listClaimNames, readClaimBlob, writeClaimBlob, defaultGhApi, classifyGhApiError, tombstoneInFlightPr,
+  listClaimEntries, readClaimBlob, writeClaimBlob, defaultGhApi, classifyGhApiError, tombstoneInFlightPr,
   isWellFormedClaimContent, createClaimReader, resolveRepoSlug, resolveRepoSlugOrThrow,
   ensureClaimsBranch, claimsBranchExists,
 } = require('../../../plugin/bin/lib/issues/claim-store');
+const { STUB_SKIP, installStub } = require('../../helpers/path-stub');
 
 // Fake ghApi functions mirror release-merged.js's own ghApi shape: a
 // non-throwing function returning {stdout, failure, status} — never the
@@ -161,34 +162,6 @@ test('writeClaimBlob: content that is not even a string (the caller forgot to se
   assert.deepEqual(r, { ok: false, failure: 'invalid-content' });
 });
 
-test('listClaimNames: happy path extracts names from the {name,sha} entries listClaimEntries returns', () => {
-  const ghApi = (args) => {
-    // `recursive=1` is a literal query-string segment on the path, never a
-    // `-f` field -- `gh api` switches its default method to POST the
-    // instant any `-f`/`-F` is present, and this endpoint has no POST
-    // route (confirmed live: a `-f recursive=1` call 404s; the identical
-    // request with the param folded into the path succeeds).
-    assert.equal(args[0], 'repos/acme/w/git/trees/claims-registry?recursive=1');
-    assert.ok(!args.includes('-f'), 'must never pass recursive=1 as a -f field -- it flips gh api to POST');
-    return {
-      stdout: JSON.stringify({
-        truncated: false,
-        entries: [{ name: 'issue-1.json', sha: 'sha1' }, { name: 'issue-2.json', sha: 'sha2' }],
-      }),
-      failure: null,
-      status: null,
-    };
-  };
-  const r = listClaimNames(ghApi, 'acme/w');
-  assert.deepEqual(r, { names: ['issue-1.json', 'issue-2.json'], failure: null });
-});
-
-test('listClaimNames: failure -> empty names, failure propagated', () => {
-  const ghApi = () => ({ stdout: null, failure: 'gh-absent', status: null });
-  const r = listClaimNames(ghApi, 'acme/w');
-  assert.deepEqual(r, { names: [], failure: 'gh-absent' });
-});
-
 test('defaultGhApi is exported (existence only — no real gh call)', () => {
   assert.equal(typeof defaultGhApi, 'function');
 });
@@ -295,7 +268,7 @@ test('writeClaimBlob: a ghApi that never sets status (release-merged.js\'s own) 
   assert.deepEqual(r, { ok: false, failure: 'network-failure' });
 });
 
-test('listClaimEntries: returns name + sha per entry from the same single Git Trees API call listClaimNames already made', () => {
+test('listClaimEntries: returns name + sha per entry from a single Git Trees API call', () => {
   const { listClaimEntries } = require('../../../plugin/bin/lib/issues/claim-store');
   let seenArgs = null;
   const ghApi = (args) => {
@@ -314,12 +287,6 @@ test('listClaimEntries: returns name + sha per entry from the same single Git Tr
   assert.match(seenArgs[0], /repos\/acme\/w\/git\/trees\/claims-registry\?recursive=1/);
   assert.ok(!seenArgs.includes('-f'), 'must never pass recursive=1 as a -f field -- it flips gh api to POST');
   assert.match(seenArgs.join(' '), /-q .*name.*sha/);
-});
-
-test('listClaimNames: still works, now a thin wrapper over listClaimEntries', () => {
-  const { listClaimNames } = require('../../../plugin/bin/lib/issues/claim-store');
-  const ghApi = () => ({ stdout: JSON.stringify({ truncated: false, entries: [{ name: 'issue-7.json', sha: 'sha7' }] }), failure: null, status: null });
-  assert.deepEqual(listClaimNames(ghApi, 'acme/w'), { names: ['issue-7.json'], failure: null });
 });
 
 test('listClaimEntries: a tree response reporting more than 1000 blobs under claims/ returns every entry, uncapped (#3098 AC1)', () => {
@@ -342,6 +309,12 @@ test('listClaimEntries: a truncated tree response surfaces as its own failure, n
   });
   const r = listClaimEntries(ghApi, 'acme/w');
   assert.deepEqual(r, { entries: [], failure: 'truncated' });
+});
+
+test('listClaimEntries: failure -> empty entries, failure propagated', () => {
+  const ghApi = () => ({ stdout: null, failure: 'gh-absent', status: null });
+  const r = listClaimEntries(ghApi, 'acme/w');
+  assert.deepEqual(r, { entries: [], failure: 'gh-absent' });
 });
 
 test('listClaimEntries: never passes recursive=1 as a -f/-F field (#3098 regression -- gh api switches GET to POST the instant any -f/-F is present, and git/trees has no POST route; confirmed live: a -f recursive=1 call 404s, the identical request with recursive=1 folded into the path succeeds)', () => {
@@ -949,6 +922,24 @@ test('AC1.1: createClaimReader: unresolved slug with a failing git read is a fai
   assert.deepEqual(reader.read(42), { failure: 'repo-slug-unresolved' });
 });
 
+test('#4794: createClaimReader with a repoRefusal fails the contents leg unknown-host with the refusal and makes no request', () => {
+  const calls = [];
+  const ghApi = (args) => { calls.push(args); return { stdout: null, failure: null, status: 404 }; };
+  const reader = createClaimReader({ gitRunner: fakeGitRunnerAlwaysFails(), ghApi, repoSlug: null, repoRefusal: 'R' });
+  assert.deepEqual(reader.read(7), { failure: 'unknown-host', detail: 'R' });
+  assert.deepEqual(calls, []);
+  // no refusal: an unresolved slug keeps its own failure word
+  const bare = createClaimReader({ gitRunner: fakeGitRunnerAlwaysFails(), ghApi, repoSlug: null });
+  assert.deepEqual(bare.read(7), { failure: 'repo-slug-unresolved' });
+  assert.deepEqual(calls, []);
+});
+
+test('#4794: createClaimReader with a repoRefusal still answers from the git leg when git succeeds', () => {
+  const ghApi = (args) => { throw new Error(`no request on a refused origin: ${args[0]}`); };
+  const gitRunner = fakeGitRunnerAlwaysWorks('a'.repeat(40), '{"runId":"r1"}');
+  assert.deepEqual(createClaimReader({ gitRunner, ghApi, repoSlug: null, repoRefusal: 'R' }).read(42), { content: '{"runId":"r1"}' });
+});
+
 test('createClaimReader: a contents-API transport failure propagates as {failure}', () => {
   const ghApi = () => ({ stdout: null, failure: 'network-failure', status: null });
   assert.deepEqual(createClaimReader({ gitRunner: fakeGitRunnerAlwaysFails(), ghApi, repoSlug: 'acme/w' }).read(42), { failure: 'network-failure' });
@@ -986,6 +977,49 @@ test('openPrListArgs builds the gh pr list argv staleClaimInFlightPr uses', () =
   assert.deepEqual(openPrListArgs('acme', 'w'), [
     'pr', 'list', '--repo', 'acme/w', '--state', 'open', '--json', 'url,body,isCrossRepository', '--limit', '1000',
   ]);
+});
+
+test('#4794: openPrListArgs takes one { host, ghRepo } target for --repo; no target keeps the bare owner/repo argv (AC2.1)', () => {
+  const { openPrListArgs } = require('../../../plugin/bin/lib/issues/claim-store');
+  const bare = ['pr', 'list', '--repo', 'acme/w', '--state', 'open', '--json', 'url,body,isCrossRepository', '--limit', '1000'];
+  assert.deepEqual(openPrListArgs('acme', 'w', { host: 'acme.ghe.com', ghRepo: 'acme.ghe.com/acme/w' }), [
+    'pr', 'list', '--repo', 'acme.ghe.com/acme/w', '--state', 'open', '--json', 'url,body,isCrossRepository', '--limit', '1000',
+  ]);
+  assert.deepEqual(openPrListArgs('acme', 'w'), bare);
+  assert.deepEqual(openPrListArgs('acme', 'w', null), bare);
+  // A github.com target whose ghRepo is bare (gh's default host) stays byte-identical.
+  assert.deepEqual(openPrListArgs('acme', 'w', { host: 'github.com', ghRepo: 'acme/w' }), bare);
+});
+
+test('#4794: isSameRepoPrUrl compares the url host, normalized, against the one resolved host (Review Focus 5)', () => {
+  const { isSameRepoPrUrl } = require('../../../plugin/bin/lib/issues/claim-store');
+  assert.equal(isSameRepoPrUrl('https://acme.ghe.com/acme/w/pull/7', 'acme', 'w', 'acme.ghe.com'), true);
+  assert.equal(isSameRepoPrUrl('https://ACME.ghe.com./acme/w/pull/7', 'acme', 'w', 'acme.ghe.com'), true, 'case and trailing dot in the url');
+  assert.equal(isSameRepoPrUrl('https://acme.ghe.com/acme/w/pull/7', 'acme', 'w', 'ACME.ghe.com.'), true, 'case and trailing dot in the host argument');
+  assert.equal(isSameRepoPrUrl('https://github.com/acme/w/pull/7', 'acme', 'w', 'acme.ghe.com'), false, 'cross-host');
+  assert.equal(isSameRepoPrUrl('https://acmeXghe.com/acme/w/pull/7', 'acme', 'w', 'acme.ghe.com'), false, 'look-alike host');
+  assert.equal(isSameRepoPrUrl('https://acme.ghe.com/acme/w/pull/7', 'acme', 'w'), false, 'a GHE url with no host reads as github.com');
+  assert.equal(isSameRepoPrUrl('https://acme.ghe.com/acme/w/pull/7', 'acme', 'w', null), false);
+  assert.equal(isSameRepoPrUrl('https://github.com/acme/w/pull/7', 'acme', 'w'), true, 'no host: today\'s github.com match');
+  assert.equal(isSameRepoPrUrl('https://GitHub.com./acme/w/pull/7', 'acme', 'w'), true);
+  assert.equal(isSameRepoPrUrl('https://acme.ghe.com/acme/other/pull/7', 'acme', 'w', 'acme.ghe.com'), false, 'owner/repo stay exact');
+  assert.equal(isSameRepoPrUrl('http://acme.ghe.com/acme/w/pull/7', 'acme', 'w', 'acme.ghe.com'), false, 'https only');
+  assert.equal(isSameRepoPrUrl('https://x@github.com/acme/w/pull/7', 'acme', 'w'), false, 'userinfo look-alike');
+  assert.equal(isSameRepoPrUrl('https://github.com:443/acme/w/pull/7', 'acme', 'w'), false, 'port look-alike');
+});
+
+test('#4794: matchStaleClaimPr and tombstoneInFlightPr thread the host into the url match', () => {
+  const { matchStaleClaimPr, tombstoneInFlightPr } = require('../../../plugin/bin/lib/issues/claim-store');
+  const url = 'https://acme.ghe.com/acme/w/pull/7';
+  assert.equal(matchStaleClaimPr(SC_RUN, [scListed({ url })], 'acme', 'w', 'acme.ghe.com').url, url);
+  assert.equal(matchStaleClaimPr(SC_RUN, [scListed({ url })], 'acme', 'w'), null, 'no host: a GHE url is not a github.com match');
+  assert.equal(matchStaleClaimPr(SC_RUN, [scListed()], 'acme', 'w', 'acme.ghe.com'), null, 'a github.com url under a GHE host');
+  const tomb = (link) => JSON.stringify({ reason: 'pr-opened: x', link });
+  const gh = () => 'OPEN\n';
+  assert.deepEqual(tombstoneInFlightPr(tomb(url), gh, 'acme', 'w', 'acme.ghe.com'), { link: url });
+  assert.equal(tombstoneInFlightPr(tomb(url), gh, 'acme', 'w'), null);
+  assert.equal(tombstoneInFlightPr(tomb('https://github.com/acme/w/pull/7'), gh, 'acme', 'w', 'acme.ghe.com'), null);
+  assert.deepEqual(tombstoneInFlightPr(tomb('https://github.com/acme/w/pull/7'), gh, 'acme', 'w'), { link: 'https://github.com/acme/w/pull/7' });
 });
 
 test('staleClaimRunId returns a shaped runId, null for a bad shape, and throws on malformed JSON', () => {
@@ -1165,6 +1199,55 @@ test('defaultGhApi: a failed call carries the thrown error text as `error` (gh a
   assert.equal(r.status, null);
   assert.equal(typeof r.error, 'string');
   assert.match(r.error, /ENOENT/);
+});
+
+// #4794: defaultGhApi's optional `cwd` rides into the seam's options, so the gh host follows the
+// caller's repo (the sibling-sessions hook's cwd), not process.cwd(). A PATH-stub gh logs what it saw.
+test('#4794: defaultGhApi passes a given cwd to the seam and none otherwise', { skip: STUB_SKIP }, (t) => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { execFileSync } = require('node:child_process');
+  const { _resetGhHostCache } = require('../../../plugin/bin/lib/repo-resolve');
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'claim-store-cwd-')));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const repo = path.join(dir, 'repo');
+  fs.mkdirSync(repo);
+  execFileSync('git', ['init', '-q'], { cwd: repo, stdio: 'ignore', windowsHide: true });
+  execFileSync('git', ['remote', 'add', 'origin', 'https://acme.ghe.com/acme/widgets.git'], { cwd: repo, stdio: 'ignore', windowsHide: true });
+  const log = path.join(dir, 'gh.log');
+  const restoreGh = installStub('gh', [
+    '#!/bin/sh',
+    `printf 'GH_HOST=%s PWD=%s\\n' "\${GH_HOST-unset}" "$(pwd -P)" >> '${log}'`,
+    'echo "{}"',
+    '',
+  ].join('\n'));
+  const had = Object.prototype.hasOwnProperty.call(process.env, 'GH_HOST');
+  const saved = process.env.GH_HOST;
+  delete process.env.GH_HOST;
+  _resetGhHostCache();
+  const write = process.stderr.write;
+  process.stderr.write = function capture(chunk, ...rest) {
+    if (String(chunk).startsWith('claude-tweaks: resolved repo ')) return true; // the seam's once-per-host note
+    return write.call(this, chunk, ...rest);
+  };
+  t.after(() => {
+    process.stderr.write = write;
+    restoreGh();
+    if (had) process.env.GH_HOST = saved;
+    else delete process.env.GH_HOST;
+    _resetGhHostCache();
+  });
+  const lines = () => fs.readFileSync(log, 'utf8').split('\n').filter(Boolean);
+
+  defaultGhApi(['repos/acme/widgets'], { cwd: repo });
+  assert.deepEqual(lines(), [`GH_HOST=acme.ghe.com PWD=${repo}`]);
+
+  fs.rmSync(log);
+  defaultGhApi(['repos/acme/widgets']);
+  assert.equal(lines().length, 1);
+  assert.match(lines()[0], /^GH_HOST=unset PWD=/);
+  assert.notEqual(lines()[0], `GH_HOST=unset PWD=${repo}`);
 });
 
 test('claimsBranchExists: 404 → false, any failure → null, a name → true', () => {

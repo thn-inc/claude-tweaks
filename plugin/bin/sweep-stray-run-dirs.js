@@ -34,6 +34,7 @@ const fs = require('fs');
 const path = require('path');
 const { runGit, repoPinnedEnv } = require('./lib/hooks/git-exec');
 const { splitNul } = require('./lib/git-z');
+const { fsPath } = require('./lib/health-core/io');
 const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
 const { archiveRunDir, listSpecDirs } = require('./lib/reconcile/archive-merged');
 
@@ -67,10 +68,10 @@ function parseArgs(argv) {
 // ("each stray directory whose git ls-files shows a tracked work/*-spec.md").
 // A dir failing this check is left alone: nothing here is the resurrection
 // bug this script targets.
-function hasTrackedWork(root, runDir) {
+function hasTrackedWork(root, runDir, env = process.env) {
   const rel = path.relative(root, runDir);
   // #4178: pin the env so an inherited GIT_DIR cannot redirect -C root to a linked worktree's index.
-  const res = runGit(['ls-files', '-z', '--', rel], root, { env: repoPinnedEnv(), raw: true });
+  const res = runGit(['ls-files', '-z', '--', rel], root, { env: repoPinnedEnv(env), raw: true });
   if (res.failure || !res.stdout) return false;
   return splitNul(res.stdout).some((p) => /(^|\/)work\//.test(p));
 }
@@ -125,7 +126,7 @@ function appendLog(logPath, entry) {
   } catch { /* best-effort — logging must never abort the sweep */ }
 }
 
-function sweep({ root, dryRun, logPath }) {
+function sweep({ root, dryRun, logPath, env = process.env }) {
   const strays = listStrayRunDirs(root);
   const results = { archived: [], skipped: [], failed: [] };
 
@@ -136,7 +137,7 @@ function sweep({ root, dryRun, logPath }) {
       // same listing — resumable no-op.
       continue;
     }
-    if (!hasTrackedWork(root, runDir)) {
+    if (!hasTrackedWork(root, runDir, env)) {
       results.skipped.push({ runId, reason: 'no-tracked-work' });
       appendLog(logPath, { runId, action: 'skip', reason: 'no-tracked-work' });
       continue;
@@ -160,7 +161,7 @@ function sweep({ root, dryRun, logPath }) {
       continue;
     }
 
-    const result = archiveRunDir(root, runDir);
+    const result = archiveRunDir(root, runDir, { env });
     if (!result.ok) {
       results.failed.push({ runId, reason: result.reason });
       appendLog(logPath, { runId, action: 'fail', reason: result.reason });
@@ -173,23 +174,43 @@ function sweep({ root, dryRun, logPath }) {
   return results;
 }
 
-function main() {
-  const args = parseArgs(process.argv.slice(2));
-  const root = args.root ? path.resolve(args.root) : (mainCheckoutRoot(process.cwd()) || process.cwd());
-  const logPath = args.logPath || path.join(root, '.claude-tweaks', 'sweep-stray-run-dirs.log');
-  const result = sweep({ root, dryRun: args.dryRun, logPath });
-
-  console.log(`root: ${root}`);
-  console.log(`archived: ${result.archived.length}`);
-  console.log(`skipped: ${result.skipped.length}`);
-  console.log(`failed: ${result.failed.length}`);
-  if (result.failed.length) {
-    for (const f of result.failed) console.log(`  FAILED ${f.runId}: ${f.reason}`);
-    process.exitCode = 1;
+// Reaches the outside world only through `deps`: cwd(), env, stdout(text). The scan root, a relative
+// --root and a relative --log all resolve against deps.cwd(); the `log:` line prints the path as typed.
+// deps.cwd() is read only for those three, so an absolute --root and --log work from a deleted cwd.
+function run(argv, deps) {
+  const args = parseArgs(argv);
+  let root;
+  if (!args.root) {
+    const cwd = deps.cwd();
+    root = mainCheckoutRoot(cwd) || cwd;
+  } else {
+    root = path.isAbsolute(args.root) ? path.resolve(args.root) : path.resolve(deps.cwd(), args.root);
   }
-  if (!args.dryRun) console.log(`log: ${logPath}`);
+  const logPath = args.logPath || path.join(root, '.claude-tweaks', 'sweep-stray-run-dirs.log');
+  const result = sweep({
+    root, dryRun: args.dryRun, logPath: fsPath(deps, logPath), env: deps.env,
+  });
+
+  const out = (line) => deps.stdout(`${line}\n`);
+  out(`root: ${root}`);
+  out(`archived: ${result.archived.length}`);
+  out(`skipped: ${result.skipped.length}`);
+  out(`failed: ${result.failed.length}`);
+  if (result.failed.length) {
+    for (const f of result.failed) out(`  FAILED ${f.runId}: ${f.reason}`);
+  }
+  if (!args.dryRun) out(`log: ${logPath}`);
+  return result.failed.length ? 1 : 0;
 }
 
-if (require.main === module) main();
+const realDeps = {
+  cwd: () => process.cwd(),
+  env: process.env,
+  stdout: (s) => process.stdout.write(s),
+};
 
-module.exports = { sweep, hasTrackedWork, foldEventsJsonl, listStrayRunDirs };
+module.exports = {
+  run, realDeps, sweep, hasTrackedWork, foldEventsJsonl, listStrayRunDirs,
+};
+
+if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

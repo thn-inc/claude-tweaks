@@ -5,9 +5,13 @@ call that decides whether a filed record names a genuine open choice with no tra
 (`needed`) or a single clear ask (`clear`). Both producers cite this file rather than each
 inventing its own interpretation of the distinction.
 
-This is a content judgment, not a structural heuristic — no line-count or keyword check. See
-`_shared/work-record.md`'s Definition row for the label itself and `_shared/label-bootstrap.md`
-for its bootstrap entry.
+This is a content call, not a structural heuristic — no line-count or keyword check, the same
+posture `solution:unjustified`'s judgment takes. See `_shared/work-record.md`'s Definition row for
+the label itself and `_shared/label-bootstrap.md` for its bootstrap entry.
+
+The rubric applies to a captured idea (`/claude-tweaks:capture`) or a feedback learning
+(`/claude-tweaks:feedback`). Its verdicts are `needed` and `clear`; each producer maps them to its
+own variable or rendering.
 
 ## Worked examples
 
@@ -24,4 +28,5 @@ for its bootstrap entry.
 Ask: does the idea, as stated, leave more than one viable direction with no tradeoff decided? If
 yes, `needed` — file with `needs:definition` and a one-line rationale naming the undecided
 directions. If the idea names one clear ask (even if the *implementation* has incidental
-sub-decisions), `clear` — file without the label.
+sub-decisions), `clear` — file without the label. When unsure, `clear`: `needed` only when the
+idea genuinely names an undecided choice.

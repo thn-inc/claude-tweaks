@@ -23,10 +23,11 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { isPathContained } = require('../shared-primitives');
+const sharedPrimitives = require('../shared-primitives');
+const { isPathContained } = sharedPrimitives;
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const {
-  ghAvailable: sharedGhAvailable, parseRepo, repoSlug, ghOptions, gateOriginRepo,
+  ghAvailable: sharedGhAvailable, parseRepo, repoSlug, ghOptions, gateOriginRepo, ghHostIn, injectedGhDeps,
 } = require('../repo-resolve');
 const { fetchNativeParent } = require('../issues/native-dependencies');
 const { fetchLinkedPRs } = require('../issues/linked-prs');
@@ -34,26 +35,41 @@ const { dispositionState } = require('../issues/acceptance');
 const { LABELS, parseParent } = require('../issues/record');
 const { GhFailure, ghCaller, gatherGateFacts, evaluateParentGate, onHost } = require('../issues/parent-gate');
 const { resolvePolicyKeys } = require('../policy-schema');
+const { locatePolicyFile } = require('../policy-file');
 const { readRunStateWithParent, readRunState } = require('../hooks/context');
 const { resolveRecords, closingRecords } = require('./pack');
 const { readPacket } = require('./packet-gather');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 const { splitNul, parseStatusPorcelainZ } = require('../git-z');
 const { CLOSING_KEYWORD_ALTERNATION } = require('../issue-branch-tracking');
+const { learnedSkillsDelivered } = require('../learned-skills/delivered');
 
 // Shared factory (not two hand-duplicated functions) so defaultGit and
 // defaultGh can never again drift on their execFileSync options the way
 // #1230 found them to (defaultGit missing the `timeout` defaultGh already
 // had) -- one options object, reused by construction. `wrap` transforms that
 // object per call: identity for git, ghOptions (#4505's GH_HOST seam) for gh.
-function makeDefaultRunner(cmd, wrap = (_args, o) => o) {
-  return function run(args, cwd) {
-    return execFileSync(cmd, args, wrap(args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000, windowsHide: true }));
+// `boundOf` is required and read per call: every runner names its bound on purpose, since a
+// silent default is the hard-coded literal #4856 removed. The gh bound follows the gh-timeout-ms
+// ladder (the shared GH_TIMEOUT_MS: a GitHub Enterprise Server project raises it, since its gh
+// calls are slower); git is local and keeps its own GIT_BOUND_MS.
+// `ctx` is the caller's injected process context, `{ env, stderr, homeDir }`, each optional (#5379): an
+// `env` becomes the child's environment and reaches ghOptions' host lookup; absent, the child inherits
+// the real one. A `ctx.env` does NOT reach the gh bound: GH_TIMEOUT_MS is the process-wide memoized
+// getter (process env, the process cwd's policy) — the #4856 plan-review ruling, which rejected
+// threading the injected env and cwd through `ghTimeoutMsAt(cwd, { env })`.
+function makeDefaultRunner(cmd, boundOf, wrap = (_args, o) => o) {
+  return function run(args, cwd, ctx = {}) {
+    return execFileSync(cmd, args, wrap(args, {
+      cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: boundOf(), windowsHide: true,
+      ...(ctx.env ? { env: ctx.env } : {}),
+    }, injectedGhDeps(ctx)));
   };
 }
 
-const defaultGit = makeDefaultRunner('git');
-const defaultGh = makeDefaultRunner('gh', ghOptions);
+const GIT_BOUND_MS = 5000;
+const defaultGit = makeDefaultRunner('git', () => GIT_BOUND_MS);
+const defaultGh = makeDefaultRunner('gh', () => sharedPrimitives.GH_TIMEOUT_MS, ghOptions);
 
 // Registry of check functions, populated by Tasks 2-5. Each entry:
 // { name: string, fn: ({runDir, originalRunDir, base, repoRoot, cwd, expectations, deps}) => {result, detail} }.
@@ -434,8 +450,9 @@ registerCheck('worktree-removed', ({ runDir, expectations, deps, cwd }) => {
 // The worktree comes from run-state.json via readRunStateWithParent (a
 // multi-spec spec-{N}/ dir inherits the parent's), falling back to
 // worktreeAtClose for a closed run. Which rungs may close a record is pack.js's
-// closingRecords; a resolution it empties falls through to the expectations
-// fallback below. readdir degrades to [] and headerEntries skips an
+// closingRecords; its array, empty included, is the answer, and only its
+// `null` (no records resolved) falls through to the expectations fallback
+// below. readdir degrades to [] and headerEntries skips an
 // unreadable file, so a concurrent reconcile/archive prune reads as "no
 // headers found" rather than throwing.
 const RECORD_DEPS = {
@@ -445,7 +462,7 @@ const RECORD_DEPS = {
 
 function resolvedIssueNumbers(runDir) {
   const closing = closingRecords(resolveRecords(RECORD_DEPS, runDir, recordedWorktree(runDir)));
-  if (closing.length) return closing;
+  if (Array.isArray(closing)) return closing;
   const expPath = path.join(runDir, 'verify-expectations.json');
   if (fs.existsSync(expPath)) {
     try {
@@ -623,8 +640,15 @@ registerCheck('reference-repairs', ({ runDir, base, deps, cwd }) => {
     return { result: 'unknown', detail: `could not parse engine-state.json: ${err.message}` };
   }
   const findings = (state.results && state.results.references && state.results.references.findings) || [];
-  const applied = findings.filter((f) => f.action === 'applied').map((f) => f.targetPath).filter(Boolean);
-  if (!applied.length) return { result: 'skip', detail: 'no applied reference-repair findings this run' };
+  // A repair whose file a learned-skills capture took (`pr` set, #5290) rode that PR's commit, with no
+  // Initiative-Fix: trailer and nothing on the run branch: not this check's to scope.
+  const appliedAll = findings.filter((f) => f.action === 'applied');
+  const applied = appliedAll.filter((f) => !f.pr).map((f) => f.targetPath).filter(Boolean);
+  if (!applied.length) {
+    return appliedAll.some((f) => f.pr)
+      ? { result: 'skip', detail: 'every applied reference repair rode the learned-skills PR, not the run branch' }
+      : { result: 'skip', detail: 'no applied reference-repair findings this run' };
+  }
   const appliedSet = new Set(applied);
 
   const prNumber = resolvePrNumber(runDir);
@@ -652,6 +676,11 @@ registerCheck('reference-repairs', ({ runDir, base, deps, cwd }) => {
   if (extra.length) return { result: 'fail', detail: `Initiative-Fix: commit touches unrelated file(s): ${extra.join(', ')}` };
   return { result: 'pass', detail: '' };
 });
+
+// ---- learned-skills delivery (#5290) ----------------------------------------------
+// An entry still `captured` in {run}/learned-skills/manifest.json was never delivered; the verdict
+// lives in bin/lib/learned-skills/delivered.js, which console-residue.js runs on a multi-spec parent.
+registerCheck('learned-skills-delivered', ({ runDir }) => learnedSkillsDelivered(runDir));
 
 // ---- gh availability probe ------------------------------------------------
 // Delegates to the shared plugin/bin/lib/repo-resolve.js helper (the
@@ -730,9 +759,10 @@ function resolveParent(n, deps, cwd, workLinks, spec) {
 // The check's one repository: the origin remote, gated like bin/parent-gate.js (#4933)
 // -> { ok: true, spec: { host, owner, repo } } | { ok: false, error }. Resolved once per check run
 // and passed to every read for the run's gates (Clarification 7: one repository per gate
-// evaluation), for every target, parent or not. `deps.gateDeps` is undefined in production, so
-// gateOriginRepo reads process.env and gh's real hosts.yml, as the CLI does; a test injects it to
-// keep the result independent of the machine.
+// evaluation), for every target, parent or not. `deps.gateDeps` is the caller's injected process
+// context: wrap-up-engine.js passes injectedGhDeps({ env, stderr, homeDir }), which in production is
+// process.env and the real home directory's gh hosts.yml; absent, gateOriginRepo reads those
+// itself. A test injects it to keep the result independent of the machine.
 function resolveCheckRepo(deps, cwd) {
   let remote;
   try {
@@ -759,7 +789,7 @@ function resolveCheckRepo(deps, cwd) {
 function readParentGatePolicy(repoRoot, keys) {
   let policyRaw = null;
   try {
-    policyRaw = fs.readFileSync(path.join(repoRoot, '.claude-tweaks', 'policy.yml'), 'utf8');
+    policyRaw = fs.readFileSync(locatePolicyFile(repoRoot).path, 'utf8');
   } catch (err) {
     if (!err || (err.code !== 'ENOENT' && err.code !== 'ENOTDIR')) {
       return { ok: false, error: `cannot read .claude-tweaks/policy.yml: ${err && err.message}` };
@@ -1064,7 +1094,7 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
     // label a verdict outranks does not gate the record, and says so on its own line.
     if (dispositionState(labelNames) !== 'pending') {
       failing.push(carriesPending
-        ? `#${target}: pending label outranked by a verdict — run /claude-tweaks:demo #${target}`
+        ? `#${target}: pending label outranked by a verdict — run /claude-tweaks:accept #${target}`
         : `#${target}: missing ${LABELS.DEMO_PENDING} or ${LABELS.ACCEPT_PENDING} label`);
       continue;
     }
@@ -1180,6 +1210,14 @@ registerCheck('upstream-feedback', ({ expectations, deps, cwd }) => {
   if (!expectations.ok) return { result: 'unknown', detail: expectationsUnknownDetail(expectations) };
   const entries = expectations.data.upstream || [];
   if (!entries.length) return { result: 'skip', detail: 'nothing recorded' };
+  // The URL regex below matches github.com alone, but the bare slug it passes reaches whichever host
+  // an exported GH_HOST names. Under another host the check does not run, so no gh call (not even
+  // the --version probe) splits one command across two hosts (#4794).
+  const env = (deps.gateDeps && deps.gateDeps.env) || process.env;
+  const ghHost = ghHostIn(env);
+  if (ghHost && ghHost !== 'github.com') {
+    return { result: 'unknown', detail: `GH_HOST is ${ghHost}, but upstream-feedback issue URLs are on github.com — check not run; re-run with GH_HOST unset to check them (#4794)` };
+  }
   if (!ghAvailable(deps, cwd)) return { result: 'unknown', detail: 'gh absent' };
   const failing = [];
   for (const { url } of entries) {
@@ -1226,8 +1264,8 @@ function runVerify({ runDir, originalRunDir, base, repoRoot, cwd, deps = {} }) {
         try {
           const { result, detail } = fn({
             runDir, originalRunDir: resolvedOriginalRunDir, base, repoRoot: resolvedRepoRoot,
-            // gateDeps stays undefined in production (the origin gate reads process.env and gh's
-            // hosts.yml); a test injects it so the origin gate's verdict is independent of the machine.
+            // gateDeps is the caller's injected env/stderr/homeDir (wrap-up-engine.js passes
+            // injectedGhDeps(ctx)); a test injects it so the origin gate's verdict is independent of the machine.
             cwd: resolvedCwd, expectations, deps: { git, gh, gateDeps: deps.gateDeps },
           });
           return { check: name, result, detail: detail || '' };

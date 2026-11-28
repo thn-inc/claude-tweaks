@@ -35,12 +35,12 @@ const { execFileSyncTimed, execFileAsyncTimed } = require('./timing');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { iterRunDirsWithState } = require('../hooks/context');
 const { runWithConcurrency } = require('./gh-pool');
-const { evaluateMaturation, extractPendingGrantedAt, partitionGrantComments } = require('../issues/grant-maturation');
+const { evaluateMaturation, withheldGrant, extractPendingGrantedAt, partitionGrantComments } = require('../issues/grant-maturation');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 const { resolvePolicyConfig } = require('../policy-schema');
 const { sddRulingDeferralReason, SDD_RULING_REASONS, sddRulingRatifyAction } = require('../console/sdd-ruling');
 const { canonicalRealpath, resolveLeaf, isAncestorOrSelf } = require('../path-guard');
-const { ghOptions } = require('../repo-resolve');
+const { ghOptions, injectedGhDeps } = require('../repo-resolve');
 
 const FETCH_TIMEOUT_MS = 5000;
 // _shared/console-execution.md's Pre-execution claim section — a claim older
@@ -71,6 +71,12 @@ const REVERSE_FAILED_NOTE = 'reverse not filed — see decisions.md';
 // `--filing-failed`, never defaulted to `dropped` or `executed`, and NOT cleared.
 const DROPPED_NOTE = 'dropped — nothing filed';
 const FILING_FAILED_NOTE = 'filing failed — see decisions.md';
+// #4679: a can't-tell finding row whose drop was logged to the materiality digest
+// instead of filed — named in `--digested`, a settled (cleared) outcome.
+const DIGESTED_NOTE = 'digested — logged to the materiality digest, nothing filed';
+// #6284: a q-N row `recheck-followups.js approve --item` recorded an approval on. The human approved it; the close or
+// comment itself runs only at the post-merge execute step, so the row counts as executed here, never declined.
+const RECHECK_APPROVAL_NOTE = 'approval recorded; executes after merge';
 
 const isFindingRow = (item) => typeof item.findingItem === 'string' && item.findingItem.length > 0;
 
@@ -144,13 +150,14 @@ function parseItemTicks(body) {
 // event loop regardless of how the calling code is structured (#820, D5).
 // Unparseable stdout reads as 'network-failure', same as a failed spawn: a gh
 // that answered with something other than the requested JSON told us nothing.
-async function ghJson(repoRoot, args) {
+// `inj` ({ env, homeDir }, optional): a hook event's context (#5377), the environment gh runs in and reads its host from.
+async function ghJson(repoRoot, args, inj = {}) {
   let stdout;
   try {
     ({ stdout } = await execFileAsyncTimed(
       'gh',
       args,
-      ghOptions(args, { cwd: repoRoot, encoding: 'utf8', timeout: FETCH_TIMEOUT_MS, windowsHide: true }),
+      ghOptions(args, { cwd: repoRoot, encoding: 'utf8', timeout: FETCH_TIMEOUT_MS, windowsHide: true, ...(inj.env ? { env: inj.env } : {}) }, injectedGhDeps(inj)),
     ));
   } catch (e) {
     if (e && e.code === 'ENOENT') return { ok: false, reason: 'gh-absent' };
@@ -163,8 +170,8 @@ async function ghJson(repoRoot, args) {
   }
 }
 
-async function fetchPrData(repoRoot, prNumber) {
-  const res = await ghJson(repoRoot, ['pr', 'view', String(prNumber), '--json', 'comments,body']);
+async function fetchPrData(repoRoot, prNumber, inj) {
+  const res = await ghJson(repoRoot, ['pr', 'view', String(prNumber), '--json', 'comments,body'], inj);
   if (!res.ok) return res;
   const { json } = res;
   return {
@@ -197,8 +204,8 @@ function parseFixesMembers(body) {
 // plantable by anyone who can comment, and a backdated one would mature a
 // pending grant -- so pendingSince reads trusted comments only, and each
 // untrusted comment carrying the marker is named in skippedUntrusted.
-async function fetchIssueGrant(repoRoot, issueNumber) {
-  const res = await ghJson(repoRoot, ['issue', 'view', String(issueNumber), '--json', 'labels,comments']);
+async function fetchIssueGrant(repoRoot, issueNumber, inj) {
+  const res = await ghJson(repoRoot, ['issue', 'view', String(issueNumber), '--json', 'labels,comments'], inj);
   if (!res.ok) return res;
   const { json } = res;
   const labels = (json.labels || []).map((l) => (typeof l === 'string' ? l : l.name));
@@ -212,11 +219,11 @@ async function fetchIssueGrant(repoRoot, issueNumber) {
 // console-resolve.js's own readPolicy. Fails open to `undefined`
 // (evaluateMaturation's own DEFAULT_VETO_WINDOW_HOURS fallback) on any error,
 // same posture as every other best-effort read in this file.
-function resolveVetoWindowHours(runDir, repoRoot) {
+function resolveVetoWindowHours(runDir, repoRoot, inj = {}) {
   try {
-    const git = (args) => execFileSyncTimed('git', args, { cwd: repoRoot, encoding: 'utf8', windowsHide: true });
+    const git = (args) => execFileSyncTimed('git', args, { cwd: repoRoot, encoding: 'utf8', windowsHide: true, ...(inj.env ? { env: inj.env } : {}) });
     const readFile = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
-    const { result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['grant-veto-window-hours'] });
+    const { result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['grant-veto-window-hours'], ...(inj.env ? { env: inj.env } : {}), ...(inj.homeDir ? { homeDir: inj.homeDir } : {}) });
     const entry = result['grant-veto-window-hours'];
     const raw = entry && entry.error === undefined ? entry.value : null;
     const veto = raw === null || raw === undefined ? NaN : Number(raw);
@@ -389,6 +396,7 @@ function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
           const grant = ctx.memberGrants[n];
           if (!grant) { mergeGrantGap = { member: n, reason: 'grant-unreadable' }; break; }
           const mat = evaluateMaturation({
+            hasBuildLabel: (grant.labels || []).includes('auto:build'),
             hasMergeLabel: (grant.labels || []).includes('auto:merge'),
             hasPendingLabel: (grant.labels || []).includes('auto:merge-pending'),
             pendingSince: grant.pendingSince || null,
@@ -400,7 +408,8 @@ function decideConsoleExecute(consoleJson, comments, now, ctx = {}) {
             // passed over names them, so the withhold is not mistaken for "nobody
             // ever granted" -- the planted comment is what the operator should see.
             const passedOver = Array.isArray(grant.skippedUntrusted) ? grant.skippedUntrusted : [];
-            mergeGrantGap = { member: n, reason: passedOver.length ? `${mat.reason} — ${passedOver.join('; ')}` : mat.reason };
+            const base = withheldGrant(mat, grant.labels).detail;
+            mergeGrantGap = { member: n, reason: passedOver.length ? `${base} — ${passedOver.join('; ')}` : base };
             break;
           }
         }
@@ -429,6 +438,8 @@ async function consoleExecuteDetect(opts = {}) {
   const start = opts.cwd || process.cwd();
   const root = mainCheckoutRoot(start);
   if (!root) return { ready, skipped };
+  // opts.env / opts.homeDir (a hook event's context, #5377) reach every gh and git child below; absent, the inherited ones.
+  const inj = { ...(opts.env ? { env: opts.env } : {}), ...(opts.homeDir ? { homeDir: opts.homeDir } : {}) };
   const now = opts.now || Date.now();
 
   const candidates = [];
@@ -439,7 +450,7 @@ async function consoleExecuteDetect(opts = {}) {
     candidates.push({ dir, consoleJson });
   }
 
-  const fetches = await runWithConcurrency(candidates, (c) => fetchPrData(root, c.consoleJson.prNumber));
+  const fetches = await runWithConcurrency(candidates, (c) => fetchPrData(root, c.consoleJson.prNumber, inj));
 
   // #1802: collect every (candidate, member) pair that needs a live grant
   // re-fetch — only candidates whose console.json carries an isMergeRow item
@@ -463,7 +474,7 @@ async function consoleExecuteDetect(opts = {}) {
   });
   const memberGrantsByCandidate = new Map();
   for (const i of mergeRowCandidateIndices) memberGrantsByCandidate.set(i, {});
-  const grantResults = await runWithConcurrency(grantJobs, (job) => fetchIssueGrant(root, job.member));
+  const grantResults = await runWithConcurrency(grantJobs, (job) => fetchIssueGrant(root, job.member, inj));
   grantJobs.forEach((job, i) => {
     const g = grantResults[i] instanceof Error ? { ok: false } : grantResults[i];
     if (!g.ok) return;
@@ -474,7 +485,7 @@ async function consoleExecuteDetect(opts = {}) {
     const fetch = fetches[i] instanceof Error ? { ok: false, reason: 'network-failure' } : fetches[i];
     if (!fetch.ok) { skipped.push({ runDir: c.dir, reason: fetch.reason }); return; }
     const ctx = memberGrantsByCandidate.has(i)
-      ? { prBody: fetch.body, memberGrants: memberGrantsByCandidate.get(i), vetoWindowHours: resolveVetoWindowHours(c.dir, root), now }
+      ? { prBody: fetch.body, memberGrants: memberGrantsByCandidate.get(i), vetoWindowHours: resolveVetoWindowHours(c.dir, root, inj), now }
       : {};
     // #3880: every candidate gets its ruling rows' staged texts (a no-op {} when it has none);
     // #4049: and each unreadable row's cause, so the gap names why the read failed.
@@ -515,7 +526,7 @@ async function consoleExecuteDetect(opts = {}) {
 //       'comment-not-found' | 'unknown-item-ids' | 'not-ruling-items' | 'not-finding-items' | 'conflicting-failure-ids' |
 //       'reply-comment-failed' | 'marker-edit-failed' | 'console-write-failed', ids?, error? }
 async function resolveConsoleExecution(runDir, {
-  approve = [], decline = [], reverseFailed = [], filingFailed = [],
+  approve = [], decline = [], reverseFailed = [], filingFailed = [], digested = [],
 } = {}, deps = {}) {
   const now = typeof deps.now === 'function' ? deps.now() : Date.now();
   const consoleJson = readConsoleJson(runDir);
@@ -562,7 +573,7 @@ async function resolveConsoleExecution(runDir, {
   const ticksByComment = new Map(commentIds.map((id) => [id, byId.has(id) ? parseItemTicks(byId.get(id).body) : {}]));
   const ticksOf = (item) => ticksByComment.get(commentIds.includes(item.commentId) ? item.commentId : commentIds[0]);
   const knownIds = new Set([...ticksByComment.values()].flatMap((t) => Object.keys(t)));
-  const namedIds = [...new Set([...approve, ...decline, ...reverseFailed, ...filingFailed])];
+  const namedIds = [...new Set([...approve, ...decline, ...reverseFailed, ...filingFailed, ...digested])];
   const unknownIds = namedIds.filter((id) => !knownIds.has(id));
   if (unknownIds.length) return { status: 'error', reason: 'unknown-item-ids', ids: unknownIds };
 
@@ -576,15 +587,23 @@ async function resolveConsoleExecution(runDir, {
   // ruling whose ratify filed a deferral record that failed to land.
   const findingIds = new Set(items.filter(isFindingRow).map((item) => item.id));
   const notFindingIds = [...new Set(filingFailed)].filter((id) => !findingIds.has(id) && !rulingIds.has(id));
-  if (notFindingIds.length) return { status: 'error', reason: 'not-finding-items', ids: notFindingIds };
+  if (notFindingIds.length) return { status: 'error', reason: 'not-finding-items', ids: notFindingIds, flag: '--filing-failed' };
+  // --digested (#4679) names only a finding row.
+  const notDigestibleIds = [...new Set(digested)].filter((id) => !findingIds.has(id));
+  if (notDigestibleIds.length) return { status: 'error', reason: 'not-finding-items', ids: notDigestibleIds, flag: '--digested' };
   // A ruling cannot have both failed to reverse and failed to ratify: the caller
-  // contradicts itself, so nothing is written.
+  // contradicts itself, so nothing is written. Likewise a finding row cannot be
+  // both digested and failed to file.
+  // `flag` names the flag paired with --filing-failed in the contradiction.
   const conflictingIds = [...new Set(reverseFailed)].filter((id) => filingFailed.includes(id));
-  if (conflictingIds.length) return { status: 'error', reason: 'conflicting-failure-ids', ids: conflictingIds };
+  if (conflictingIds.length) return { status: 'error', reason: 'conflicting-failure-ids', ids: conflictingIds, flag: '--reverse-failed' };
+  const digestedConflictIds = [...new Set(digested)].filter((id) => filingFailed.includes(id));
+  if (digestedConflictIds.length) return { status: 'error', reason: 'conflicting-failure-ids', ids: digestedConflictIds, flag: '--digested' };
   const approveSet = new Set(approve);
   const declineSet = new Set(decline);
   const reverseFailedSet = new Set(reverseFailed);
   const filingFailedSet = new Set(filingFailed);
+  const digestedSet = new Set(digested);
   // Every item this console names gets an outcome — one explicitly declined
   // via `--decline`, one explicitly (or already-tick) approved, and
   // anything named in neither list defaults to declined ("declined, no
@@ -620,6 +639,17 @@ async function resolveConsoleExecution(runDir, {
         id: item.id, kind: item.kind, outcome: 'filing-failed', note: FILING_FAILED_NOTE, isMergeRow: item.isMergeRow === true, isRulingRow: true,
       };
     }
+    // #4679: a digested finding row outranks a tick — it is never executed.
+    if (isFindingRow(item) && digestedSet.has(item.id)) {
+      return {
+        id: item.id, kind: item.kind, outcome: 'digested', note: DIGESTED_NOTE, isMergeRow: item.isMergeRow === true, findingItem: item.findingItem,
+      };
+    }
+    if (!declineSet.has(item.id) && item.approval && typeof item.approval === 'object') {
+      return {
+        id: item.id, kind: item.kind, outcome: 'executed', note: RECHECK_APPROVAL_NOTE, isMergeRow: item.isMergeRow === true,
+      };
+    }
     if (!declineSet.has(item.id) && (approveSet.has(item.id) || ticks[item.id] === true)) {
       return { id: item.id, kind: item.kind, outcome: 'executed', isMergeRow: item.isMergeRow === true };
     }
@@ -644,8 +674,9 @@ async function resolveConsoleExecution(runDir, {
   // that item and Resolve unticked). A reversed ruling counts as cleared: a
   // reversal is a decided outcome, not an unanswered item. A reverse-failed
   // ruling does not: no reversal record exists. A dropped finding counts as
-  // cleared and a filing-failed one does not, the same way.
-  const allCleared = outcomes.length > 0 && outcomes.every((o) => o.outcome === 'executed' || o.outcome === 'reversed' || o.outcome === 'dropped');
+  // cleared and a filing-failed one does not, the same way; a digested finding (#4679)
+  // is cleared too.
+  const allCleared = outcomes.length > 0 && outcomes.every((o) => o.outcome === 'executed' || o.outcome === 'reversed' || o.outcome === 'dropped' || o.outcome === 'digested');
 
   // 1. Reply comment first — the source of truth a foreign detection pass
   // keys "already executed" off, per the Write order section. Idempotent
@@ -703,11 +734,15 @@ async function resolveConsoleExecution(runDir, {
   const nextConsoleJson = {
     ...consoleJson,
     ...(Array.isArray(consoleJson.items) ? {
-      items: consoleJson.items.map((item, i) => ({
-        ...item,
-        outcome: outcomes[i].outcome,
-        ...(outcomes[i].note ? { note: outcomes[i].note } : {}),
-      })),
+      items: consoleJson.items.map((item, i) => {
+        // An explicitly declined row drops any re-check approval it carried, so execute never acts on it (#6284).
+        const kept = declineSet.has(item.id) ? Object.fromEntries(Object.entries(item).filter(([k]) => k !== 'approval')) : item;
+        return {
+          ...kept,
+          outcome: outcomes[i].outcome,
+          ...(outcomes[i].note ? { note: outcomes[i].note } : {}),
+        };
+      }),
     } : {}),
     executedAt: new Date(now).toISOString(),
     resolved: allCleared,
@@ -751,13 +786,13 @@ function errorText(err) {
 // sees exactly what this verb decided.
 function buildExecutedReplyBody(outcomes) {
   const lines = outcomes.map((o) => (o.outcome === 'executed'
-    ? `- \`${o.id}\`: executed`
+    ? `- \`${o.id}\`: executed${o.note ? ` — ${o.note}` : ''}`
     : `- \`${o.id}\`: ${o.note}`));
   return `${EXECUTED_REPLY_MARKER}\n${lines.join('\n')}`;
 }
 
 // Ticks the Resolve checkbox row (isResolveTicked's own row shape, in
-// reverse) only when every item cleared (executed, reversed or dropped) — a partial
+// reverse) only when every item cleared (executed, reversed, dropped or digested) — a partial
 // resolution, with a declined, reverse-failed or filing-failed item, must never silently tick
 // Resolve, since that would tell a later detection pass "a human confirmed
 // everything," which isn't true.
@@ -795,4 +830,6 @@ module.exports = {
   REVERSE_FAILED_NOTE,
   DROPPED_NOTE,
   FILING_FAILED_NOTE,
+  DIGESTED_NOTE,
+  RECHECK_APPROVAL_NOTE,
 };

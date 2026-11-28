@@ -20,7 +20,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const { readText } = require('./helpers/read-skill');
-const { gitRepo, fixtureGit, FIXTURE_TIMEOUT_MS } = require('./helpers/git-fixtures');
+const { gitRepo, fixtureGit, FIXTURE_TIMEOUT_MS, writeIdentity } = require('./helpers/git-fixtures');
 
 const ROOT = path.join(__dirname, '..');
 const CHECK_PATH = path.join(ROOT, 'plugin', 'skills', 'review', 'merge-provenance-check.md');
@@ -120,8 +120,7 @@ function fixture() {
   const dir = gitRepo({ branch: 'main' });
   DIRS.push(dir);
   const g = (...args) => fixtureGit(['-C', dir, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-  g('config', 'user.name', 'Fixture');
-  g('config', 'user.email', 'fixture@example.test');
+  writeIdentity(dir, { name: 'Fixture', email: 'fixture@example.test' });
   const commitFile = (name, content = name) => {
     fs.writeFileSync(path.join(dir, name), content);
     g('add', name);

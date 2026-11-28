@@ -10,7 +10,7 @@
 // --file/--json, --json content that isn't a JSON array, a rejected --ledger,
 // --allocate with an --id that isn't a "{kind}-{n}" shape, or an --id that is
 // unmapped — see #3946 below); 3 when the run dir is missing or
-// not anchored under the main checkout (a worktree-local shadow —
+// not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/ —
 // _shared/pipeline-run-dir.md's Anchoring section, [IL-127]), or a staged
 // file is unwritable. The printed path is the run dir's realpath, which can
 // differ from the caller's --run input string (e.g. a /tmp path resolves to
@@ -227,7 +227,7 @@ function run(argv, deps = realDeps) {
   }
   if (!target.ok) {
     if (target.reason === 'missing') deps.stderr(`stage-item.js: run dir does not exist: ${o.run}\n`);
-    else deps.stderr(`stage-item.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
+    else deps.stderr(`stage-item.js: run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
     return 3;
   }
 

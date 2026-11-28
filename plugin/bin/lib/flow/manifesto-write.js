@@ -37,13 +37,19 @@ const { writeFileAtomic } = require('../atomic-write');
 const { lstatType } = require('../path-guard');
 const { LEVER_KEYS } = require('./preflight');
 const { FORGE_DEGRADE_REASONS } = require('../policy-schema');
+const { appendStationEvent } = require('../station-events/emit');
+const { replanRun } = require('../station-events/replan');
+const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 
 // confirm/hybrid gate the Manifesto on an approval (and may override levers),
 // so they keep manifesto.md's hand procedure; interactive runs no Manifesto.
 const MODES = Object.freeze(['auto']);
 const MODE_SOURCES = Object.freeze(['arg', 'dispatch', 'policy', 'default']);
 const CEREMONIES = Object.freeze(['fast-lane', 'standard']);
-const CEREMONY_SOURCES = Object.freeze(['label', 'judged']);
+// A ceremony source (flow/manifesto.md's skip rule, #4118), not a station outcome. This file requires
+// station-events, so station-literal-conformance's retired-outcome scan exempts exactly this line.
+const SKIPPED = 'skipped';
+const CEREMONY_SOURCES = Object.freeze(['label', 'judged', SKIPPED]);
 const SECTION = '/flow';
 // `created:` is the run id's timestamp prefix (_shared/run-dir-resolution.md's
 // ISO-timestamp rule: YYYY-MM-DDTHHMMSS, UTC, no colons).
@@ -53,11 +59,13 @@ const HEADER_RE = /^(?:# Auto-Decision Log\b|Pipeline config snapshot:)/m;
 // The keys resolved through preflight's resolvePolicy: preflight's LEVER_KEYS
 // minus ceremony-profile (folded from the records, source `header`) and
 // merge-authorization (always `ask` here — never a policy.yml value), plus
-// `autonomy` (the review-auto-apply-ceiling rule reads it) and the run pin.
+// `autonomy` (the review-auto-apply-ceiling rule reads it), the run pin, and
+// `auto-mode` (a `policy` mode source names the layer that set it, #6006).
 const POLICY_REQUEST_KEYS = Object.freeze([
   ...LEVER_KEYS.filter((k) => k !== 'ceremony-profile' && k !== 'merge-authorization'),
   'autonomy',
   'integration-model',
+  'auto-mode',
 ]);
 
 class ManifestoInputError extends Error {
@@ -83,11 +91,19 @@ function checkRecords(records) {
     if (!CEREMONIES.includes(r.ceremony)) throw new ManifestoInputError(`record #${r.n}: ceremony must be ${CEREMONIES.join(' or ')}, got ${r.ceremony}`);
     if (!CEREMONY_SOURCES.includes(r.ceremonySource)) throw new ManifestoInputError(`record #${r.n}: ceremonySource must be ${CEREMONY_SOURCES.join(' or ')}, got ${r.ceremonySource}`);
   }
+  // `skipped` is flow/manifesto.md's skip rule (#4118): only a standard verdict, and only when a labelled standard record already holds the run-wide fold at standard.
+  const labelledStandard = records.some((r) => r.ceremonySource === 'label' && r.ceremony === 'standard');
+  for (const r of records) {
+    if (r.ceremonySource !== SKIPPED) continue;
+    if (r.ceremony !== 'standard') throw new ManifestoInputError(`record #${r.n}: a skipped ceremony judgment must be standard, got ${r.ceremony}`);
+    if (!labelledStandard) throw new ManifestoInputError(`record #${r.n}: a skipped ceremony judgment needs a labelled standard record in the run`);
+  }
 }
 
 // manifesto.md's Merge authorization row: the `pre-authorize-merge` token is
 // refused on a dispatch-bound run (run-state.json `dispatched: true` — a
-// dispatched record's merge authority is its `auto:merge` label) and on a
+// dispatched record's merge authority is its `auto:merge` label together with
+// a live `auto:build`) and on a
 // multi-record run (its consolidated console owns the merge decision).
 // -> null (no token, or the token applies) | 'dispatch-bound' | 'multi-record'.
 function mergeAuthorizationRefusal({ preAuthorizeMerge, dispatched, records }) {
@@ -95,6 +111,16 @@ function mergeAuthorizationRefusal({ preAuthorizeMerge, dispatched, records }) {
   if (dispatched === true) return 'dispatch-bound';
   if (Array.isArray(records) && records.length > 1) return 'multi-record';
   return null;
+}
+
+// The mode lever's Source: flow Step 1's rung, except that rung 3 (`policy`, read with
+// --values, which drops the source) names the layer auto-mode resolved from — `factory`
+// for a factory-only value (#6006). Any other entry keeps `policy`, the rung the caller named.
+const MODE_POLICY_LAYERS = Object.freeze(['policy', 'factory']);
+function modeSourceOf(modeSource, autoModeEntry) {
+  if (modeSource !== 'policy') return modeSource;
+  const layer = autoModeEntry && autoModeEntry.error === undefined ? autoModeEntry.source : null;
+  return MODE_POLICY_LAYERS.includes(layer) ? layer : 'policy';
 }
 
 // { mode, modeSource, records, resolved, preAuthorizeMerge?, dispatched? } ->
@@ -108,7 +134,7 @@ function computeLevers({ mode, modeSource, records, resolved, preAuthorizeMerge 
   const res = resolved || {};
   const autonomy = res.autonomy && res.autonomy.value;
   return MANIFESTO_LEVERS.map((key) => {
-    if (key === 'mode') return { key, value: mode, source: modeSource };
+    if (key === 'mode') return { key, value: mode, source: modeSourceOf(modeSource, res['auto-mode']) };
     if (key === 'ceremony-profile') {
       return { key, value: records.every((r) => r.ceremony === 'fast-lane') ? 'fast-lane' : 'standard', source: 'header' };
     }
@@ -122,6 +148,8 @@ function computeLevers({ mode, modeSource, records, resolved, preAuthorizeMerge 
     if (!entry || entry.error !== undefined || entry.value === null || entry.value === undefined) {
       throw new LeverError(`lever ${key} did not resolve${entry && entry.error ? ` (${entry.error})` : ''}`);
     }
+    // The resolver's source passes through to the Source column, `factory` (#6006) included; the two
+    // `=== 'default'` rules below leave a factory value as set, like a policy.yml one.
     const source = entry.source || 'default';
     // A merge-verification derived from a degraded forge detection (#4578): its
     // `off` came from the fallback local-merge, and pr-first-merge.md Step 2.5
@@ -201,6 +229,25 @@ function initDecisions(runDir, header) {
   });
 }
 
+// #6148: the profile (and lane) this write fixed may change a claimed record's stations — one `replanned`
+// per such record, after the whole batch and the lane fill landed. `deps.stationEvent` undefined supplies the
+// real sink here (the one producer that does); null disables. Never throws, never changes the write.
+function replanClaimedRecords(runDir, levers, deps) {
+  try {
+    const stationEvent = deps.stationEvent === undefined
+      ? (e) => appendStationEvent(e, { mainRoot: deps.stationMainRoot ?? mainCheckoutRoot(runDir) })
+      : deps.stationEvent;
+    if (typeof stationEvent !== 'function') return;
+    let lane = 'standard'; // the lane the Manifesto fills
+    try { lane = JSON.parse(fs.readFileSync(path.join(runDir, 'manifest.json'), 'utf8')).lane || lane; } catch { /* unreadable: the Manifesto's lane */ }
+    const ceremonyProfile = levers.find((l) => l.key === 'ceremony-profile').value;
+    replanRun({
+      runDir, manifest: { lane, ceremonyProfile }, ref: 'ceremony-profile',
+      deps: { stationEvent, sessionId: process.env.CLAUDE_CODE_SESSION_ID || null, mainRoot: deps.stationMainRoot },
+    });
+  } catch { /* emission never fails the Manifesto write */ }
+}
+
 // { runDir, records, levers, integrationModel?, integrationModelDegraded?,
 // mergeRefusal?, now } -> { configPath, table }. `integrationModel` is the
 // resolved run pin, or null/'' when it resolved empty: the pair is then omitted
@@ -233,7 +280,10 @@ function writeManifesto({ runDir, records, levers, integrationModel = null, inte
     throw new LeverError(`levers must be the 13 Manifesto levers in canonical order (${MANIFESTO_LEVERS.join(', ')})`);
   }
   const pin = integrationModelDegraded === null && typeof integrationModel === 'string' && integrationModel.trim() ? integrationModel.trim() : null;
-  const pairs = [...levers.map((l) => ({ key: l.key, value: l.value })), ...(pin ? [{ key: 'integration-model', value: pin }] : [])];
+  // spec: is the run's record pin (RUN_PINS, #5347): the lowest record number,
+  // written through set-config like every other pin, after the levers.
+  const spec = String(Math.min(...records.map((r) => r.n)));
+  const pairs = [...levers.map((l) => ({ key: l.key, value: l.value })), ...(pin ? [{ key: 'integration-model', value: pin }] : []), { key: 'spec', value: spec }];
   const problems = pairs.map(({ key, value }) => ({ key, value, v: validateLever(key, value) })).filter((p) => !p.v.ok);
   if (problems.length) {
     throw new LeverError(problems.map((p) => `${p.key}=${p.value} is not valid${p.v.allowed ? ` (allowed: ${p.v.allowed.join(', ')})` : ''}`).join('; '));
@@ -247,20 +297,28 @@ function writeManifesto({ runDir, records, levers, integrationModel = null, inte
   }
   try {
     for (const { key, value } of pairs) set({ runDir, key, value });
-    // spec:/created: are run bookkeeping, not levers — set-config refuses
-    // them by design, so they are appended after the batch (Write mechanism).
-    const spec = Math.min(...records.map((r) => r.n));
-    fs.appendFileSync(configPath, `spec: ${spec}\ncreated: ${created}\n`);
+    // created: is run bookkeeping that set-config refuses by design, so it is
+    // the one line appended directly.
+    fs.appendFileSync(configPath, `created: ${created}\n`);
   } catch (err) {
     let removed = true;
     try { fs.rmSync(configPath, { force: true }); } catch { removed = false; }
     throw new Error(`could not write ${configPath} (${err && err.message ? err.message : err}) — `
       + (removed ? 'the partial config.yml was removed' : 'the partial config.yml could NOT be removed: delete it before re-running'), { cause: err });
   }
+  // The run manifest (#5903): a Manifesto-written run is the standard lane. ceremonyProfile already
+  // arrived through set-config's own fill. Best-effort — a failed fill changes nothing here.
+  try { require('../run-manifest/write').fillRunManifest(runDir, { lane: 'standard' }); } catch { /* never breaks the Manifesto write */ }
+  replanClaimedRecords(runDir, levers, deps);
 
   const log = (status, step, text, reversibility = 'n/a') => append({ runDir, section: SECTION, entry: formatEntry({ status, now, step, text, reversibility }) });
   for (const r of records) {
     if (r.ceremonySource === 'judged') log('AUTO', 'Manifesto ceremony-check', `#${r.n} carries no ceremony:* label -> CEREMONY: ${r.ceremony}`);
+    else if (r.ceremonySource === SKIPPED) {
+      log('AUTO', `Manifesto ceremony-check (${SKIPPED})`,
+        `#${r.n} carries no ceremony:* label -> CEREMONY: standard `
+        + `(judgment skipped: the run-wide fold is already standard from a labelled record and #${r.n} is not size:low)`);
+    }
   }
   log('AUTO', 'Manifesto', `levers written to ${configPath}`);
   if (mergeRefusal) {
@@ -283,5 +341,5 @@ function writeManifesto({ runDir, records, levers, integrationModel = null, inte
 module.exports = {
   MODES, MODE_SOURCES, POLICY_REQUEST_KEYS,
   ManifestoInputError, AdoptedRunError, InitializedLogError, LeverError,
-  computeLevers, mergeAuthorizationRefusal, renderFyi, configPresent, runCreated, writeManifesto,
+  checkRecords, computeLevers, mergeAuthorizationRefusal, renderFyi, configPresent, runCreated, writeManifesto,
 };

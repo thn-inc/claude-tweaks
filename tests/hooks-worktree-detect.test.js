@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -44,7 +45,7 @@ test('repoInfo: a linked worktree returns its own toplevel and isLinkedWorktree:
 });
 
 test('repoInfo: non-git directory returns repoRoot: null as a DEFINITIVE negative, not indeterminate', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wtd-nongit3-'));
+  const dir = scratchDir('ct-wtd-nongit3-');
   // git ran and answered "not a git repository". indeterminate MUST be false:
   // this is the case the worktree gate is entitled to treat as "nothing to
   // enforce", and conflating it with "git never answered" is #134.
@@ -71,6 +72,18 @@ test('findPolicyFile: policy file present at the target\'s own directory returns
   fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'worktree-always: true\n');
   assert.strictEqual(findPolicyFile(path.join(dir, 'a.txt')), dir);
+});
+
+// #4492 F3: a sibling-placed linked worktree (outside main, so the ancestor walk never reaches
+// main's untracked policy.yml) still reports the main checkout as holding the policy.
+test('findPolicyFile: a sibling-placed linked worktree finds the main checkout\'s untracked policy', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  assert.strictEqual(findPolicyFile(path.join(wt, 'a.txt')), null);
+  fs.mkdirSync(path.join(main, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(main, '.claude-tweaks', 'policy.yml'), 'worktree-always: true\n');
+  assert.strictEqual(findPolicyFile(path.join(wt, 'a.txt')), main);
+  assert.strictEqual(findPolicyFile(wt), main);
 });
 
 test('safeReal: returns null (not the raw, unresolved path) when realpathSync fails', () => {
@@ -141,19 +154,19 @@ test('mainCheckoutRoot: from a nested path inside a linked worktree still return
 });
 
 test('mainCheckoutRoot: a .git file pointing outside .git/worktrees/ (submodule shape) returns null', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sub-'));
+  const dir = scratchDir('ct-sub-');
   fs.writeFileSync(path.join(dir, '.git'), 'gitdir: /somewhere/.git/modules/thing\n');
   assert.strictEqual(mainCheckoutRoot(dir), null);
 });
 
 test('mainCheckoutRoot: an unparseable .git file returns null', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bad-'));
+  const dir = scratchDir('ct-bad-');
   fs.writeFileSync(path.join(dir, '.git'), 'not a gitdir line\n');
   assert.strictEqual(mainCheckoutRoot(dir), null);
 });
 
 test('mainCheckoutRoot: a path in no repository at all returns null', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-norepo-'));
+  const dir = scratchDir('ct-norepo-');
   assert.strictEqual(mainCheckoutRoot(dir), null);
 });
 
@@ -186,7 +199,7 @@ test('checkRunDirAnchoredOrOutside: anchored under main checkout accepts, from m
 
 test('checkRunDirAnchoredOrOutside: path outside any checkout accepts (existence-independent)', () => {
   const main = gitRepo();
-  const outside = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wtd-outside-')), 'mp-journey');
+  const outside = path.join(scratchDir('wtd-outside-'), 'mp-journey');
   const r = checkRunDirAnchoredOrOutside(outside, main);
   assert.strictEqual(r.ok, true);
 });
@@ -218,7 +231,7 @@ test('checkRunDirAnchoredOrOutside: path inside an unrelated second repo rejects
 
 test('checkRunDirAnchoredOrOutside: submodule-style .git FILE ancestor counts as inside a checkout, not outside', () => {
   const main = gitRepo();
-  const fake = fs.mkdtempSync(path.join(os.tmpdir(), 'wtd-subm-'));
+  const fake = scratchDir('wtd-subm-');
   fs.writeFileSync(path.join(fake, '.git'), 'gitdir: ../somewhere/.git/modules/x\n'); // unparseable as worktree admin — mainCheckoutRoot(fake) is null
   const r = checkRunDirAnchoredOrOutside(path.join(fake, 'run'), main);
   assert.strictEqual(r.ok, false);
@@ -226,7 +239,7 @@ test('checkRunDirAnchoredOrOutside: submodule-style .git FILE ancestor counts as
 });
 
 test('checkRunDirAnchoredOrOutside: no-repo-root cwd with path inside some checkout rejects with the distinct reason', () => {
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'wtd-norepo-'));
+  const bare = scratchDir('wtd-norepo-');
   const repo = gitRepo();
   const r = checkRunDirAnchoredOrOutside(path.join(repo, 'run'), bare);
   assert.strictEqual(r.ok, false);
@@ -235,7 +248,7 @@ test('checkRunDirAnchoredOrOutside: no-repo-root cwd with path inside some check
 
 test('checkRunDirAnchoredOrOutside: symlinked alias of the main checkout classifies by real location (accepts)', () => {
   const main = gitRepo();
-  const aliasParent = fs.mkdtempSync(path.join(os.tmpdir(), 'wtd-alias-'));
+  const aliasParent = scratchDir('wtd-alias-');
   const alias = path.join(aliasParent, 'alias');
   fs.symlinkSync(main, alias);
   const r = checkRunDirAnchoredOrOutside(path.join(alias, '.claude-tweaks', 'pipelines', 'r1'), main);
@@ -244,7 +257,7 @@ test('checkRunDirAnchoredOrOutside: symlinked alias of the main checkout classif
 
 test('checkRunDirAnchoredOrOutside: unreadable ancestor fails closed (rejects), never classifies outside', chmodDenialSkip('root bypasses mode bits'), () => {
   const main = gitRepo();
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'wtd-eacces-'));
+  const base = scratchDir('wtd-eacces-');
   const blocked = path.join(base, 'blocked');
   fs.mkdirSync(blocked);
   fs.chmodSync(blocked, 0o000);

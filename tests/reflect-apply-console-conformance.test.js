@@ -11,7 +11,6 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 
 const { readText } = require('./helpers/read-skill');
@@ -141,7 +140,7 @@ test('review-console.md: the "On approval" steps are not renumbered (7, 10, 12, 
   assert.match(body, /\n7\. `Q#` queue writes/);
   assert.match(body, /\n10\. \*\*Reflection insights \(#2547\)\.\*\*/);
   assert.match(body, /\n12\. Commit with a wrap-up message/);
-  assert.match(body, /\n13\. \*\*Branch finish/);
+  assert.match(body, /\n13\. \*\*Ledger close-out/);
 });
 
 test('review-console-appendix.md: the approve bullet routes a staged/reflect- row to step 2', () => {
@@ -306,6 +305,6 @@ test('multispec-console-template.md: the Skill updates section renders the stage
 });
 
 test('multispec-review-console.md stays under the Read-limit rail (budgets.js RAIL_BYTES)', () => {
-  const size = fs.statSync(MULTI_CONSOLE_PATH).size;
+  const size = Buffer.byteLength(readText(MULTI_CONSOLE_PATH));
   assert.ok(size < RAIL_BYTES, `multispec-review-console.md is ${size} B, rail ${RAIL_BYTES} B`);
 });

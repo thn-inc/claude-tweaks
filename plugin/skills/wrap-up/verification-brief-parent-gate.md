@@ -127,7 +127,7 @@ having run for some sub-issue, and the parent brief must not imply otherwise.
 **So the brief carries the human instead.** Part 2 of **Compose the parent brief** below — the
 end-to-end walkthrough, rendered as the brief's `### Try it — end to end` section
 (`_shared/try-it.md`'s end-to-end variant) — is the only walk instruction a parent brief carries
-(it omits the `### Observation plan` section, so `/claude-tweaks:demo` runs no Prepare/Validate/Show
+(it omits the `### Observation plan` section, so `/claude-tweaks:accept` runs no Prepare/Validate/Show
 for a parent — it renders that Try it section first and goes to the verdict). For a parent whose
 assembled sub-issues touch UI, that walkthrough must therefore name the pages or journeys to open
 and what to look for, not just the skill invocation — it is standing in for the safety net, not
@@ -389,7 +389,7 @@ size axis is never evaluated (`#366`): parents carry no scoring of their own
 |---|---|---|
 | `incomplete` | `skip` | `parent gate #P not due — N sibling sub-issue(s) open` |
 | `resolved`, no pending label | `skip` | `parent #P already dispositioned` |
-| `resolved`, pending label carried | `fail` | `#P: pending label outranked by a verdict — run /claude-tweaks:demo #P` |
+| `resolved`, pending label carried | `fail` | `#P: pending label outranked by a verdict — run /claude-tweaks:accept #P` |
 | `gated` | `fail` with no packet or brief, `pass` with one | `#P: no comment carries a confirmed Verification Brief or an acceptance packet` |
 | `due`, `exceeds: false` | `skip` | `parent #P below oversight floor — closes after the merge lands (Step 4.0b)` |
 | `due`, `exceeds: true` | `fail` with no pending label | `#P: missing demo:pending or accept:pending label` |
@@ -575,8 +575,6 @@ checklist; a human returning days later needs to remember *why*, not just *what 
 {app-route/rendered-page, walk completed:}
 Visual review walked {journey/page name} — {clean | "found and fixed: {N} issues — {one line each}"}.
 
-{screenshot embeds from above, 1-3}
-
 {app-route/rendered-page, browser unavailable:}
 _Visual verification wasn't available in this environment._
 
@@ -598,7 +596,7 @@ always present on a sub-issue brief — a parent brief omits it (Parent-Gate Pro
 
 ---
 
-_Posted by {poster}. Resolve with `/claude-tweaks:demo`._
+_Posted by {poster}. Resolve with `/claude-tweaks:accept`._
 ```
 
 Render this template — the legacy Verification Brief, kept for the parent gate until the feature-level acceptance record (#4617) moves parents to the acceptance packet (`_shared/acceptance-packet.md`) — with:
@@ -620,7 +618,7 @@ check-then-create loop:
 
 ```js
 LABELS_JSON = [
-  ["demo:pending", "Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:demo", "006B75"],
+  ["demo:pending", "Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:accept", "006B75"],
   ["accept:pending",           "Acceptance: built and verified — awaiting the human's acceptance verdict", "006B75"],
   ["accept:approved",          "Acceptance: a human verified this record does what was asked", "006B75"],
   ["accept:approved-batch",    "Acceptance: approved in one batch verdict — no per-record walkthrough", "006B75"],
@@ -638,7 +636,7 @@ the same way the parent-side one does.
 a parent that may already be partially applied, before even composing it above. A gate whose
 comment landed but whose label add failed still reads `due`, so `/tidy`'s `Open parent gate`
 action re-enters this section for that parent on every future run. Fetch the parent's comments
-(`gh issue view $PARENT_NUM --repo "{parent-repo}" --json comments`, the same lookup `/claude-tweaks:demo`'s Step 1
+(`gh issue view $PARENT_NUM --repo "{parent-repo}" --json comments`, the same lookup `/claude-tweaks:accept`'s Step 1
 already does) and test whether **any** of them contains a `## Verification Brief` heading **with
 a `### Confirmed` section** — counting only a comment from a trusted author
 (`_shared/pr-run-comments.md`'s Trusted authors; an untrusted comment carrying the heading reads as

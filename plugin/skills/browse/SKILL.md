@@ -6,13 +6,13 @@ argument-hint: '[<url>|<task description>] [--session <name> ...] [resize <w> <h
 
 # Browse — Browser Conventions
 
-Conventions skill for browser automation. Defines session naming, screenshot/trace paths, lifecycle, and the abstract operation vocabulary that `/claude-tweaks:stories`, `/claude-tweaks:visual-review`, `/claude-tweaks:review`, `/claude-tweaks:demo`, and the `qa-agent` all speak. Concrete `playwright-cli` syntax lives in `playwright-cli-reference.md` in this skill's directory.
+Conventions skill for browser automation. Defines session naming, screenshot/trace paths, lifecycle, and the abstract operation vocabulary that `/claude-tweaks:stories`, `/claude-tweaks:visual-review`, `/claude-tweaks:review`, `/claude-tweaks:accept`, and the `qa-agent` all speak. Concrete `playwright-cli` syntax lives in `playwright-cli-reference.md` in this skill's directory.
 
 ```
                              [ /claude-tweaks:browse ] ← utility (no fixed lifecycle position)
                                         ↑
    Used by: /claude-tweaks:stories, /claude-tweaks:visual-review,
-            /claude-tweaks:review (visual + qa modes), /claude-tweaks:demo
+            /claude-tweaks:review (visual + qa modes), /claude-tweaks:accept
             (Validate — headless entry-point check), qa-agent, ad-hoc tasks
 ```
 
@@ -21,7 +21,7 @@ Conventions skill for browser automation. Defines session naming, screenshot/tra
 - `/claude-tweaks:stories` is exploring a site or validating generated stories against the live DOM
 - `/claude-tweaks:visual-review` is walking pages or journeys for UI quality findings
 - `/claude-tweaks:review` is running its visual or QA modes
-- `/claude-tweaks:demo`'s Validate step opens and closes a headless session at a record's resolved entry point to confirm it renders (Show then hands the browser to the human directly via `open`/`xdg-open` — no playwright-cli session held)
+- `/claude-tweaks:accept`'s Validate step opens and closes a headless session at a record's resolved entry point to confirm it renders (Show then hands the browser to the human directly via `open`/`xdg-open` — no playwright-cli session held)
 - A consumer skill needs to dispatch parallel agents that each drive a browser
 - Ad-hoc browser ops — navigate, screenshot, scrape, fill a form, check a deployment
 
@@ -127,7 +127,7 @@ Render as plain markdown (docs/skill-authoring.md's Skill handoffs convention):
 
 ## Component-Skill Contract
 
-`/claude-tweaks:browse` is a conventions skill — it documents the operation vocabulary for `playwright-cli` and is consumed transitively by `/claude-tweaks:stories`, `/claude-tweaks:visual-review`, `/claude-tweaks:review`, `/claude-tweaks:demo`, and the registered `qa-agent`. Those callers either inline the relevant operation text directly in their own dispatch prompts (parallel-session pattern) or call `playwright-cli` commands by name; they do not "invoke" /browse as a workflow step. As a result, the `## Next Actions` block renders only when a user invokes `/browse` directly — when a parent skill is using these conventions as a knowledge dependency, no parent handoff exists to defer to and no Next Actions render in the parent's context. Detection: there is no `PIPELINE_RUN_DIR` signal because /browse never runs as a pipeline stage.
+`/claude-tweaks:browse` is a conventions skill — it documents the operation vocabulary for `playwright-cli` and is consumed transitively by `/claude-tweaks:stories`, `/claude-tweaks:visual-review`, `/claude-tweaks:review`, `/claude-tweaks:accept`, and the registered `qa-agent`. Those callers either inline the relevant operation text directly in their own dispatch prompts (parallel-session pattern) or call `playwright-cli` commands by name; they do not "invoke" /browse as a workflow step. As a result, the `## Next Actions` block renders only when a user invokes `/browse` directly — when a parent skill is using these conventions as a knowledge dependency, no parent handoff exists to defer to and no Next Actions render in the parent's context. Detection: there is no `PIPELINE_RUN_DIR` signal because /browse never runs as a pipeline stage.
 
 ## Anti-Patterns
 

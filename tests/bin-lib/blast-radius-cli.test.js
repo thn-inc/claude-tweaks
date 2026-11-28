@@ -8,6 +8,7 @@ const { execFileSync } = require('node:child_process');
 const { computeBlastRadius, gatherDiffFiles, BlastRadiusError } = require(
   path.join(__dirname, '..', '..', 'plugin', 'bin', 'lib', 'blast-radius-cli.js')
 );
+const { initRepo } = require('../helpers/git-fixtures');
 
 const SHA = 'a'.repeat(40);
 
@@ -114,9 +115,7 @@ test('AC1.1: a real repo change to docs/café.md surfaces as the raw path', () =
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'blast-radius-z-'));
   try {
     const git = (args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-    git(['init', '-q']);
-    git(['config', 'user.email', 't@example.com']);
-    git(['config', 'user.name', 'T']);
+    initRepo(dir, { name: 'T', email: 't@example.com', encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     git(['config', 'core.quotepath', 'true']);
     git(['config', 'commit.gpgsign', 'false']);
     fs.mkdirSync(path.join(dir, 'docs'));

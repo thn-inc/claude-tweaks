@@ -15,13 +15,14 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const fs = require('node:fs');
+const { scratchDir } = require('../tests/helpers/tmp-dir');
 const os = require('node:os');
 
 const { gatherPack } = require('../plugin/bin/lib/wrap-up/pack.js');
 
 // A fixture run dir: run-state.json (pr + worktree), one materialized header, config.yml.
 function fixtureRunDir({ withPr = true, records = [1535] } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-'));
+  const dir = scratchDir('wrap-up-pack-');
   const state = { worktree: '/w/tree', status: 'active', sessionId: 's' };
   if (withPr) state.pr = { number: 1901, url: 'https://x/pull/1901', branch: 'b' };
   fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify(state));

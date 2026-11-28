@@ -28,6 +28,13 @@ function segmentSpans(command) {
   return scanPass((spans) => segmentSpansWith(str, spans));
 }
 
+// The index at or after `at` that is not the start of a backslash-newline pair (#4245).
+function pastLineContinuations(str, at) {
+  let i = at;
+  while (str[i] === '\\' && str[i + 1] === '\n') i += 2;
+  return i;
+}
+
 function segmentSpansWith(str, spans) {
   const segments = [];
   let current = '';
@@ -116,8 +123,10 @@ function segmentSpansWith(str, spans) {
         continue;
       }
     }
-    if (ch === '&' && str[i + 1] === '&') { cut(i); i += 1; continue; }
-    if (ch === '|' && str[i + 1] === '|') { cut(i); i += 1; continue; }
+    // bash removes a backslash-newline before it reads operators, so `&\<nl>&` is `&&` (#4245).
+    const nx = pastLineContinuations(str, i + 1); // the operator's second char
+    if (ch === '&' && str[nx] === '&') { cut(i); i = nx; continue; }
+    if (ch === '|' && str[nx] === '|') { cut(i); i = nx; continue; }
     // `>|` is bash's noclobber-override redirect operator, not a pipe — a
     // glued `|` immediately after `>` (#3080) must not fabricate a segment
     // break here, or the operator token never reaches the tokenizer whole.
@@ -129,11 +138,19 @@ function segmentSpansWith(str, spans) {
     // recognized at a word boundary (start of string, or immediately after
     // whitespace/a separator) to match bash's own rule: `#` glued to
     // preceding non-whitespace text (e.g. `foo#bar`) is NOT a comment.
-    if (ch === '#' && (i === 0 || /[\s;&|]/.test(str[i - 1]))) {
-      let j = i + 1;
-      while (j < str.length && str[j] !== '\n') j++;
-      i = j - 1; // for-loop's i++ lands exactly on the newline (or end of string)
-      continue;
+    // The character before `#` is read from `current` with its trailing backslash-newlines dropped,
+    // not from `str`: bash removes them before it splits words, so `a\<nl>#x` is the word `a#x`, not
+    // a comment (#4245). A bare newline always cuts, so a newline left in `current` is always the
+    // second half of an escape pair. A cut leaves `current` empty, which is a word start.
+    if (ch === '#') {
+      let k = current.length;
+      while (k >= 2 && current[k - 1] === '\n' && current[k - 2] === '\\') k -= 2;
+      if (k === 0 || /[\s;&|]/.test(current[k - 1])) {
+        let j = i + 1;
+        while (j < str.length && str[j] !== '\n') j++;
+        i = j - 1; // for-loop's i++ lands exactly on the newline (or end of string)
+        continue;
+      }
     }
     current += ch;
   }
@@ -778,7 +795,9 @@ function forEachCommandSegment(command, cwd, handler, opts) {
 // the value it appends to. As for isAssignmentWord (#4281), the name and its `=` (or `+=`) must
 // be bare: `"x"=1 cd M` and `A\=x cd M` run the command `x=1` or `A=x` and never change directory.
 const WORD_OPENERS = { '(': 'c', '{': 'p', '[': 'a' };
-const ASSIGNMENT_WORD_RE = /^[A-Za-z_][A-Za-z0-9_]*\+?=.*$/; // SIMPLE_ASSIGNMENT_RE, plus `+=`
+// A subscripted name (`a[0]=1`, `a[0]+=1`) is an assignment word too: bash 3.2 and 5 strip it and run
+// the command after it (bash 5 prints `a[0]: not a valid identifier` first; zsh refuses the line).
+const ASSIGNMENT_WORD_RE = /^[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]=]*\])?\+?=.*$/; // SIMPLE_ASSIGNMENT_RE, plus `+=` and a subscript
 function assignmentWordEnd(rawT, spanKinds, i) {
   if (i >= rawT.length || !isAssignmentWord(rawT[i], spanKinds[i], ASSIGNMENT_WORD_RE)) return i;
   let stack = '';
@@ -805,50 +824,330 @@ function assignmentWordEnd(rawT, spanKinds, i) {
   return i;
 }
 
+// #4448: the words bash strips before the command word it runs, besides assignment words (a word
+// shape, read by assignmentWordEnd) and redirections (redirectionWidth). The record's "Scope under
+// ADR 0028" list, pinned by tests/hooks-gate-coverage.test.js; exported with commandWord so a later
+// recogniser reuses the one reading rather than retyping it. Two older lists name overlapping words
+// for their own walks: READER_WRAPPER_WORDS (heredoc readers) and COMMAND_PREFIX_WORDS (reserved
+// words that resume command position); a new prefix word belongs here, and in those only if their
+// walk needs it.
+const STRIPPED_PREFIX_WORDS = Object.freeze(['!', 'builtin', 'command', 'doas', 'env', 'exec', 'nice', 'nohup', 'sudo', 'time']);
+// The ones that are programs on PATH too, so a path-qualified spelling (`/usr/bin/nice`) strips as
+// well, as findGitLead's lead matches `/git`.
+const PATH_PREFIX_WORDS = Object.freeze(['doas', 'env', 'nice', 'nohup', 'sudo', 'time']);
+// The ones that run a following `cd` builtin in the current shell (commandWord's `shellOnly`).
+const SHELL_PREFIX_WORDS = Object.freeze(['!', 'builtin', 'command', 'time']);
+
+// #4244 (ADR 0028): the compound keywords that structure a list. commandWord skips only those a command
+// follows, the shared COMPOUND_LEAD_WORDS set (#4281); `in` follows `for NAME` or `case WORD` and is never
+// a command-position word. The prefixes `!`/`time` and the cd forms are other records'. The tests pin
+// this list and which of its words commandWord skips.
+const COMPOUND_KEYWORDS = Object.freeze(['if', 'then', 'elif', 'else', 'fi', 'while', 'until', 'for', 'do', 'done', 'case', 'esac', 'in']);
+
+// How each prefix word reads its options, each per its own manual (bash's builtins, GNU and BSD
+// env/nice/time, sudo(8), doas(1)): `value` the short letters that take a value (readShortCluster),
+// `stop` the short letters after which no command runs from a known cwd (a lookup, a shell, an
+// opaque string: commandWord returns -1), `chdir` the short letter whose value moves the cwd, `long`
+// each long option by name (getopt's unique-prefix rule, longOptionName) as 'value', 'chdir', 'stop'
+// or 'flag' (a value only with `=`; an unknown or ambiguous one reads as a flag too, one word),
+// `dash` a lone `-` read as an option (env's `-i`), `assignments` the VAR=value words read after
+// the options (env, sudo), and `known` the only other letters a builtin accepts: any other option
+// is a usage error that runs nothing (bash 3.2, 5 and zsh for `command -x cd M`, `command --x cd
+// M`), so it reads as a `stop` too. Any other short cluster is a switch, one word: nice's obsolete `-N`
+// (`nice -5`) reads that way. `!` reads no option and no `--`; builtin and nohup read `--` only (an
+// empty spec), so a dash word after them is the command word (`builtin -p` is a usage error).
+const PREFIX_OPTIONS = Object.freeze({
+  '!': null,
+  builtin: {},
+  nohup: {},
+  command: { stop: 'vV', known: 'p' },
+  exec: { value: 'a' },
+  nice: { value: 'n', long: { adjustment: 'value', help: 'flag', version: 'flag' } },
+  time: {
+    value: 'of',
+    long: { output: 'value', format: 'value', append: 'flag', verbose: 'flag', portability: 'flag', quiet: 'flag', help: 'flag', version: 'flag' },
+  },
+  doas: { value: 'aCu', stop: 'CsL' }, // doas(1): doas [-Lns] [-a style] [-C config] [-u user] command
+  env: {
+    value: 'CuSPLUa',
+    stop: 'SP',
+    split: 'S', // `-S word` / `--split-string word` with a plain word: env runs that word (splitCommandWord)
+    chdir: 'C',
+    dash: true,
+    assignments: true,
+    long: {
+      chdir: 'chdir', unset: 'value', 'split-string': 'stop', argv0: 'value', 'ignore-environment': 'flag', null: 'flag', debug: 'flag',
+      'list-signal-handling': 'flag', help: 'flag', version: 'flag', 'block-signal': 'flag', 'default-signal': 'flag', 'ignore-signal': 'flag',
+    },
+  },
+  sudo: {
+    value: 'aCcDghpRrTtUu',
+    stop: 'eRlvK',
+    chdir: 'D',
+    home: 'i', // `-i` / `--login` runs the command from the target user's home: a relative target is unprovable
+    assignments: true,
+    long: {
+      chdir: 'chdir', edit: 'stop', chroot: 'stop', login: 'home', list: 'stop', validate: 'stop', 'remove-timestamp': 'stop',
+      'auth-type': 'value', 'close-from': 'value', group: 'value', host: 'value', 'login-class': 'value', prompt: 'value', role: 'value',
+      type: 'value', 'command-timeout': 'value', 'other-user': 'value', user: 'value', askpass: 'flag', background: 'flag', bell: 'flag',
+      'preserve-env': 'flag', 'set-home': 'flag', help: 'flag', 'non-interactive': 'flag', 'preserve-groups': 'flag',
+      'reset-timestamp': 'flag', stdin: 'flag', shell: 'flag', version: 'flag',
+    },
+  },
+});
+
+// The string of env's `-S` that names one program with no argument of its own (splitCommandWord).
+const PLAIN_SPLIT_WORD_RE = /^[A-Za-z0-9_./+@%][A-Za-z0-9_./+@%-]*$/;
+
+// The long option `word` (`--name` or `--name=value`) names among `names`, by getopt's rule: an
+// exact name, or a prefix of exactly one. null when unknown or ambiguous.
+function longOptionName(word, names) {
+  const eq = word.indexOf('=');
+  const name = word.slice(2, eq === -1 ? word.length : eq);
+  if (names.includes(name)) return name;
+  const hits = names.filter((n) => n.startsWith(name));
+  return hits.length === 1 ? hits[0] : null;
+}
+
+// #4448: the command word bash runs in segment `t` (its values; `quoting` is the walk's `{ raw,
+// spanKinds, leadQuoted, pathImpl }`, and with none every word reads bare, tokenQuoting), read from
+// `dir` (the segment's cwd). Every assignment word
+// (assignmentWordEnd) and redirection (redirectionWidth) is skipped, then a bare COMPOUND_LEAD_WORDS
+// keyword (#4244, not under `shellOnly`) or each STRIPPED_PREFIX_WORDS
+// word with its options (PREFIX_OPTIONS), and the loop runs again. Returns `{ index, dir, unprovable,
+// split }`: `index` is the command word's, or -1 when no word is left or a `stop` option is read; `dir` the
+// cwd it runs in (env -C, sudo -D), and `unprovable` true when such a value cannot be resolved (dir
+// then kept). A prefix word is matched on its value, so a quoted or escaped one strips too: bash
+// runs `\time` as /usr/bin/time and `co\mmand` as command, and the rare one it runs as a command
+// name (`\!`, `X=1 !`) only adds a target, the fail-closed side. A redirection among the prefix
+// words or their options is skipped wherever it sits, as bash removes it before the words are read
+// (`nice >g -n 5 cp …` runs cp).
+//
+// `shellOnly` reads only the prefixes that run a following `cd` builtin in the current shell
+// (SHELL_PREFIX_WORDS), for visitSegment's cd lead, where reading too much is a leak too: following
+// a cd bash never runs moves the walk away from the cwd a later write lands in. So there `!` and
+// `time` count only as reserved words (bare spelling, at the command's start or after another
+// reserved word: bash 3.2, 5 and zsh run `\time cd`, `X=1 time cd`, `>g ! cd` and `command time cd`
+// as an external program or a missing command, which changes no cwd), the `time` keyword reads one
+// `-p` and a `--` (`time -l cd` runs `-l`), and no path-qualified word strips (`/usr/bin/command` is
+// a script), and after `builtin` or `command` an assignment word is the command name (`command X=1
+// cd /x` runs `X=1`, so its cd never runs). `dir` never moves there. Where the bash versions split on reaching the command word,
+// `split` is true on the returned command word: bash 5 reads `time`'s `--` as an option end, a
+// reserved word after `!` (`! time`, `! !`; zsh too for `! time`) and a `time` after `time` (`time
+// time`), while bash 3.2 runs `--` or the second word as a command (zsh runs `--` and the second
+// `time` too). visitSegment then walks on under the cwd before such a cd and the cwd after it,
+// failing closed for whichever shell runs the command. `split` is false on an index of -1.
+function commandWord(t, quoting, dir, { shellOnly = false } = {}) {
+  const { raw, spanKinds, leadQuoted, pathImpl = path } = quoting || tokenQuoting(t, path);
+  let unprovable = false;
+  let reserved = true; // shellOnly: still where bash reads `!` and `time` as reserved words
+  let afterBang = false; // shellOnly: a `!` was read, after which only bash 5 and zsh read another reserved word
+  let afterTime = false; // shellOnly: a `time` was read, after which only bash 5 reads another `time`
+  let split = false; // shellOnly: the bash versions disagree on whether the command word is reached
+  let afterBuiltin = false; // shellOnly: a builtin or command was read, after which an assignment word is the command name
+  const skipRedirections = (i) => {
+    for (let width; i < t.length && (width = redirectionWidth(raw[i], spanKinds[i], leadQuoted[i])) > 0;) {
+      i += width;
+      reserved = false;
+    }
+    return i;
+  };
+  const noCommand = () => ({ index: -1, dir, unprovable, split: false }); // no word left, or a `stop` option read
+  // A repeated chdir option of one prefix keeps the last value only, resolved from the cwd the prefix
+  // started in (GNU env's `-C /tmp -C ..` runs in the parent of that cwd, not of /tmp): `chdirBase` and
+  // `unprovableBase` are the walk's state when the current prefix word began.
+  let chdirBase = dir;
+  let unprovableBase = false;
+  const chdir = (value) => {
+    if (value === undefined) return;
+    const next = resolveCd(chdirBase, value, pathImpl);
+    unprovable = next === null || unprovableBase;
+    if (next !== null) dir = next;
+  };
+  // env's `-S`/`--split-string` read from `at` (the index of its string): a plain word with no blank,
+  // quote, `$`, `=` or leading `-` is the one word env splits out and runs, with the rest of the line as
+  // its arguments (`env -S git commit -m x` runs git commit -m x), so the command word is that word,
+  // read again as any word. Any other string is opaque (-1).
+  const splitCommandWord = (at) => {
+    const j = skipRedirections(at);
+    return j < t.length && PLAIN_SPLIT_WORD_RE.test(t[j]) ? j : -1;
+  };
+  let i = 0;
+  outer: for (;;) {
+    for (;;) {
+      i = skipRedirections(i);
+      const next = assignmentWordEnd(raw, spanKinds, i);
+      if (next === i) break;
+      // bash 3.2, 5 and zsh run it as a command (`command X=1 cd /x`: `X=1: command not found`).
+      if (afterBuiltin) return { index: i, dir, unprovable, split };
+      i = next;
+      reserved = false;
+    }
+    if (i >= t.length) return noCommand();
+    const word = t[i];
+    // A bare compound keyword at command position (`then cp x /M/b`) is no command: the one after it is.
+    // The cd lead (shellOnly) leaves them: a cd in a body is #4572's. The set's `!` is a stripped prefix
+    // too (PREFIX_OPTIONS null), so reading it here changes nothing.
+    if (!shellOnly && COMPOUND_LEAD_WORDS.has(word) && raw[i] === word && spanKinds[i] === 'b'.repeat(word.length)) {
+      i += 1;
+      continue;
+    }
+    let name = STRIPPED_PREFIX_WORDS.includes(word) ? word : null;
+    if (name === null && !shellOnly && word.includes('/')) {
+      const base = word.slice(word.lastIndexOf('/') + 1);
+      if (PATH_PREFIX_WORDS.includes(base)) name = base;
+    }
+    if (shellOnly && name !== null) {
+      const isReserved = name === '!' || name === 'time';
+      const bare = raw[i] === word && spanKinds[i] === 'b'.repeat(word.length);
+      if (!SHELL_PREFIX_WORDS.includes(name) || (isReserved && !(reserved && bare))) name = null;
+      else if (isReserved && afterBang) split = true; // bash 3.2 runs it as a command (`! time`, `! !`)
+      else if (name === 'time' && afterTime) split = true; // bash 3.2 and zsh run /usr/bin/time (`time time`)
+    }
+    if (name === null) return { index: i, dir, unprovable, split };
+    i += 1;
+    if (shellOnly) {
+      if (name === 'time') {
+        afterTime = true;
+        i = skipRedirections(i);
+        if (t[i] === '-p') i = skipRedirections(i + 1);
+        if (t[i] === '--') {
+          i += 1;
+          split = true; // bash 5's option end; bash 3.2 and zsh run `--` as the command
+        }
+        continue;
+      }
+      if (name === '!') afterBang = true;
+      else {
+        reserved = false; // builtin and command: a `!` or `time` after them is a command name
+        afterBuiltin = true;
+      }
+    }
+    const spec = PREFIX_OPTIONS[name];
+    if (spec === null) continue;
+    chdirBase = dir;
+    unprovableBase = unprovable;
+    const longNames = Object.keys(spec.long || {});
+    for (;;) {
+      i = skipRedirections(i);
+      if (i >= t.length) break;
+      const w = t[i];
+      if (w === '--') { i += 1; break; }
+      if (w === '-' && spec.dash) { i += 1; continue; }
+      if (!w.startsWith('-') || w === '-' || (!spec.value && !spec.stop && !spec.long)) break;
+      const stops = spec.stop || '';
+      // A long option fails here too: its second `-` is no known letter.
+      if (spec.known !== undefined && [...w.slice(1)].some((c) => !spec.known.includes(c) && !stops.includes(c))) return noCommand();
+      if (w.startsWith('--')) {
+        const opt = longOptionName(w, longNames);
+        const kind = opt === null ? 'flag' : spec.long[opt];
+        if (kind === 'stop' && opt === 'split-string' && !w.includes('=')) {
+          const at = splitCommandWord(i + 1);
+          if (at === -1) return noCommand();
+          i = at;
+          continue outer;
+        }
+        if (kind === 'stop') return noCommand();
+        i += 1;
+        if (kind === 'home') unprovable = unprovableBase = true;
+        if (kind === 'flag' || kind === 'home') continue;
+        let value;
+        if (w.includes('=')) value = w.slice(w.indexOf('=') + 1);
+        else {
+          i = skipRedirections(i);
+          value = t[i];
+          i += 1;
+        }
+        if (kind === 'chdir') chdir(value);
+        continue;
+      }
+      const opt = readShortCluster(w, spec.value || '');
+      const valueLength = opt === null || opt.value === null ? 0 : opt.value.length;
+      const switches = opt === null ? w.slice(1) : w.slice(1, w.length - 1 - valueLength);
+      const switchStops = [...switches].some((c) => stops.includes(c));
+      if (opt !== null && opt.value === null && opt.letter === spec.split && !switchStops) {
+        const at = splitCommandWord(i + 1);
+        if (at !== -1) {
+          i = at;
+          continue outer;
+        }
+      }
+      if (switchStops || (opt !== null && stops.includes(opt.letter))) return noCommand();
+      i += 1;
+      if (spec.home !== undefined && ([...switches].includes(spec.home) || (opt !== null && opt.letter === spec.home))) unprovable = unprovableBase = true;
+      if (opt === null) continue;
+      let value = opt.value;
+      if (value === null) {
+        i = skipRedirections(i);
+        value = t[i];
+        i += 1;
+      }
+      if (opt.letter === spec.chdir) chdir(value);
+    }
+    if (spec.assignments) {
+      // env and sudo read a word with an `=` as an assignment; one that holds a substitution spans
+      // several tokens (`X=$(echo a)`), as for a bare prefix, so skip it whole (assignmentWordEnd).
+      for (i = skipRedirections(i); i < t.length; i = skipRedirections(i)) {
+        const end = assignmentWordEnd(raw, spanKinds, i);
+        if (end > i) i = end;
+        else if (t[i].includes('=')) i += 1;
+        else break;
+      }
+    }
+  }
+}
+
 // One segment of forEachShellSegment's walk, already tokenized (`tok`, from tokenize, and
 // `nestAt`, the nesting state at each token's start): updates `vars`, calls `handler` for a
-// non-assignment segment (a cd one included), and returns the effective cwd after it.
-function visitSegment(tok, nestAt, effCwd, vars, handler, pathImpl = path) {
+// non-assignment segment (a cd one included), and returns the effective cwds after it: one, or
+// two for a cd the bash versions split on (#4448, commandWord's `split`). The base-like walk
+// (`baseLike`, BASE_VIEW) splits none: base followed no split prefixed cd (a reserved word after `!`,
+// or `time --`; a `time cd /x` or `command cd /x` that does not split is still followed there), and
+// that walk's set grows only where base's grew (it has no join that caps it), so such a cd changes
+// no cwd there, as in base.
+function visitSegment(tok, nestAt, effCwd, vars, handler, pathImpl = path, baseLike = false) {
   const { typed, singleQuoted, doubleQuoted, leadQuoted } = tok;
   const { tokens: rawT, spanKinds } = settleStrayBackslash(tok.tokens, tok.spanKinds, pathImpl);
-  if (!rawT.length) return effCwd;
+  if (!rawT.length) return [effCwd];
   // An assignment word ended by a bare `<`/`>` (bareWordEnd) carries a redirect, so it still
   // reaches the handler; bash assigns before it expands that redirect (`A=f0; A=x>$A` writes x).
-  if (updateAssignment(vars, rawT, spanKinds[0]) && bareWordEnd(rawT[0], spanKinds[0]) === rawT[0].length) return effCwd;
+  if (updateAssignment(vars, rawT, spanKinds[0]) && bareWordEnd(rawT[0], spanKinds[0]) === rawT[0].length) return [effCwd];
   const t = substituteVars(rawT, vars, singleQuoted, spanKinds);
   // `FOO=1 cd /path` really does change the shell's cwd — a preceding
   // assignment on a regular (non-special) builtin like `cd` is scoped only
   // to that command's own execution environment, but `cd` has no
   // subprocess to scope the env change to, so it still runs and changes
-  // the CURRENT shell's cwd (verified empirically; #590). `env cd /path`
-  // is the opposite case and deliberately NOT normalized here: `env` execs
-  // an external `cd` binary that does not exist on a normal system, so it
-  // errors and never changes cwd — normalizing it would fabricate a target
-  // for a shape that has no real effect. An assignment is read from the raw word, whose
-  // spanKinds it is aligned with: bash decides it before any `$` expands (#4281).
-  let cdLead = 0;
-  for (;;) {
-    const next = assignmentWordEnd(rawT, spanKinds, cdLead);
-    if (next === cdLead) break;
-    cdLead = next;
-  }
+  // the CURRENT shell's cwd (verified empirically; #590). So do a redirection before it and the
+  // prefixes that run the `cd` builtin in the current shell, `builtin`, `command`, and the
+  // reserved words `!` and `time` (#4448, commandWord's `shellOnly`). `env cd /path`, `nice cd`
+  // and `exec cd` are the opposite case and deliberately NOT normalized here: `env` and `nice`
+  // exec an external `cd`, which never changes the shell's cwd, and `exec cd` finds no program,
+  // so normalizing them would fabricate a target for a shape that has no real effect. An
+  // assignment is read from the raw word, whose spanKinds it is aligned with: bash decides it
+  // before any `$` expands (#4281).
   const quoting = { raw: rawT, typed, singleQuoted, doubleQuoted, leadQuoted, spanKinds, nestAt, pathImpl };
+  const { index: cdLead, split } = commandWord(t, quoting, effCwd, { shellOnly: true });
   // #4281: bash applies a cd line's redirections before the builtin runs, so `cd sub > f1`
   // writes f1 in the cwd before the cd: the handler sees the cd segment under that cwd. Its
   // redirect words are no argument of cd (`cd > f1 sub` changes to sub). Only the words after
   // `cd` are read for them: an assignment word before it can span tokens that look like a
   // redirection (`x=$(echo >f) cd /m`, #4303), and dropping one there would shift the argument.
-  if (t[cdLead] === 'cd') {
-    const from = cdLead + 1;
+  // #4460: a redirect glued to the cd name (`cd>f`, `cd>>f`, `cd<f`, `cd&>f`) is the cd's own redirect, and the cd still runs.
+  // A quoted `>` after the `&` (`cd&\>f`) never gets here: the segment splitter already cut at that lone `&`.
+  const gluedCd = cdLead >= 0 && /^cd(?:[<>]|&>)/.test(rawT[cdLead]) && spanKinds[cdLead][2] === 'b';
+  if ((t[cdLead] === 'cd' || gluedCd) && !(split && baseLike)) { // an index of -1 reads undefined: no cd
+    // #4460: an operator that ends the glued token (`cd> f`, `cd>> f`, `cd&> f`) takes the next word as its target, not as the argument.
+    const from = cdLead + (gluedCd && /^cd(?:[<>]|&>)[<>&|]*$/.test(rawT[cdLead]) ? 2 : 1);
     // The word after `cd` is its argument unless it could start a redirection (dropRedirections'
     // lead test), the common case, which skips the slices.
     const arg = from >= t.length || leadQuoted[from] || !REDIRECTION_LEAD_RE.test(rawT[from]) ? t[from]
       : dropRedirections(t.slice(from), { raw: rawT.slice(from), leadQuoted: leadQuoted.slice(from), spanKinds: spanKinds.slice(from) })[0];
     handler(t, effCwd, quoting);
-    return resolveCd(effCwd, arg, pathImpl);
+    const moved = resolveCd(effCwd, arg, pathImpl);
+    return split ? [effCwd, moved] : [moved];
   }
   handler(t, effCwd, quoting);
-  return effCwd;
+  return [effCwd];
 }
 
 // Consumes every leading global git flag (-C <dir>, -c <k>=<v>, --exec-path,
@@ -903,65 +1202,44 @@ function skipGlobalFlags(t, i, dir, pathImpl = path) {
   return { index: i, dir, unprovable };
 }
 
-// Finds the real `git` command word in a segment's raw token array, looking
-// past three equivalent shapes a real shell treats identically to a bare
-// `git` invocation (#590):
-//   - leading `NAME=value` assignment tokens: `FOO=1 git commit -m x`
-//   - the `env` builtin, plus ITS OWN leading flags/assignments, ahead of the
-//     real command: `env git commit -m x`, `env -i git commit -m x`,
-//     `env FOO=1 git commit -m x`
+// Finds the real `git` command word in a segment's token array, through
+// commandWord (#4448), the one reading of what bash strips before the
+// command it runs (#590 began it with `env`):
+//   - assignment words: `FOO=1 git commit -m x`, `x+=1 git commit -m x`
+//     (a quoted or escaped name is the command word itself, so no git runs)
+//   - redirections: `>g git commit -m x`
+//   - STRIPPED_PREFIX_WORDS with their options: `env -i FOO=1 git commit`,
+//     `sudo -u bob git commit`, `time git commit`, `nohup git commit`, …
 //   - a directory-qualified executable ending in `/git`: `/usr/bin/git commit`
-// (any combination of the three also resolves, e.g. `FOO=1 /usr/bin/git …`
-// or `env FOO=1 /usr/bin/git …`.)
+// (any combination also resolves, e.g. `FOO=1 /usr/bin/git …` or
+// `env FOO=1 /usr/bin/git …`.)
+//
+// `quoting` is the walk's `{ raw, spanKinds, leadQuoted, pathImpl }`; a direct
+// caller passes none and a bare-word one is built from `t` (tokenQuoting).
 //
 // Returns `{ index, dir, unprovable }` — `index` is -1 when, after
 // normalization, the leading token still isn't `git` (ambiguity resolves to
 // "not git", the same never-fabricate-a-target posture as the rest of this
-// module). `dir` starts at the caller's effective cwd and moves when env's
-// own `-C <dir>` / `--chdir[=]<dir>` flag changes where the command runs —
-// skipping those flags without consuming their value made
-// `env -C <main-checkout> git commit` read as not-git at all (the dir token
-// became the presumed lead) and `env --chdir=/x git commit` resolve its
-// target against the wrong directory. `-u`/`--unset <name>` likewise
-// consumes its value so the name is never mistaken for the command word.
+// module), or when a prefix option leaves no readable command (`command -v
+// git`, `env -S`). `dir` starts at the caller's effective cwd and moves when
+// env's `-C`/`--chdir` or sudo's `-D`/`--chdir` changes where the command runs
+// (commandWord resolves it, `unprovable` when it cannot).
 // Still not full env(1) parsing (see #590's Gotchas): `-S`/`--split-string`
 // re-splits an opaque program string, which is statically unknowable — the
 // same deliberately-uncovered class as `sh -c`/`python -c` (see
 // fileWriteTargets' header) — so it falls through to the not-git default.
-function findGitLead(t, dir, pathImpl = path) {
-  let unprovable = false;
-  let i = 0;
-  while (i < t.length && SIMPLE_ASSIGNMENT_RE.test(t[i])) i += 1;
-  if (t[i] === 'env') {
-    i += 1;
-    while (i < t.length) {
-      const tok = t[i];
-      if (SIMPLE_ASSIGNMENT_RE.test(tok)) { i += 1; continue; }
-      if (tok === '-' || !tok.startsWith('-')) break;
-      // Both spellings env accepts: separate value (`-C <dir>`, `--chdir <dir>`)
-      // and attached value (`-C<dir>`, `--chdir=<dir>`). Skipping the attached
-      // short form as a generic flag left the resolved dir at the caller's cwd
-      // while git was still detected as lead — the same silent-allow bypass as
-      // the separate form, one spelling over.
-      if (tok === '-C' || tok === '--chdir' || tok.startsWith('--chdir=') || (tok.startsWith('-C') && tok.length > 2)) {
-        const attached = tok.startsWith('--chdir=') ? tok.slice('--chdir='.length)
-          : tok.startsWith('-C') && tok.length > 2 ? tok.slice(2)
-          : null;
-        const raw = attached !== null ? attached : t[i + 1];
-        const resolved = resolveCd(dir, raw, pathImpl);
-        if (resolved === null) unprovable = true;
-        else dir = resolved;
-        i += attached !== null ? 1 : 2;
-        continue;
-      }
-      if (tok === '-u' || tok === '--unset') { i += 2; continue; }
-      i += 1;
-    }
-  }
-  if (i >= t.length) return { index: -1, dir, unprovable };
-  const lead = t[i];
-  if (lead === 'git' || lead.endsWith('/git')) return { index: i, dir, unprovable };
-  return { index: -1, dir, unprovable };
+function findGitLead(t, dir, pathImpl = path, quoting = null) {
+  const { index, dir: leadDir, unprovable } = commandWord(t, quoting || tokenQuoting(t, pathImpl), dir);
+  if (index === -1) return { index: -1, dir: leadDir, unprovable };
+  const lead = t[index];
+  if (lead === 'git' || lead.endsWith('/git')) return { index, dir: leadDir, unprovable };
+  return { index: -1, dir: leadDir, unprovable };
+}
+
+// The quoting findGitLead falls back on when a direct caller passes none: every character of `t`
+// bare and no word lead-quoted, so commandWord reads the words as typed (#4448).
+function tokenQuoting(t, pathImpl) {
+  return { raw: t, spanKinds: t.map((w) => 'b'.repeat(w.length)), leadQuoted: t.map(() => false), pathImpl };
 }
 
 // Shared findGitLead -> skipGlobalFlags preamble: resolves one command
@@ -975,8 +1253,8 @@ function findGitLead(t, dir, pathImpl = path) {
 // callers instead of drifting between two hand-kept copies — the exact gap
 // #1308 closed for teardownTargets, which used to skip this preamble
 // entirely and check a bare `toks[0] !== 'git'` instead.
-function resolveGitCommand(t, effCwd, pathImpl = path) {
-  const lead = findGitLead(t, effCwd, pathImpl);
+function resolveGitCommand(t, effCwd, pathImpl = path, quoting = null) {
+  const lead = findGitLead(t, effCwd, pathImpl, quoting);
   if (lead.index === -1) return null;
   const { index, dir, unprovable } = skipGlobalFlags(t, lead.index + 1, lead.dir, pathImpl);
   if (lead.unprovable || unprovable || dir === null) return null;
@@ -1027,7 +1305,7 @@ function resolvedGitSegments(command, cwd, opts) {
     let pieceStart = 0; // where the current piece's first-cwd visit began pushing
     forEachCommandSegment(command, cwd, (t, effCwd, quoting, again) => {
       if (!again) pieceStart = segments.length;
-      const resolved = resolveGitCommand(t, effCwd, quoting.pathImpl);
+      const resolved = resolveGitCommand(t, effCwd, quoting.pathImpl, quoting);
       if (!resolved) return;
       // A repeat visit under another cwd (after a brace group) that resolves to the same dir adds nothing.
       if (again && segments.slice(pieceStart).some((s) => s.dir === resolved.dir && s.index === resolved.index && s.lost === resolved.lost)) return;
@@ -1378,6 +1656,10 @@ function processKillByName(command, cwd) {
 // `sed -i` bypass the gate silently for months (#70). The differential corpus in
 // tests/hooks-bash-prefilter.test.js pins the pairing against this parser (#3092).
 //
+// A shape's command word is the one bash runs (commandWord, #4448): read past assignment words,
+// redirections and the stripped prefixes (`sudo cp …`, `X=1 tee …`, `nice -n 5 cp …`), with its
+// relative targets resolved in the cwd `env -C`/`sudo -D` gives it.
+//
 // Still NOT covered, and deliberately (see the coverage block in
 // skills/_shared/policy-schema-coverage.md for the measured rationale):
 //   - `python -c`, `sh -c`, `awk` program strings — the write target lives
@@ -1459,7 +1741,10 @@ function matchRedirectOperator(tok) {
 // because any program not named here (a shell, `make -f -`, `at`, a glob-named
 // `/bin/ba[s]h`) may run the body as commands, and the set of those cannot be listed.
 const DATA_READER_WORDS = new Set(['cat', 'tee', 'git', 'gh', 'read', 'node', 'python', 'python3', 'jq', 'wc']);
-// Commands that run what follows them: followed to the program they run.
+// Commands that run what follows them: followed to the program they run. Its own heredoc walk, not
+// the commandWord reader: it lacks `!` and `builtin` and reads fewer options, and a body is kept
+// whenever the walk is unsure. STRIPPED_PREFIX_WORDS (#4448) is the write gate's list of the same
+// kind of word; moving this walk onto it is separate work (#4448's tiebreak ruling, a filed record).
 const READER_WRAPPER_WORDS = new Set(['sudo', 'doas', 'env', 'nice', 'time', 'nohup', 'command', 'exec']);
 // `env` options that choose the program it runs: -S/--split-string re-splits a string into a
 // command line, -P searches another PATH. Matched in a short-option cluster too (`-iS…`).
@@ -1927,7 +2212,9 @@ const CONTINUATION_RE = /(?:\|\||&&|\|)\s*(?:#.*)?$/;
 
 // Reserved words that open a compound command, keyed to the word that closes it.
 const COMPOUND_OPENERS = new Map([['if', 'fi'], ['for', 'done'], ['while', 'done'], ['until', 'done'], ['select', 'done'], ['case', 'esac']]);
-// Reserved words after which the next word is again at command position.
+// Reserved words after which the next word is again at command position. Not the stripped prefixes
+// (STRIPPED_PREFIX_WORDS, which the write gate reads past): `builtin` and `command` are not reserved
+// words and stay out of this set, which only marks where a structure opened on a heredoc line resumes.
 const COMMAND_PREFIX_WORDS = new Set(['if', 'while', 'until', 'then', 'do', 'else', 'elif', '!', 'time']);
 
 // True when the logical line `line` leaves a structure open at its end, so a later line
@@ -2032,8 +2319,9 @@ const KNOWN_SHELL_WORDS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'mksh', '
 //           opener's index in the outer text, `shell` whether a token on the line names a
 //           KNOWN_SHELL_WORDS program), because a structure is open (`lineOpen`:
 //           left open on an earlier line or on this one), the line feeds them to
-//           something other than a known data reader, the line continues, or an
-//           unquoted body expands `$(` or a backtick; `end` is the index after the last;
+//           something other than a known data reader, the line continues, an
+//           unquoted body expands `$(` or a backtick, or a heredoc's `$( … )` closed on
+//           its opener line (`sameLineClose`, #4246); `end` is the index after the last;
 //   strip - every body is data; `end` is the index after the last one.
 function planHeredocBodies(str, start, pending, lineText, lineOpen) {
   const bodies = [];
@@ -2044,7 +2332,10 @@ function planHeredocBodies(str, start, pending, lineText, lineOpen) {
     bodies.push({ h, text: body.text });
     p = body.end;
   }
-  const keep = lineOpen || CONTINUATION_RE.test(lineText) || !lineFeedsOnlyDataReaders(lineText);
+  // #4246: bash 3.2 and zsh run a same-line-closed heredoc's would-be body as commands, so the
+  // line's bodies are all kept (scanned as commands) whatever reads them; a mixed line such as
+  // `cat $(cat <<A) <<B` keeps B's too, a spurious deny the scan accepts.
+  const keep = lineOpen || pending.some((h) => h.sameLineClose) || CONTINUATION_RE.test(lineText) || !lineFeedsOnlyDataReaders(lineText);
   const expands = bodies.some(({ h, text }) => !h.quoted && /\$\(|`/.test(text));
   if (keep || expands) {
     const shell = tokenize(lineText).typed.some((tok) => programNames(tok).some((n) => KNOWN_SHELL_WORDS.has(n)));
@@ -2054,8 +2345,8 @@ function planHeredocBodies(str, start, pending, lineText, lineOpen) {
 }
 
 // The single char-level pass behind stripHeredocBodies. Quote, escape, and comment
-// handling mirror splitSegments, so a `<<` inside quotes or after a word-boundary
-// `#` is never an opener. Every terminated body is cut out of the outer text with its
+// handling mirror splitSegments, so a `<<` inside quotes, inside a closed `${ … }` with no `$(`, or after a
+// word-boundary `#` is never an opener. Every terminated body is cut out of the outer text with its
 // closing line, so the outer scan resumes after the delimiter with fresh quote state and
 // never plans an opener inside a body; a kept body is returned as its own chunk.
 function scanHeredocs(str) {
@@ -2073,7 +2364,9 @@ function scanHeredocsWith(str, spans) {
   let quote = null;
   // Each open `"$( … )"` substitution (#4210): its paren depth and where its own text starts. A
   // heredoc opened inside one is planned against that text (`cat <<'EOF'`), never the outer line,
-  // since the substitution's command is the one that reads the body.
+  // since the substitution's command is the one that reads the body. #4246 adds a frame for each
+  // open unquoted `$( … )` too (`dq: false`), only so a heredoc can tell its substitution closed on
+  // the opener line; it leaves the planned line text as before.
   const subs = [];
   // Parens left open by a `((` or `$((`: `((` opens two and every single paren inside counts, so
   // `((cd x && ls) | cat)` (bash's nested-subshell reading) closes at its final `)`. It spans
@@ -2083,6 +2376,12 @@ function scanHeredocsWith(str, spans) {
   let pending = []; // heredocs opened on the current logical line, in order
   let sticky = false; // a structure was left open on an earlier line: keep every later body
   let lineStart = 0;
+  let param; // the `${ … }` span read at the current `$`
+  // #4246: each closed `${ … }` read a character at a time because it holds a `$(`: its end and the
+  // frame count when it opened. A `<<` with no frame opened since is the span's own text, not an
+  // opener; one inside its substitution is. An entry the scan has passed is popped when next read.
+  const params = [];
+  const popParams = () => { while (params.length && params[params.length - 1].end <= i) params.pop(); };
   let i = 0;
   while (i < str.length) {
     const ch = str[i];
@@ -2099,7 +2398,7 @@ function scanHeredocsWith(str, spans) {
       // is found, and its body no longer reads as quotes. `subs` holds one paren depth per
       // open substitution; the `)` that closes the last one returns to the double quote.
       emit('$(');
-      subs.push({ depth: 1, start: i + 2 });
+      subs.push({ depth: 1, start: i + 2, dq: true, dqStart: i + 2, heredocs: [] });
       quote = null;
       i += 2;
     } else if (quote === '"') {
@@ -2132,7 +2431,10 @@ function scanHeredocsWith(str, spans) {
       emit(str.slice(i, j));
       i = j;
     } else if (ch === '\n') {
-      const lineText = str.slice(subs.length ? Math.max(lineStart, subs[subs.length - 1].start) : lineStart, i);
+      // #4246: only a `"$( … )"` frame narrows the planned text; an unquoted one plans as before.
+      // Each frame carries the innermost `"$(` frame's start (`dqStart`), so this reads it in O(1).
+      const dqStart = subs.length ? subs[subs.length - 1].dqStart : null;
+      const lineText = str.slice(dqStart !== null ? Math.max(lineStart, dqStart) : lineStart, i);
       i += 1;
       emit(ch);
       sticky = sticky || lineLeavesStructureOpen(lineText);
@@ -2147,6 +2449,29 @@ function scanHeredocsWith(str, spans) {
       }
       pending = [];
       lineStart = i;
+    } else if (ch === '$' && str[i + 1] === '{' && (param = spans.param(str, i + 2)).closed) {
+      // #4246: a closed `${ … }` is word text, so a `<<` inside it opens nothing out here. One that
+      // holds a `$(` is read a character at a time (its entry in `params` keeps its own `<<` text),
+      // so a heredoc inside that substitution is planned as any other. An unclosed one (or the flat
+      // reading, which never closes) falls through to the branches below.
+      if (str.slice(i, param.end).includes('$(')) {
+        popParams();
+        params.push({ end: param.end, subs: subs.length });
+        emit('${');
+        i += 2;
+      } else {
+        emit(str.slice(i, param.end));
+        i = param.end;
+      }
+    } else if (parenDepth === 0 && ch === '$' && str[i + 1] === '(' && str[i + 2] !== '(') {
+      // #4246: an unquoted `$( … )` opens a frame, so a heredoc opened inside it knows when its
+      // substitution closes (the `)` branch below). `quote` is always null here: the branches
+      // above take every character inside quotes. Inside an open `((`/`$((` a `$(` opens no frame
+      // and its parens count toward parenDepth, as before #4246, since that branch takes every `)`.
+      // `$((` is arithmetic and stays with parenDepth.
+      emit('$(');
+      subs.push({ depth: 1, start: i + 2, dq: false, dqStart: subs.length ? subs[subs.length - 1].dqStart : null, heredocs: [] });
+      i += 2;
     } else if (ch === '$' && str[i + 1] === '[') {
       bracketDepth += 1;
       emit('$[');
@@ -2171,8 +2496,15 @@ function scanHeredocsWith(str, spans) {
     } else if (subs.length > 0 && (ch === '(' || ch === ')')) {
       subs[subs.length - 1].depth += ch === '(' ? 1 : -1;
       if (subs[subs.length - 1].depth === 0) {
-        subs.pop();
-        quote = '"';
+        const popped = subs.pop();
+        if (popped.dq) quote = '"';
+        // #4246: a heredoc opened inside a `$( … )` that closes on its opener line has no body to
+        // bash 3.2 and zsh, which run the lines after it as commands, while bash 5 reads them as
+        // its body. Marked here so planHeredocBodies keeps every body on the line: each would-be
+        // body is scanned as commands, and the outer scan still resumes after the delimiter. The
+        // frame lists its own heredocs, so this costs one step per heredoc; one opened on an earlier
+        // line is marked too, harmlessly, since its line was planned already.
+        for (const h of popped.heredocs) h.sameLineClose = true;
       }
       emit(ch);
       i += 1;
@@ -2180,14 +2512,18 @@ function scanHeredocsWith(str, spans) {
       emit('<<<'); // a here-string is never a heredoc
       i += 3;
     } else if (ch === '<' && str[i + 1] === '<') {
-      // A `<<` inside an open `((...))` or `$[...]` is an arithmetic shift, not an opener.
-      const h = parenDepth === 0 && bracketDepth === 0 ? readHeredocOpener(str, i + 2) : null;
+      // A `<<` inside an open `((...))` or `$[...]` is an arithmetic shift, not an opener; one in a
+      // `${ … }`'s own text (no frame opened since, #4246) is literal text.
+      popParams();
+      const inParam = params.length > 0 && params[params.length - 1].subs === subs.length;
+      const h = parenDepth === 0 && bracketDepth === 0 && !inParam ? readHeredocOpener(str, i + 2) : null;
       if (h && h.unprovable) {
         emit(str.slice(i));
         break;
       }
       if (h) {
         h.at = outLen;
+        if (subs.length) subs[subs.length - 1].heredocs.push(h); // #4246: the substitution it was opened in
         emit(str.slice(i, h.end));
         pending.push(h);
         i = h.end;
@@ -2565,8 +2901,10 @@ function closesDoubled(match, str, open, from = 0) {
 // `handler` gets a fourth argument, true on every visit of the piece after the first, so a
 // consumer can drop a target that does not depend on the cwd (`git -C /x`) the second time.
 // The piece is tokenized once; `nest.value` is the chunk's nesting state (advanceNesting,
-// #4210), read at the piece's start and advanced past it once, however many cwds visit it.
-function visitUnderEach(text, cwds, vars, handler, nest, pathImpl) {
+// #4210), read at the piece's start and advanced past it once, however many cwds visit it. A cd the
+// bash versions split on adds a cwd (#4448); the separator after the piece joins the set and
+// collapses it past CWD_SET_CAP, as it does for an `&&` list. `baseLike` is the walk's (visitSegment).
+function visitUnderEach(text, cwds, vars, handler, nest, pathImpl, baseLike) {
   const tok = tokenize(text.trim());
   const nestAt = tok.tokens.map((w, i) => {
     const at = nest.value;
@@ -2575,8 +2913,8 @@ function visitUnderEach(text, cwds, vars, handler, nest, pathImpl) {
   });
   const next = [];
   cwds.forEach((c, k) => {
-    const n = visitSegment(tok, nestAt, c, vars, k === 0 ? handler : (t, effCwd, quoting) => handler(t, effCwd, quoting, true), pathImpl);
-    if (!next.some((x) => sameCwd(x, n))) next.push(n);
+    const after = visitSegment(tok, nestAt, c, vars, k === 0 ? handler : (t, effCwd, quoting) => handler(t, effCwd, quoting, true), pathImpl, baseLike);
+    for (const n of after) if (!next.some((x) => sameCwd(x, n))) next.push(n);
   });
   return next;
 }
@@ -2696,7 +3034,8 @@ function separatorOp(outer, at) {
   const c = outer[at];
   if (c === '&') return '&&';
   if (c !== '|') return ';';
-  return outer[at + 1] === '|' ? '||' : '|';
+  // past any backslash-newline, as segmentSpansWith cuts `|\<nl>|` (#4245)
+  return outer[pastLineContinuations(outer, at + 1)] === '|' ? '||' : '|';
 }
 
 // The union of two cwd lists, collapsing to `overflow(union)` past CWD_SET_CAP.
@@ -2936,8 +3275,8 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
   // is dropped, as before the closer cut it (forgetting a name would drop the targets that use it).
   const nest = { value: NOT_NESTED }; // carried across this chunk's pieces in text order (#4210)
   const visitPiece = (ev, pieceCwds, pieceVars) => {
-    if (!ev.tail) return visitUnderEach(ev.text, pieceCwds, pieceVars, handler, nest, pathImpl);
-    const next = visitUnderEach(ev.text, pieceCwds, new Map(pieceVars), handler, nest, pathImpl);
+    if (!ev.tail) return visitUnderEach(ev.text, pieceCwds, pieceVars, handler, nest, pathImpl, baseLike);
+    const next = visitUnderEach(ev.text, pieceCwds, new Map(pieceVars), handler, nest, pathImpl, baseLike);
     return joinCwds(pieceCwds, next, overflow);
   };
   let b = 0;
@@ -3080,6 +3419,7 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
 // A keyword or opener counts only as a bare word (#4281): bash reserves no quoted or
 // escaped word, so `\[\[ x > f \]\]`, `"[[" x > f ]]` and `\if [[ x > f ]]` are commands
 // whose redirect runs. Given `quoting`, each word is read pre-substitution with its spanKinds.
+// processKillLead and commandWord (#4244) skip the same lead words: this set is their one copy.
 const COMPOUND_LEAD_WORDS = new Set(['if', 'elif', 'while', 'until', 'then', 'do', 'else', '!']);
 
 function compoundBodyEnd(t, quoting) {
@@ -3160,6 +3500,11 @@ function redirectRawTargets(t, quoting) {
     // (#4281), so an escaped or quoted `&` reads the same: `>\&2` and `> '&2'` write the file `&2`
     // (bash 3.2 and 5), so only a bare one counts. Without span kinds every `&` counts, as before.
     let ampOp = !kindsOf;
+    // #4460: whether the target's first character is a bare `(` in the source (false when a `$`
+    // expansion supplies it, as in `>$A`, or when the target is a word of its own, whose `(` a
+    // substitution cannot leave bare in any command bash parses); null when no span kinds are
+    // known, which reads every `(` as a process substitution, as before.
+    let bareParen = null;
     if (!kindsOf) {
       const op = matchRedirectOperator(t[i]);
       if (op) ({ plainFd, target: rawTarget } = op);
@@ -3188,6 +3533,7 @@ function redirectRawTargets(t, quoting) {
         // A substitution leaves the target's first character in place (substituteVars, above),
         // so it is `raw[opEnd]` on every branch; one a `$` put there is text too (`>$A`).
         ampOp = raw[opEnd] === '&' && kinds[opEnd] === 'b';
+        bareParen = raw[opEnd] === '(' && kinds[opEnd] === 'b';
       }
     }
     if (rawTarget === null) continue;
@@ -3211,13 +3557,16 @@ function redirectRawTargets(t, quoting) {
       if (word === '') {
         if (rawTarget !== whole) continue; // `>&)`: the word ends at the closer, a syntax error
         i += 1; // consume the word token too, as above
-        word = t[i] === undefined ? undefined : wordBeforeCloser(t[i], kindsAt(i));
-      }
+        targetKinds = kindsAt(i);
+        word = t[i] === undefined ? undefined : wordBeforeCloser(t[i], targetKinds);
+      } else if (targetKinds) targetKinds = targetKinds.slice(1);
       const stdout = plainFd === '' || Number(plainFd) === 1; // Number(null) is 0: not stdout
       if (word === undefined || !stdout || isFdDupTarget(word)) continue;
       rawTarget = word;
     }
-    if (rawTarget.startsWith('(')) continue;
+    // #4460: only a bare `(` opens a process substitution (`>(cat)`); a quoted or escaped one is file text.
+    // A `(` a `$` expansion put there is never bare (`A='(x'; echo x > $A` writes the file `(x`).
+    if (rawTarget.startsWith('(') && (targetKinds ? targetKinds[0] === 'b' : bareParen !== false)) continue;
     out.push(rawTarget);
   }
   return out;
@@ -3427,17 +3776,24 @@ const REDIRECTION_LEAD_RE = /^[\d&<>]/;
 function dropRedirections(tokens, { raw, leadQuoted, spanKinds }) {
   const out = [];
   for (let i = 0; i < tokens.length; i += 1) {
-    if (leadQuoted[i] || !REDIRECTION_LEAD_RE.test(raw[i])) { out.push(tokens[i]); continue; }
-    const bare = [...raw[i]].map((c, j) => (spanKinds[i][j] === 'b' ? c : '\0')).join('');
-    if (bare.startsWith('<<')) {
-      if (/^<<<?-?$/.test(bare)) i += 1;
-      continue;
-    }
-    const m = REDIRECTION_TOKEN_RE.exec(bare);
-    if (!m) { out.push(tokens[i]); continue; }
-    if (bare.length === m[0].length) i += 1;
+    const width = redirectionWidth(raw[i], spanKinds[i], leadQuoted[i]);
+    if (width === 0) out.push(tokens[i]);
+    else i += width - 1;
   }
   return out;
+}
+
+// How many words the redirection or heredoc operator in word `raw` takes (dropRedirections' reading
+// of one word, `kinds` its spanKinds and `leadQuoted` its tokenize flag): 0 when it is none, 1 for
+// one glued to its word (`>f`, `<<EOF`), 2 for a lone operator whose word is the next (`>`, `<<`,
+// `<<-`, `<<<`).
+function redirectionWidth(raw, kinds, leadQuoted) {
+  if (leadQuoted || !REDIRECTION_LEAD_RE.test(raw)) return 0;
+  const bare = [...raw].map((c, j) => (kinds[j] === 'b' ? c : '\0')).join('');
+  if (bare.startsWith('<<')) return /^<<<?-?$/.test(bare) ? 2 : 1;
+  const m = REDIRECTION_TOKEN_RE.exec(bare);
+  if (!m) return 0;
+  return bare.length === m[0].length ? 2 : 1;
 }
 
 function fileWriteTargets(command, cwd, opts) {
@@ -3445,16 +3801,25 @@ function fileWriteTargets(command, cwd, opts) {
   let reading = false; // the base-view walk's entries are base's readings (#4303)
   const visit = (tokens, effCwd, quoting) => {
     const { pathImpl } = quoting;
+    let at = effCwd; // where a target resolves: the segment's cwd, then the command's (below)
     const add = (action, raw) => {
-      const entry = writeTarget(action, effCwd, raw, pathImpl);
+      const entry = writeTarget(action, at, raw, pathImpl);
       if (entry) targets.push(reading ? { ...entry, reading: true } : entry);
     };
     // Redirection has no command word, so it runs for every segment
     // regardless of t[0] — never gated by the WRITE_SHAPES check below (#3080).
     for (const word of redirectRawTargets(tokens, quoting)) add('write', word);
+    // #4448: the shape is the command word bash runs, behind any stripped prefix; its relative
+    // targets resolve where that command runs (env -C, sudo -D), and nowhere when that is unprovable.
+    const lead = commandWord(tokens, quoting, effCwd);
+    if (lead.index === -1) return;
+    at = lead.unprovable ? null : lead.dir;
     // A heredoc/here-string operator is input and a redirection is reported above, so
     // neither is a file the shape writes.
-    const t = dropRedirections(tokens, quoting);
+    const from = lead.index;
+    const t = dropRedirections(tokens.slice(from), {
+      raw: quoting.raw.slice(from), leadQuoted: quoting.leadQuoted.slice(from), spanKinds: quoting.spanKinds.slice(from),
+    });
     if (!WRITE_SHAPES.includes(t[0])) return;
     if (t[0] === 'tee') {
       // tee genuinely writes to EVERY non-flag argument, not just the
@@ -3548,7 +3913,7 @@ function fileWriteTargets(command, cwd, opts) {
       if (creatingDirs) written = positionals;
       else if (positionals.length >= 2) written = positionals.slice(-1);
       for (const arg of written) {
-        add('install', arg);
+        add(creatingDirs ? 'install-d' : 'install', arg);
       }
       return;
     }
@@ -3623,10 +3988,13 @@ function mkdirTargets(command, cwd, opts) {
     let pieceStart = 0; // where the current piece's first-cwd visit began pushing
     forEachCommandSegment(command, cwd, (t, effCwd, quoting, again) => {
       if (!again) pieceStart = targets.length;
-      if (t[0] !== 'mkdir') return;
-      const { positionals } = partitionArgs(t.slice(1), MKDIR_VALUE_FLAGS);
+      // #4448: mkdir behind a stripped prefix (`sudo mkdir`, `env -C /m mkdir x`), as fileWriteTargets reads it.
+      const lead = commandWord(t, quoting, effCwd);
+      if (t[lead.index] !== 'mkdir') return; // an index of -1 reads undefined: no mkdir
+      const dir = lead.unprovable ? null : lead.dir;
+      const { positionals } = partitionArgs(t.slice(lead.index + 1), MKDIR_VALUE_FLAGS);
       for (const arg of positionals) {
-        const entry = writeTarget('mkdir', effCwd, arg, quoting.pathImpl);
+        const entry = writeTarget('mkdir', dir, arg, quoting.pathImpl);
         // A repeat visit under another cwd (after a brace group) adds an absolute path only once.
         if (entry && !(again && targets.slice(pieceStart).some((x) => x.file === entry.file && x.rel === entry.rel))) targets.push(entry);
       }
@@ -3639,8 +4007,144 @@ function mkdirTargets(command, cwd, opts) {
   return targets;
 }
 
+// #6143: `gh pr ready|merge` calls, for the in-flight-run merge gate. The program, group and verbs are
+// the one spelling the Bash prefilter's pre-tool-use reach rule reads too (bash-prefilter.js), so the
+// prefilter stays a superset of this parser.
+const GH_PR_LIFECYCLE = Object.freeze({ program: 'gh', group: 'pr', verbs: Object.freeze(['merge', 'ready']) });
+// The flags that take a value, per verb. A short one also takes it glued (`-Ro/r`).
+const GH_PR_VALUE_FLAGS = Object.freeze({
+  merge: Object.freeze(['-A', '--author-email', '-b', '--body', '-F', '--body-file', '--match-head-commit', '-t', '--subject', '-R', '--repo']),
+  ready: Object.freeze(['-R', '--repo']),
+});
+
+// The environment variables that pick the repository gh reads (#6143 review): a call's own literal
+// assignment prefix is carried into `env`; any other spelling of them makes the call `envUnprovable`.
+const GH_TARGET_ENV_MENTION_RE = /GH_(?:REPO|HOST)/gi;
+// pflag reads a `--flag=value` boolean with Go's strconv.ParseBool: these are its true spellings.
+const PFLAG_TRUE = new Set(['1', 't', 'T', 'TRUE', 'true', 'True']);
+
+// Every `gh pr merge|ready` call in `command`: `{ verb, selector, repo, undo, env, envUnprovable,
+// envCleared, cwd, lost }`. `selector` is the first positional after the verb (null when absent), `repo`
+// the -R/--repo value, `undo` true for a call that only cancels: `ready --undo`, or `merge
+// --disable-auto`, which only turns auto-merge off; bare or with a pflag true value (`=true`, `=1`, …),
+// the last spelling winning, so a false value (`=false`, `=0`, …) or one ParseBool refuses is no cancel.
+// `envCleared` is true when a prefix runs gh without (part of) the inherited environment: `env` with
+// `-i`/`--ignore-environment`/`-`/`-u`/`--unset` (or a unique abbreviation, getopt's rule), `exec -c`, or `sudo`/`doas` (both reset it by default). `env` holds the GH_REPO/GH_HOST values of the call's own literal
+// assignment prefix (`GH_REPO=o/r gh pr merge 5`), which gh reads in place of the cwd's repo.
+// `envUnprovable` is true when such a value cannot be known: an expansion or `+=` in the value, a
+// subscript, a prefix word (`env`, `sudo`) in front of the call, or any GH_REPO/GH_HOST text in the
+// command (any case) beyond the prefixes carried (`export GH_REPO=…;`, `env -u GH_HOST`, a quoted
+// mention). `cwd` is the segment's cwd; `lost` is true when the walk no longer knows it (#4303) or
+// a prefix's directory cannot be proved, and `cwd` is then a stand-in, taken from the first of: the
+// lost cwd's root (as resolveGitCommand reports it), else the unprovable prefix's directory, else the
+// walk's cwd (a lost one's root), else the `cwd` argument.
+function ghPrLifecycleCalls(command, cwd, opts) {
+  const calls = [];
+  let pieceStart = 0; // where the current piece's first-cwd visit began pushing
+  let carried = 0; // GH_REPO/GH_HOST prefix assignments carried, first visits only
+  forEachShellSegment(command, cwd, (tokens, effCwd, quoting, again) => {
+    if (!again) pieceStart = calls.length;
+    const lead = commandWord(tokens, quoting, effCwd);
+    if (lead.index === -1) return;
+    const from = lead.index;
+    const t = dropRedirections(tokens.slice(from), {
+      raw: quoting.raw.slice(from), leadQuoted: quoting.leadQuoted.slice(from), spanKinds: quoting.spanKinds.slice(from),
+    });
+    const { pathImpl } = quoting;
+    if (!t.length || pathImpl.basename(t[0]).toLowerCase().replace(/\.exe$/, '') !== GH_PR_LIFECYCLE.program) return;
+    if (t[1] !== GH_PR_LIFECYCLE.group || !GH_PR_LIFECYCLE.verbs.includes(t[2])) return;
+    const verb = t[2];
+    const valueFlags = GH_PR_VALUE_FLAGS[verb];
+    // The words before the command word: redirections, assignment words and prefix words (commandWord).
+    const env = {};
+    let envUnprovable = false;
+    let envCleared = false;
+    let prefixWord = false;
+    let prefixName = null; // the prefix word whose options are being read
+    let mine = 0;
+    for (let i = 0; i < from;) {
+      const width = redirectionWidth(quoting.raw[i], quoting.spanKinds[i], quoting.leadQuoted[i]);
+      if (width > 0) { i += width; continue; }
+      const end = assignmentWordEnd(quoting.raw, quoting.spanKinds, i);
+      if (end === i) {
+        prefixWord = true;
+        const w = tokens[i];
+        const base = pathImpl.basename(w);
+        if (STRIPPED_PREFIX_WORDS.includes(w) || PATH_PREFIX_WORDS.includes(base)) {
+          prefixName = STRIPPED_PREFIX_WORDS.includes(w) ? w : base;
+          if (prefixName === 'sudo' || prefixName === 'doas') envCleared = true;
+        } else if (prefixName === 'env' && (w === '-' || (w.startsWith('--') && ['ignore-environment', 'unset'].includes(longOptionName(w, Object.keys(PREFIX_OPTIONS.env.long)))) || /^-[^-]*[iu]/.test(w))) {
+          envCleared = true;
+        } else if (prefixName === 'exec' && /^-[^-]*c/.test(w)) {
+          envCleared = true;
+        }
+        i += 1;
+        continue;
+      }
+      const m = /^(GH_REPO|GH_HOST)=/.exec(quoting.raw[i]);
+      if (m && end === i + 1 && !/[$`]/.test(quoting.raw[i])) {
+        env[m[1]] = tokens[i].slice(m[1].length + 1);
+        mine += 1;
+      }
+      i = end;
+    }
+    if (prefixWord && mine > 0) envUnprovable = true;
+    if (!again) carried += mine;
+    let selector = null;
+    let repo = null;
+    let undo = false;
+    const rest = t.slice(3);
+    for (let i = 0; i < rest.length; i += 1) {
+      const a = rest[i];
+      if (a === '--') { if (selector === null && i + 1 < rest.length) selector = rest[i + 1]; break; }
+      if (a === '-' || !a.startsWith('-')) { if (selector === null) selector = a; continue; }
+      const cancel = /^--(undo|disable-auto)(?:=(.*))?$/.exec(a);
+      if (cancel && (cancel[1] === 'undo' || verb === 'merge')) {
+        // A false value, or one ParseBool refuses (gh then exits on the flag), is no cancel.
+        undo = cancel[2] === undefined || PFLAG_TRUE.has(cancel[2]);
+        continue;
+      }
+      let name;
+      let value = null;
+      if (a.startsWith('--')) {
+        const eq = a.indexOf('=');
+        name = eq === -1 ? a : a.slice(0, eq);
+        if (!valueFlags.includes(name)) continue;
+        value = eq === -1 ? null : a.slice(eq + 1);
+      } else {
+        // pflag reads a short cluster letter by letter: the first value flag takes the rest of the
+        // cluster (one leading `=` dropped) or, when nothing is left, the next word.
+        const at = [...a.slice(1)].findIndex((c) => valueFlags.includes(`-${c}`));
+        if (at === -1) continue;
+        name = `-${a[1 + at]}`;
+        const glued = a.slice(2 + at);
+        value = glued === '' ? null : glued.replace(/^=/, '');
+      }
+      if (value === null) { value = i + 1 < rest.length ? rest[i + 1] : ''; i += 1; }
+      if (name === '-R' || name === '--repo') repo = value;
+    }
+    const known = !lead.unprovable && lead.dir !== null && !(lead.dir instanceof LostCwd);
+    // A lost cwd's stand-in comes from the walk's own input (its root, or the cwd argument), never from
+    // the hook process's cwd.
+    const standIn = lead.dir instanceof LostCwd ? lead.dir.root : (typeof lead.dir === 'string' ? lead.dir : (effCwd instanceof LostCwd ? effCwd.root : (typeof effCwd === 'string' ? effCwd : String(cwd || '.'))));
+    const call = { verb, selector, repo, undo, env, envUnprovable, envCleared, cwd: known ? lead.dir : (pathImpl.isAbsolute(standIn) ? pathImpl.resolve(standIn) : standIn), lost: !known };
+    // A repeat visit under another cwd (after a brace group) that reads the same adds nothing.
+    if (again && calls.slice(pieceStart).some((c) => c.cwd === call.cwd && c.lost === call.lost && c.verb === verb && c.selector === selector)) return;
+    calls.push(call);
+  }, keepLost(opts));
+  // A GH_REPO/GH_HOST mention the carried prefixes do not account for may set what gh reads.
+  const mentions = (String(command).match(GH_TARGET_ENV_MENTION_RE) || []).length;
+  if (mentions > carried) for (const call of calls) call.envUnprovable = true;
+  return calls;
+}
+
 module.exports = {
+  GH_PR_LIFECYCLE, ghPrLifecycleCalls,
   gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, resolveWriteTarget, powershellOpaqueCommand, processKillByName, PROCESS_KILL_WORDS, WRITE_SHAPES, GUARDED_PROGRAM_WORDS, redirectWriteTargets, redirectRawTargets, stripHeredocBodies, forEachShellSegment, keepLost, PIPELINE_STATE_DIR, subjectLine, namesPipelinesSegment,
+  // The stripped command prefixes and their reader (#4448), reused by later recognisers.
+  STRIPPED_PREFIX_WORDS, commandWord,
+  // The compound keywords (#4244), reused by #4572's recogniser.
+  COMPOUND_KEYWORDS,
   // The heredoc reader vocabularies, pinned against policy-schema-coverage.md's prose (#4149).
   DATA_READER_WORDS, READER_WRAPPER_WORDS, GIT_DATA_SUBCOMMANDS, INERT_NEIGHBOUR_WORDS,
 };

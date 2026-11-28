@@ -48,6 +48,7 @@
 const fs = require('fs');
 const path = require('path');
 const { registerGenerator } = require('./focus-generators');
+const { locatePolicyFile } = require('../policy-file');
 
 // Autonomy values at which an agent acts without a human confirming each
 // step — the only values this vertical fires for (`_shared/autonomy-ceiling.md`).
@@ -123,7 +124,9 @@ function matchesAny(patterns, text) {
 // defaults, not project-configurable, since they name command/path shapes
 // generic to the tool ecosystem rather than a project-specific idiom.
 function scanAgentTrustScope(rootDir) {
-  const policyPath = path.join(rootDir, POLICY_REL);
+  // #4492: from a linked worktree of a project that gitignores policy.yml, the
+  // locator reads the main checkout's file instead of reporting "no policy".
+  const policyPath = locatePolicyFile(rootDir).path;
 
   if (!fs.existsSync(policyPath)) {
     return {

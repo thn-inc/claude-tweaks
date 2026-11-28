@@ -10,7 +10,7 @@ const { run: runChecklist } = require('../../../plugin/bin/pr-checklist');
 const { composePrEarlyBody } = require('../../../plugin/bin/lib/flow/pr-body');
 const { hasPrEarlyStep1LineFor, hasLoggedPrDegrade } = require('../../../plugin/bin/lib/hooks/pre-tool-use');
 const logDecision = require('../../../plugin/bin/log-decision');
-const { gitRepo } = require('../../helpers/git-fixtures');
+const { gitRepo, linkedWorktreeOf } = require('../../helpers/git-fixtures');
 const { readText } = require('../../helpers/read-skill');
 
 const RUN_ID = '2026-10-25T000001-record-4027';
@@ -248,6 +248,25 @@ test('AC2.1: a reused PR whose body field is absent cannot be judged: no gh pr e
   for (const h of [listed, recorded]) {
     assert.equal(h.calls.find((c) => c[0] === 'gh' && c[2] === 'edit'), undefined, 'no edit when the body was not read');
     assert.ok(!h.lines.some((l) => l.includes('rebound') || l.includes('rebind')));
+  }
+});
+
+test('#5358: a reused PR whose MCP-stripped body names this run is adopted, not rebound; naming another run it is still rebound', async () => {
+  const stripped = (b) => b.replace(/<!--[\s\S]*?-->/g, '');
+  const isEdit = (c) => c[0] === 'gh' && c[2] === 'edit';
+  const paths = (body) => [
+    harness({ list: [{ number: 7, url: URL7, state: 'OPEN', body }] }),
+    harness({ runState: { pr: { number: 9, url: URL7 } }, view: { state: 'OPEN', url: URL7, body } }),
+  ];
+  for (const h of paths(stripped(bodyFor(RUN_ID)))) {
+    await openPrEarly(OPTS, h.deps);
+    assert.equal(h.calls.find(isEdit), undefined, 'no edit for this run');
+    assert.ok(!h.lines.some((l) => l.includes('rebound') || l.includes('rebind')));
+  }
+  for (const h of paths(stripped(bodyFor(OTHER_RUN)))) {
+    await openPrEarly(OPTS, h.deps);
+    assert.equal(h.calls.filter(isEdit).length, 1, 'one edit for another run');
+    assert.ok(h.lines.some((l) => l.includes('rebound reused PR')));
   }
 });
 
@@ -685,7 +704,9 @@ test('the written line is byte-identical to what log-decision.js --section /buil
 
 // A run dir under a real git main checkout's .claude-tweaks/pipelines/. --run
 // is anchored strictly, so a dir outside every checkout is refused.
-function cliFixture({ policy = null, runState = null } = {}) {
+// linked: fx.wt is a real linked worktree of fx.root (the fake git then answers
+// `rev-parse --show-toplevel` with it, as real git would from inside a worktree).
+function cliFixture({ policy = null, runState = null, linked = false } = {}) {
   const root = gitRepo();
   created.push(root);
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', RUN_ID);
@@ -694,9 +715,14 @@ function cliFixture({ policy = null, runState = null } = {}) {
   if (runState) fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify(runState));
   const summaryFile = path.join(root, 'summary.md');
   fs.writeFileSync(summaryFile, 'A summary with `backticks` and $(dollar).\n');
+  if (linked) {
+    const wt = linkedWorktreeOf(root);
+    created.push(path.dirname(wt));
+    return { root, runDir, summaryFile, wt, top: wt };
+  }
   const wt = path.join(root, 'wt');
   fs.mkdirSync(wt);
-  return { root, runDir, summaryFile, wt };
+  return { root, runDir, summaryFile, wt, top: root };
 }
 
 function cliDeps(fx, { list = [], lists = null, create = `${URL42}\n`, push = null, ghAvailable = true, defaultBranch = 'main', view = null } = {}) {
@@ -727,13 +753,15 @@ function cliDeps(fx, { list = [], lists = null, create = `${URL42}\n`, push = nu
       calls.push(['git', ...args]);
       assert.equal(opts && opts.cwd, fx.wt);
       if (args[0] === 'branch' && args[1] === '--show-current') return `${BRANCH}\n`;
-      if (args[0] === 'rev-parse' && args[1] === '--show-toplevel') return `${fx.root}\n`;
+      if (args[0] === 'rev-parse' && args[1] === '--show-toplevel') return `${fx.top}\n`;
       if (args[0] === 'push') { if (push) throw push; return ''; }
       throw new Error(`unexpected git ${args.join(' ')}`);
     },
     sleep: async () => {},
     now: () => NOW,
     writeBodyFile: (name, text) => { const p = path.join(fx.root, name); fs.writeFileSync(p, text); return p; },
+    // #5902: realDeps carries the real emitter; undefined here is "no emission" unless a test records.
+    stationEvent: undefined,
     stdout: (s) => out.push(s),
     stderr: (s) => err.push(s),
   };
@@ -766,6 +794,35 @@ test('CLI: base falls back to the GitHub default branch when integration-branch 
   assert.equal(await run(cliArgv(fx), h.deps), 0, h.err.join(''));
   const createCall = h.calls.find(isCreate);
   assert.equal(createCall[createCall.indexOf('--base') + 1], 'trunk');
+  assert.equal(h.err.join(''), '', 'AC3.1: the main checkout prints no warning');
+});
+
+test("AC1.1: CLI from a linked worktree without policy.yml resolves base develop from the main checkout's policy", async () => {
+  const fx = cliFixture({ policy: 'integration-branch: develop\n', linked: true });
+  const h = cliDeps(fx);
+  assert.equal(await run(cliArgv(fx), h.deps), 0, h.err.join(''));
+  const createCall = h.calls.find(isCreate);
+  assert.equal(createCall[createCall.indexOf('--base') + 1], 'develop');
+  assert.equal(h.err.join(''), '');
+});
+
+test('AC4.1: CLI from a linked worktree with no integration-branch anywhere warns on stderr and still opens against the GitHub default', async () => {
+  const fx = cliFixture({ linked: true });
+  const h = cliDeps(fx, { defaultBranch: 'trunk' });
+  assert.equal(await run(cliArgv(fx), h.deps), 0, h.err.join(''));
+  const createCall = h.calls.find(isCreate);
+  assert.equal(createCall[createCall.indexOf('--base') + 1], 'trunk');
+  assert.equal(h.err.join(''), `pr-early-open.js: warning: no integration-branch found (this worktree's policy.yml, the main checkout's, or the run's config.yml) — the draft PR targets the GitHub default branch "trunk" from linked worktree ${fx.wt}\n`);
+  assert.deepEqual(JSON.parse(h.out.join('')), { outcome: 'opened', number: 42, url: URL42 });
+});
+
+test('CLI: an explicit --base from a linked worktree with no integration-branch never warns', async () => {
+  const fx = cliFixture({ linked: true });
+  const h = cliDeps(fx, { defaultBranch: 'trunk' });
+  assert.equal(await run(cliArgv(fx, ['--base', 'release']), h.deps), 0, h.err.join(''));
+  const createCall = h.calls.find(isCreate);
+  assert.equal(createCall[createCall.indexOf('--base') + 1], 'release');
+  assert.equal(h.err.join(''), '');
 });
 
 test('CLI: a run-pinned config.yml integration-branch overrides policy', async () => {
@@ -1019,4 +1076,126 @@ test('CLI: --help prints usage and exits 0 before any probe', async () => {
   const h = cliDeps(cliFixture(), { ghAvailable: false });
   assert.equal(await run(['--help'], h.deps), 0);
   assert.match(h.out.join(''), /^usage: pr-early-open\.js/);
+});
+
+// ---- station events (#5902) ----
+
+test('#5902: realDeps wires a stationEvent emitter, so the real entry point emits', () => {
+  const { realDeps } = require('../../../plugin/bin/pr-early-open');
+  assert.equal(typeof realDeps.stationEvent, 'function', 'stationEvent is wired');
+});
+
+const withEvents = (h, stationEvent) => {
+  const events = [];
+  h.deps.sessionId = 'sess-pr';
+  h.deps.stationEvent = stationEvent || ((e) => { events.push(e); });
+  return events;
+};
+
+test('#5902: an opened single-record PR records one started build event', async () => {
+  const fx = cliFixture();
+  const h = cliDeps(fx);
+  const events = withEvents(h);
+  assert.equal(await run(cliArgv(fx), h.deps), 0, h.err.join(''));
+  assert.deepEqual(events, [{
+    kind: 'started', station: 'build', recordNumber: 4027, repoName: REPO, runId: RUN_ID, sessionId: 'sess-pr', lane: 'unknown',
+    payload: { fact: 'pr_opened', prNumber: 42, prUrl: URL42, outcome: 'opened' }, discriminator: 'pr:42:opened',
+  }]);
+});
+
+test('#5902: an opened multi-record PR records one started build event per record in --fixes', async () => {
+  const fx = cliFixture();
+  const h = cliDeps(fx);
+  const events = withEvents(h);
+  const argv = ['--run', fx.runDir, '--target', '#4031,#4027,#4029', '--fixes', '4031,#4027,4029', '--title', 'T', '--summary-file', fx.summaryFile, '--worktree', fx.wt];
+  assert.equal(await run(argv, h.deps), 0, h.err.join(''));
+  const payload = { fact: 'pr_opened', prNumber: 42, prUrl: URL42, outcome: 'opened' };
+  assert.deepEqual(events, [4031, 4027, 4029].map((recordNumber) => ({
+    kind: 'started', station: 'build', recordNumber, repoName: REPO, runId: RUN_ID, sessionId: 'sess-pr', lane: 'unknown',
+    payload, discriminator: 'pr:42:opened',
+  })));
+});
+
+test('#5902: one throwing emission does not skip the other records', async () => {
+  const fx = cliFixture();
+  const h = cliDeps(fx);
+  const seen = [];
+  withEvents(h, (e) => { seen.push(e.recordNumber); if (e.recordNumber === 4031) throw new Error('emitter exploded'); });
+  const argv = ['--run', fx.runDir, '--target', '#4031,#4027', '--fixes', '4031,4027', '--title', 'T', '--summary-file', fx.summaryFile, '--worktree', fx.wt];
+  assert.equal(await run(argv, h.deps), 0, h.err.join(''));
+  assert.deepEqual(seen, [4031, 4027]);
+  assert.deepEqual(JSON.parse(h.out.join('')), { outcome: 'opened', number: 42, url: URL42 });
+});
+
+test('#5902: a repo slug that maps to no owner/name records no event', async () => {
+  const fx = cliFixture();
+  const h = cliDeps(fx);
+  h.deps.gh = ((inner) => (args, opts) => {
+    if (args[0] === 'repo' && args[1] === 'view') return JSON.stringify({ nameWithOwner: 'noslash', url: 'not a url', defaultBranchRef: { name: 'main' } });
+    return inner(args, opts);
+  })(h.deps.gh);
+  let calls = 0;
+  withEvents(h, () => { calls += 1; });
+  assert.equal(await run(cliArgv(fx), h.deps), 0, h.err.join(''));
+  assert.equal(JSON.parse(h.out.join('')).outcome, 'opened');
+  assert.equal(calls, 0);
+});
+
+test('#5902: a reopened PR records one started build event', async () => {
+  const fx = cliFixture();
+  const h = cliDeps(fx, { lists: [[PR7_CLOSED], [PR7_OPEN]] });
+  const events = withEvents(h);
+  assert.equal(await run(cliArgv(fx), h.deps), 0, h.err.join(''));
+  assert.equal(JSON.parse(h.out.join('')).outcome, 'reopened');
+  assert.deepEqual(events.map((e) => [e.kind, e.station, e.recordNumber, e.payload, e.discriminator]), [
+    ['started', 'build', 4027, { fact: 'pr_opened', prNumber: 7, prUrl: URL7, outcome: 'reopened' }, 'pr:7:reopened'],
+  ]);
+});
+
+test('#5902: a reused PR records no event', async () => {
+  const fx = cliFixture();
+  const h = cliDeps(fx, { list: [PR7_OPEN] });
+  const events = withEvents(h);
+  assert.equal(await run(cliArgv(fx), h.deps), 0, h.err.join(''));
+  assert.equal(JSON.parse(h.out.join('')).outcome, 'reused');
+  assert.deepEqual(events, []);
+});
+
+test('#5902: a degrade (exit 3) records no event', async () => {
+  const fx = cliFixture();
+  const h = cliDeps(fx, { push: new Error('fatal: Authentication failed for https://github.com/') });
+  const events = withEvents(h);
+  assert.equal(await run(cliArgv(fx), h.deps), 3);
+  assert.deepEqual(events, []);
+});
+
+test('#5902: a throwing stationEvent leaves stdout and the exit code unchanged', async () => {
+  const fx = cliFixture();
+  const h = cliDeps(fx);
+  let calls = 0;
+  withEvents(h, () => { calls += 1; throw new Error('emitter exploded'); });
+  assert.equal(await run(cliArgv(fx), h.deps), 0, h.err.join(''));
+  assert.equal(calls, 1, 'the emission was attempted');
+  assert.deepEqual(JSON.parse(h.out.join('')), { outcome: 'opened', number: 42, url: URL42 });
+  assert.equal(h.err.join(''), '');
+});
+
+test('#5902: stdout and the exit code are byte-identical with stationEvent absent, recording and throwing', async () => {
+  const once = async (wire) => {
+    const fx = cliFixture();
+    const h = cliDeps(fx);
+    const events = wire ? wire(h) : null;
+    const code = await run(cliArgv(fx), h.deps);
+    return { code, out: h.out.join(''), err: h.err.join(''), events };
+  };
+  const plain = await once(null);
+  const recording = await once((h) => withEvents(h));
+  const throwing = await once((h) => withEvents(h, () => { throw new Error('emitter exploded'); }));
+  assert.equal(plain.code, 0, plain.err);
+  assert.equal(recording.events.length, 1, 'the recorder saw the emission');
+  for (const r of [recording, throwing]) {
+    assert.equal(r.code, plain.code);
+    assert.equal(r.out, plain.out);
+    assert.equal(r.err, plain.err);
+  }
 });

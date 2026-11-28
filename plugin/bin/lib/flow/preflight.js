@@ -21,12 +21,16 @@ const { computeDerivedDefaults } = require('../policy-derived-defaults');
 const { resolveTarget } = require('../stage-item/write');
 const { classifyDecisions } = require('../log-decision/claim-log');
 const { splitNul } = require('../git-z');
-const { toPosix } = require('../shared-primitives');
+const { toPosix, execTimeoutMsFor } = require('../shared-primitives');
 const { ghOptions } = require('../repo-resolve');
+const { archivedRunDir, listHeaderDirs } = require('../run-header');
 
 const BIN = path.join(__dirname, '..', '..');
 const VERIFY_JS = path.join(BIN, 'verify.js');
-const EXEC_OPTS = { maxBuffer: 32 * 1024 * 1024, timeout: 30000 };
+// maxBuffer only: the wall-clock `timeout` is added per spawn through
+// execTimeoutMsFor(cmd) (the execFile/execFileAsync runners in defaultDeps), so a
+// new spawn built from EXEC_OPTS alone carries no timeout.
+const EXEC_OPTS = { maxBuffer: 32 * 1024 * 1024 };
 
 // Outer per-probe bound, mirroring bin/lib/wrap-up/pack.js's own
 // withTimeout/PROBE_TIMEOUT_MS (#1930): a hung `gh`/`node verify.js` call
@@ -49,10 +53,10 @@ const ADOPTION_NOTES = Object.freeze({
   1: 'Resuming existing run directory: {path}',
   2: 'Adopting minted run directory: {path}',
   3: 'Recovering inherited run directory: {path} (missing config.yml; backfilled {worktree registration | PR-early lifecycle | materialize commit} before proceeding).',
-  4: 'PIPELINE_RUN_DIR was set to {path}, which {does not exist | is not anchored to the main checkout} — created a fresh run directory instead.',
+  4: 'PIPELINE_RUN_DIR was set to {path}, which {does not exist | is not anchored to the main checkout | is not a pipeline run directory} — created a fresh run directory instead.',
 });
 const CASE3_PLACEHOLDER = '{worktree registration | PR-early lifecycle | materialize commit}';
-const CASE4_PLACEHOLDER = '{does not exist | is not anchored to the main checkout}';
+const CASE4_PLACEHOLDER = '{does not exist | is not anchored to the main checkout | is not a pipeline run directory}';
 
 // The CONFLICTING-run-PR note (#3014): GitHub suppresses workflow runs on a
 // PR whose merge state is dirty, so a conflicted run PR gets no CI until it is
@@ -65,9 +69,11 @@ function defaultDeps(cwd) {
   return {
     readFile: (p) => fs.readFileSync(p, 'utf8'),
     readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
+    // No timeout here (nor on resolvePolicy's git below) on purpose: #5050 changed only the
+    // spawns that already carried the fixed 30 s, and bounding these is #5870's decision.
     git: (args, opts = {}) => execFileSync('git', args, { cwd: opts.cwd || cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }),
-    execFile: (cmd, args, opts = {}) => execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...EXEC_OPTS, ...opts, windowsHide: true }),
-    execFileAsync: async (cmd, args, opts = {}) => (await execFileAsync(cmd, args, { cwd, encoding: 'utf8', ...EXEC_OPTS, ...opts, windowsHide: true })).stdout,
+    execFile: (cmd, args, opts = {}) => execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...EXEC_OPTS, timeout: execTimeoutMsFor(cmd), ...opts, windowsHide: true }),
+    execFileAsync: async (cmd, args, opts = {}) => (await execFileAsync(cmd, args, { cwd, encoding: 'utf8', ...EXEC_OPTS, timeout: execTimeoutMsFor(cmd), ...opts, windowsHide: true })).stdout,
     checkResumeFreshness,
     checkStagedInventory,
     readRunState,
@@ -124,29 +130,39 @@ function specOnBranch(deps, { mainRoot, runDirReal, state }) {
     try { branch = deps.git(['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: state.worktree }).trim() || null; } catch { branch = null; }
   }
   if (!branch) return null;
-  const rel = toPosix(path.relative(mainRoot, runDirReal));
+  // The live run dir, then its archived sibling when the dir's shape has one
+  // (#3974). Any listing that errors makes the whole answer unknown (null) —
+  // an archived failure after empty live listings must not read as `false`.
+  const archived = archivedRunDir(runDirReal);
+  const rels = [toPosix(path.relative(mainRoot, runDirReal))];
+  if (archived) rels.push(toPosix(path.relative(mainRoot, archived)));
   const ls = (pathspec, recursive) => {
     const args = ['ls-tree', ...(recursive ? ['-r'] : []), '--name-only', '-z', '--end-of-options', branch, '--', pathspec];
     try { return deps.git(args, { cwd: mainRoot }); } catch { return null; }
   };
-  const direct = ls(`${rel}/work/`, false);
-  if (direct === null) return null;
-  if (splitNul(direct).some((l) => /(^|\/)work\/\d+-spec\.md$/.test(l))) return true;
-  // Multi-spec parent (#1931 I4): /dispatch hands both calls the PARENT run
-  // dir, whose spec headers live under `spec-{N}/work/` — a `{rel}/work/`
-  // listing is legitimately empty there. `-r` is required: without it a
-  // `{rel}/` listing returns the `spec-{N}`/`work` TREE names, never a file
-  // path the header regex could match.
-  const nested = ls(`${rel}/`, true);
-  if (nested === null) return null;
-  return splitNul(nested).some((l) => /(^|\/)(spec-\d+\/)?work\/\d+-spec\.md$/.test(l));
+  for (const rel of rels) {
+    const direct = ls(`${rel}/work/`, false);
+    if (direct === null) return null;
+    if (splitNul(direct).some((l) => /(^|\/)work\/\d+-spec\.md$/.test(l))) return true;
+    // Multi-spec parent (#1931 I4): /dispatch hands both calls the PARENT run
+    // dir, whose spec headers live under `spec-{N}/work/` — a `{rel}/work/`
+    // listing is legitimately empty there. `-r` is required: without it a
+    // `{rel}/` listing returns the `spec-{N}`/`work` TREE names, never a file
+    // path the header regex could match.
+    const nested = ls(`${rel}/`, true);
+    if (nested === null) return null;
+    if (splitNul(nested).some((l) => /(^|\/)(spec-\d+\/)?work\/\d+-spec\.md$/.test(l))) return true;
+  }
+  return false;
 }
 
 function computeAdoption({ runDir, mainRoot, cwd, deps }) {
   if (!runDir) return { case: 5, note: null, path: null, anchored: false, hasConfig: false, hasOtherContent: false, specMaterialized: null, backfills: [] };
   const target = deps.resolveTarget({ runDir, cwd, mainRoot });
   if (!target.ok) {
-    const why = target.reason === 'missing' ? 'does not exist' : 'is not anchored to the main checkout';
+    let why = 'is not anchored to the main checkout';
+    if (target.reason === 'missing') why = 'does not exist';
+    else if (target.reason === 'not-a-run-dir') why = 'is not a pipeline run directory';
     return { case: 4, note: ADOPTION_NOTES[4].replace('{path}', runDir).replace(CASE4_PLACEHOLDER, why), path: runDir, anchored: false, hasConfig: false, hasOtherContent: false, specMaterialized: null, backfills: [] };
   }
   const real = target.dir;
@@ -267,25 +283,38 @@ function buildProbes({ runDirReal, runId, mainRoot, cwd, config, state, deps, ex
         }
         const entry = resolved[key];
         if (!entry || entry.error !== undefined) return { key, value: null, source: null, error: entry && entry.error ? String(entry.error) : 'unresolved' };
+        // The resolver's source passes through into preflight.json unchanged (`factory` included, #6006).
         return { key, value: entry.value === undefined ? null : entry.value, source: entry.source || 'default' };
       });
     },
     spec: () => {
+      // The run dir's live and archived headers merge by record, the live copy
+      // winning a duplicate (listHeaderDirs lists live before archived), so a
+      // non-empty live `work/` never hides the archived one (#3974).
       const headers = (dir) => deps.readdir(dir).filter((n) => /^\d+-spec\.md$/.test(n)).sort();
-      const names = headers(path.join(runDirReal, 'work'));
+      const recordOf = (n) => Number(n.split('-')[0]);
+      const dirs = listHeaderDirs([runDirReal], { readdir: deps.readdir });
+      const flat = new Map();
+      for (const d of dirs.filter((x) => x.specDir === null)) {
+        for (const n of headers(d.dir)) if (!flat.has(recordOf(n))) flat.set(recordOf(n), n);
+      }
+      const names = [...flat.values()].sort();
       if (names.length) {
-        const record = Number(names[0].split('-')[0]);
+        // `path` is relative to whichever location matched, live or archived:
+        // an archived-only header still reads `work/{name}`. No consumer reads it.
+        const record = recordOf(names[0]);
         return { path: `work/${names[0]}`, present: true, record, records: [record] };
       }
       // Multi-spec parent (#1931 I4): /dispatch hands both calls the PARENT
       // run dir; its headers live one level down, under `spec-{N}/work/`
       // (multi-spec.md). `record`/`path` stay null — a parent has no single
       // one — and `records` carries every header found.
-      const records = [];
-      for (const sub of deps.readdir(runDirReal).filter((n) => /^spec-\d+$/.test(n))) {
-        for (const n of headers(path.join(runDirReal, sub, 'work'))) records.push(Number(n.split('-')[0]));
+      const found = new Set();
+      // `\d+`, not the resolver's `specN`: a `spec-0` or zero-padded dir counted before #3974 and still does.
+      for (const d of dirs.filter((x) => x.specDir !== null && /^spec-\d+$/.test(x.specDir))) {
+        for (const n of headers(d.dir)) found.add(recordOf(n));
       }
-      records.sort((a, b) => a - b);
+      const records = [...found].sort((a, b) => a - b);
       if (records.length) return { path: null, present: true, record: null, records };
       return { path: null, present: false, record: null, records: [] };
     },

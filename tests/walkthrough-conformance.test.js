@@ -74,6 +74,44 @@ test('runs the encode CLI and playwright-cli through the plugin root, never a re
   assert.ok(skill.includes('node "${CLAUDE_PLUGIN_ROOT}/bin/walkthrough-encode.js"'));
 });
 
+// #4612: the acceptance packet's Recording is built by wrap-up's `snapshot`, not by this skill.
+// The new prose has no pre-change bytes, so each claim is proven red on a copy of the live
+// section with only that claim stripped, and the throw is matched to the claim's own message.
+function automaticPath(text) {
+  const start = text.indexOf('\n## Automatic path\n');
+  assert.notEqual(start, -1, 'the skill has an ## Automatic path section');
+  const end = text.indexOf('\n## ', start + 1);
+  assert.notEqual(end, -1, 'a section follows ## Automatic path');
+  return text.slice(start, end).replace(/\s+/g, ' ');
+}
+
+function assertClaim(section, pattern, label) {
+  assert.ok(pattern.test(section), label);
+}
+
+test('the skill names the automatic path and leaves standalone unredacted', () => {
+  const when = skill.indexOf('\n## When to Use\n');
+  const auto = skill.indexOf('\n## Automatic path\n');
+  const input = skill.indexOf('\n## Input\n');
+  assert.ok(when !== -1 && auto !== -1 && input !== -1 && when < auto && auto < input, '## Automatic path sits between When to Use and Input');
+
+  const section = automaticPath(skill);
+  const claims = [
+    ['cites the contract\'s Recording section', /`_shared\/acceptance-packet\.md`'s `## Recording`/],
+    ['wrap-up\'s snapshot encodes the pipeline\'s own happy-path screenshots', /wrap-up's `snapshot` builds [^.]*through `encodeWalkthrough` from the pipeline's own happy-path screenshots/],
+    ['never through this skill and never with a browser run', /never through this skill and never with a browser run/],
+    ['the packet GIF is never uploaded', /stored in the run's local directory and never uploaded/],
+    ['the standalone path applies no redaction', /This standalone path applies no redaction/],
+    ['the human choosing the destination owns what it shows', /the human choosing the destination owns what it shows/],
+  ];
+  for (const [label, pattern] of claims) {
+    assertClaim(section, pattern, label);
+    const mutated = section.replace(pattern, '');
+    assert.notEqual(mutated, section, `${label}: the control stripped nothing`);
+    assert.throws(() => assertClaim(mutated, pattern, label), { message: label });
+  }
+});
+
 test('never instructs backend=chrome', () => {
   // The only mention is the Anti-Patterns row heading ("Using `backend=chrome` here"); its
   // rationale ("Restricted to human ad-hoc use...") sits in the same table-row line, after the

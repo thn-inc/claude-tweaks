@@ -4,13 +4,14 @@ files:
   - plugin/bin/hooks.js
   - plugin/bin/lib/reconcile/index.js
   - plugin/bin/lib/reconcile/budget.js
+  - plugin/bin/lib/reconcile/reap-merged.js
 ---
 
 # Reap Merged Worktrees at the End of a Drain
 
 **Persona:** A maintainer of a large claude-tweaks-managed repo (dozens of worktrees, run dirs, and local/remote branches) who fires a bare `/claude-tweaks:dispatch --budget {n}` drain, or has a Routine fire it, and expects the firing to clean up after the groups it merged.
 **Goal:** When the drain ends, every worktree whose PR merged during this firing is reaped and its run dir archived by the firing itself — not left for a future session's SessionStart hook.
-**Entry point:** The drain loop in `plugin/skills/dispatch/SKILL.md` Step 3 reaches termination (`{budget}` attempts spent, the ranking returns `null`, or a Claim permission stop).
+**Entry point:** The drain loop in `plugin/skills/dispatch/SKILL.md` Step 3 reaches termination (`{budget}` attempts spent, the ranking returns `null`, or a Claim permission stop, Render-failure stop or queue-pull/`--rank` stop).
 **Success state:** The termination reconcile's JSON result, logged to `decisions.md`, shows `reap` (and `release`/`archive`) ran — no `budget-exceeded` skip naming `reap` — and the merged groups' worktrees are gone from `git worktree list`.
 
 ## Steps
@@ -19,7 +20,7 @@ files:
    - **Action:** Dispatch closes its own minted run dir (`close-run`), then runs `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" reconcile --checks mirror,release,archive,reap` with the same 150000ms+ timeout as Step 2's first reconcile call.
    - **Should feel:** Like housekeeping that simply happens — no prompt, no extra wait beyond a narrow fetch and the three cleanup checks.
    - **Should understand:** The call is scoped on purpose: `mirror` fetches the integration branch (single ref) so `archive` can see a PR GitHub merged asynchronously; the `--prune` all-refs fetch, `archive-branches`, and `remote-prune` are left out.
-   - **Red flags:** The call runs unscoped again (an unscoped call runs `reap` last under the 18 s hot-path budget, so a slow pass on a large repo can still skip it as `budget-exceeded`; since #4032 it also hands `archive-branches`, `remote-prune` and `ledger-residue` to a detached background pass instead of running them); the call is backgrounded or has no explicit timeout and strands the firing.
+   - **Red flags:** The call runs unscoped again (an unscoped call runs `reap` last under the 18 s hot-path budget, so a slow pass on a large repo can still skip it as `budget-exceeded`; since #4032 it also hands `archive-branches`, `remote-prune`, `ledger-residue` and `plan-refs` to a detached background pass instead of running them); the call is backgrounded or has no explicit timeout and strands the firing.
 
 2. **The explicit subset runs to completion** — The `hooks.js reconcile` CLI sees a non-empty `--checks` list.
    - **Action:** `reconcile()` first expands the subset with its prerequisites (`expandChecks`, #3630). A list naming `archive` or `red-tip` but neither `mirror` nor `remote-prune` gains `mirror` just ahead of it, and a list naming `archive` without `post-merge` gains `post-merge` too (#4599: archive leaves in place the runs post-merge deferred), so `--checks release,archive,reap` expands to `release,mirror,post-merge,archive,reap` and executes as `mirror,release,post-merge,archive,reap`. Nothing else is widened, and `DISPATCH_ORDER` sets the run order. The CLI then passes an unbounded time ceiling to `reconcile()` (`opts.budgetMs = Infinity` → `createBudget(Infinity)`), so the 18 s hot-path budget that guards SessionStart never cuts the named checks short. Unscoped CLI runs and SessionStart keep the 18 s default. The detached background pass runs under its own 120 s ceiling (`BACKGROUND_BUDGET_MS`, #4032).
@@ -34,11 +35,11 @@ files:
 3. **Read the outcome** — The firing logs the JSON result to `decisions.md`.
    - **Action:** The maintainer (or the next session) reads the termination reconcile entry and `git worktree list`.
    - **Should feel:** Confident the firing left nothing of its own behind.
-   - **Should understand:** Any remaining skip carries its own stated reason (a locked worktree with a live owner, `local-behind-merge` if the narrow fetch itself failed, or, with the main checkout on the integration branch, if mirror's fast-forward is refused, e.g. by a dirty tree), never a silent budget cut.
+   - **Should understand:** Any remaining skip carries its own stated reason (a locked worktree with a live owner, a worktree a live session still holds — `held`, or `held-unverifiable` when the hold cannot be verified (#4960), `local-behind-merge` if the narrow fetch itself failed, or, with the main checkout on the integration branch, if mirror's fast-forward is refused, e.g. by a dirty tree), never a silent budget cut.
    - **Red flags:** Merged groups' worktrees survive the firing with no skip reason; run dirs of async-merged PRs stay unarchived although their merge commit is on `origin`.
 
 ## Outcome
 
 A drain on a large repo reaps the worktrees it merged before it exits, because an explicit `--checks` subset is never starved by the SessionStart budget and the termination call fetches just enough for `archive` to recognize late merges.
 
-_Origin: record #3026 (reconcile's 18 s budget starved `reap` even under an explicit `--checks` subset), built 2026-10-19. Updated by record #3630, built 2026-10-22: an explicit subset is now expanded with its prerequisites, so naming `archive` without `mirror` no longer skips async-merged PRs as `local-behind-merge`. Updated by record #4032, built 2026-10-24: the unscoped call defers three janitorial checks to the background pass, which gained its own 120 s ceiling. Updated by record #4899, built 2026-11-02: a Claim permission stop is a third way the drain terminates._
+_Origin: record #3026 (reconcile's 18 s budget starved `reap` even under an explicit `--checks` subset), built 2026-10-19. Updated by record #3630, built 2026-10-22: an explicit subset is now expanded with its prerequisites, so naming `archive` without `mirror` no longer skips async-merged PRs as `local-behind-merge`. Updated by record #4032, built 2026-10-24: the unscoped call defers three janitorial checks to the background pass, which gained its own 120 s ceiling. Updated by record #4899, built 2026-11-02: a Claim permission stop is a third way the drain terminates. Updated by record #5255, built 2026-11-13: a Render-failure stop (`dispatch-prompt.js` exiting non-zero) is a fourth. Updated by record #4960, built 2026-11-16: `reap-merged.js` also skips a worktree a live session's hold names, and a reap logs `worktree-reaped` into its run even when that run was closed or archived in the same pass (see `keep-a-dispatching-sessions-worktree-through-a-siblings-reconcile-4960.md`). Updated during wrap-up of #6055: the unscoped call's deferred set gains `plan-refs`, making four._

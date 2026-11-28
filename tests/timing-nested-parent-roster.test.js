@@ -24,7 +24,8 @@ const ALLOWLIST = Object.freeze({
   help: 'cited only as a suggestion to the user ("run /claude-tweaks:help to find it") or descriptively listing what it does — never Skill-tool-invoked from within a phase',
   init: 'cited only inside reason strings/suggestions ("re-run /claude-tweaks:init", "run /claude-tweaks:init to enable") — never Skill-tool-invoked from within a phase',
   tidy: 'cited only as a caller-list/consumer description ("invoked by ... and /claude-tweaks:tidy", "/claude-tweaks:tidy runs this scope") — tidy invokes these files\' shared procedures, not the reverse',
-  demo: 'cited only descriptively (verification-brief routing prose, drift/feedback consumer lists) — never Skill-tool-invoked from within a phase',
+  demo: 'the deprecated alias of accept (#4613): cited only in its own stub and alias doc — never Skill-tool-invoked from within a phase',
+  accept: 'cited descriptively (verification-brief routing prose, consumer lists, tidy recommendations) and, from wrap-up, as the directory of the accept/automatic-entry.md sub-file wrap-up reads and follows — that is a file read, never a Skill-tool invocation from within a phase (#4613)',
   backlog: 'cited throughout policy/config/contract docs describing what backlog does with a given setting or grant — pure documentation, never Skill-tool-invoked from a phase body',
   browse: 'cited as the underlying agent-browser session convention QA procedures follow — never Skill-tool-invoked itself',
   research: 'cited only in policy-schema-model-profiles.md documenting research\'s own model-profile row — never Skill-tool-invoked from a phase',
@@ -36,6 +37,7 @@ const ALLOWLIST = Object.freeze({
   'harness-health': 'cited only as the consumer of the shared _shared/harness-health-*.md helper files and in wrap-up\'s skill-curation.md judge-file prose reusing its criteria inline — never Skill-tool-invoked from within a phase',
   'journey-health': 'cited only as the consumer of the shared _shared/journey-*.md helper files and in wrap-up\'s journey-curation.md judge-file prose reusing its criteria inline — never Skill-tool-invoked from within a phase',
   'docs-health': 'cited only as the consumer whose rotation/criteria wrap-up\'s docs-health-integration.md judge file reuses inline ("that\'s /claude-tweaks:docs-health\'s own rotation\'s job, not this sub-issue\'s") — never Skill-tool-invoked from within a phase',
+  'ci-health': 'cited only in _shared/policy-schema.md documenting the ci-health-thresholds key\'s consumer — never Skill-tool-invoked from within a phase',
   visualize: 'cited only in review\'s doc-freshness-lens.md as a suggested follow-up command, and in _shared/visual-html-output.md describing its own output convention — never Skill-tool-invoked from a phase',
 });
 

@@ -57,21 +57,27 @@ const SETTLE_ANCHORS = [
   'dispatch/two-call-gate.md` §5',
   'removes the local worktree only',
   'the pushed branch and draft PR stay open for the resumed run',
+  // #5053 D3: the build's exit waits on `needs:answer` and keeps the grants in any posture
+  'added `needs:answer` (in any posture), kept every `auto:*` grant',
 ];
 
 const RELAY_ANCHORS = [
   'failed:plan-review-needs-human',
   '<!-- plan-review-question -->',
-  "editing #{n}'s body",
-  '/claude-tweaks:dispatch #{n}',
-  '/claude-tweaks:backlog refine',
+  // #5053: the two answer options — an `/answer` reply the next bare drain folds in, or a body
+  // Decision and a typed resume
+  'reply `/answer …` on that question comment',
+  "the next bare `/claude-tweaks:dispatch` drain folds the reply into #{n}'s body and resumes the build",
+  "add a `**Decision**` paragraph (or an Acceptance Criterion) to #{n}'s body and run `/claude-tweaks:dispatch resume #{n}`",
   'no `AskUserQuestion` in a subagent',
-  // a non-headless block can be re-picked headlessly
-  'A non-headless block keeps `auto:build` with the claim released',
-  'a later Routine drain may re-pick the still-unanswered record',
-  '`bot:blocked`',
-  'answering on the record promptly avoids that spent run',
+  // a re-pick cannot happen: the kept draft PR holds the record in the open-pr exclusion
+  'the open-pr exclusion',
 ];
+
+// Retired from both paragraphs by #5053: the headless block, the re-grant and the re-pick.
+const RETIRED_SETTLE = ['added `bot:blocked`', 'removed every `auto:*` grant'];
+const RETIRED_RELAY = ['bot:blocked', 're-grant', 're-run `/claude-tweaks:dispatch #{n}`', 're-pick'];
+const retired = (text, banned) => banned.filter((b) => text.includes(b));
 
 test('Review Focus 5: Settle skips its numbered steps for the plan-review needs-human stop', () => {
   const text = read(SETTLE);
@@ -87,6 +93,21 @@ test('Review Focus 5: Settle skips its numbered steps for the plan-review needs-
 
 test('Review Focus 5: the dispatching session relays the question to the human', () => {
   assert.deepStrictEqual(missing(paragraph(read(REPORTING), RELAY_HEAD), RELAY_ANCHORS), []);
+});
+
+test('#5053: neither paragraph keeps the headless block, the re-grant or the re-pick', () => {
+  assert.deepStrictEqual(retired(paragraph(read(SETTLE), SETTLE_HEAD), RETIRED_SETTLE), []);
+  assert.deepStrictEqual(retired(paragraph(read(REPORTING), RELAY_HEAD), RETIRED_RELAY), []);
+});
+
+test('go-red: retired() flags each banned clause planted in its own live paragraph', () => {
+  const cases = [
+    [paragraph(read(SETTLE), SETTLE_HEAD), RETIRED_SETTLE],
+    [paragraph(read(REPORTING), RELAY_HEAD), RETIRED_RELAY],
+  ];
+  for (const [live, banned] of cases) {
+    for (const b of banned) assert.deepStrictEqual(retired(`${live} ${b}`, banned), [b], b);
+  }
 });
 
 test('reporting.md\'s PushNotification rule names the plan-review headless block (headless block notification)', () => {
@@ -110,6 +131,9 @@ test('AC8.1: docs/skill-graph.md states the /build → /dispatch edge once, in t
   const rows = section(text, 'build').split('\n').filter((l) => l.startsWith('| `/dispatch` |'));
   assert.strictEqual(rows.length, 1, 'expected exactly one /dispatch row under ## build');
   assert.ok(rows[0].includes('build/plan-review.md'), 'the /dispatch row must name build/plan-review.md');
+  // #5053: the stop adds `needs:answer` and keeps the grants; `bot:blocked` is the retry ceiling only.
+  assert.ok(rows[0].includes('adds `needs:answer`'), 'the /dispatch row must say the stop adds needs:answer');
+  assert.ok(!rows[0].includes('bot:blocked'), 'the /dispatch row must not say the stop applies bot:blocked');
   const dispatchRows = section(text, 'dispatch').split('\n').filter((l) => l.startsWith('|') && l.includes('build/plan-review.md'));
   assert.deepStrictEqual(dispatchRows, [], 'the ## dispatch section must not restate the edge');
 });
@@ -133,53 +157,130 @@ test('grown dispatch files stay within the rail', () => {
   }
 });
 
-// plan-review.md's resume path sends the human to
-// /claude-tweaks:backlog refine, an edge /build owns; /backlog must not restate it.
+// plan-review.md's resume path sends the human to /claude-tweaks:backlog attention
+// (the `needs:answer` row), an edge /build owns; /backlog must not restate it.
 test('AC8.1: docs/skill-graph.md states the /build → /backlog edge once, in the build section', () => {
   const text = read(GRAPH);
   const rows = section(text, 'build').split('\n').filter((l) => l.startsWith('| `/backlog` |'));
   assert.strictEqual(rows.length, 1, 'expected exactly one /backlog row under ## build');
-  assert.ok(rows[0].includes('build/plan-review.md') && rows[0].includes('/claude-tweaks:backlog refine'));
+  assert.ok(rows[0].includes('build/plan-review.md') && rows[0].includes('/claude-tweaks:backlog attention'), 'the /backlog row must name build/plan-review.md and /claude-tweaks:backlog attention');
+  assert.ok(rows[0].includes('`needs:answer`'), 'the /backlog row must name needs:answer');
+  assert.ok(!rows[0].includes('/claude-tweaks:backlog refine'), 'the /backlog row must not send the human to refine');
   const backlogRows = section(text, 'backlog').split('\n').filter((l) => l.startsWith('|') && l.includes('plan-review'));
   assert.deepStrictEqual(backlogRows, [], 'the ## backlog section must not restate the edge');
 });
 
-// `bot:blocked` gained a second cause (a headless
-// plan-review question awaiting an answer). Every consumer that explains the label
-// to a human names that cause. Each pin reads only the explaining passage — a line
-// (`line`) or a blank-line-delimited paragraph (`para`) starting at `head` — so it
-// goes red when that passage loses the cause, not when some other line mentions it.
+// A plan-review question is `needs:answer`; `bot:blocked` is the retry ceiling only
+// (expand-contract, #5053 D10). Every consumer that explains `bot:blocked` to a human
+// points a plan-review question at `needs:answer` and no longer names the old cause. Each
+// pin reads only the explaining passage — a line (`line`) or a blank-line-delimited
+// paragraph (`para`) starting at `head` — so it goes red when that passage loses the
+// pointer, not when some other line mentions it. `pointer: false` passages (the
+// LABELS_JSON description, a 100-char cap) only get the old-cause ban. A `segment` passage is
+// one inline code span, from `head` (which opens it) to its closing backtick.
+const BLOCKED_RENDER_SEGMENT = '`Blocked: **{N}**';
 const BLOCKED_CONSUMERS = [
-  [path.join('plugin', 'skills', '_shared', 'work-record.md'), '| **Bot state** |', 'line', 'build/plan-review.md'],
-  [path.join('plugin', 'skills', '_shared', 'work-record.md'), '  `transient`-classified one preserves it.', 'para', 'plan-review-question'],
-  [path.join('plugin', 'skills', 'tidy', 'step-1-records.md'), '`isBotBlocked(record)`', 'para', 'plan-review-question'],
-  [path.join('plugin', 'skills', 'tidy', 'step-1-records.md'), '→ Collect each as: `[blocked]', 'line', 'plan-review question'],
-  [path.join('plugin', 'skills', 'backlog', 'attention-mode.md'), '| #{n} | bot:blocked |', 'line', 'plan-review-question'],
-  [path.join('plugin', 'skills', 'backlog', 'refine-lanes.md'), 'Population: `.blocked`', 'para', 'plan-review-question'],
-  [path.join('plugin', 'skills', 'backlog', 'refine-mode.md'), 'For every record in `blocked`', 'para', 'plan-review-question'],
-  [path.join('plugin', 'skills', '_shared', 'github-pr-scan.md'), '   - **`bot:blocked`** —', 'line', 'plan-review-question'],
-  [path.join('plugin', 'skills', 'backlog', 'SKILL.md'), '- A record hit its retry ceiling', 'line', 'plan-review'],
-  [path.join('plugin', 'skills', '_shared', 'label-bootstrap.md'), '  ["bot:blocked",', 'line', 'plan-review question'],
-  [path.join('plugin', 'skills', 'help', 'status-scan.md'), '- Blocked: **', 'line', 'plan-review question'],
-  [path.join('plugin', 'skills', '_shared', 'github-pr-scan-triage.md'), 'Render as three lines:', 'line', 'plan-review question'],
-  [path.join('plugin', 'skills', '_shared', 'work-record-permission-matrix.md'), '| **Executors**', 'line', 'build/plan-review.md'],
-  [path.join('docs', 'skill-graph.md'), '| `/dispatch` | `/tidy` Step 4.7', 'line', 'plan-review question'],
+  [path.join('plugin', 'skills', '_shared', 'work-record.md'), '| **Bot state** |', 'line', true],
+  [path.join('plugin', 'skills', '_shared', 'work-record.md'), '  `transient`-classified one preserves it.', 'para', true],
+  [path.join('plugin', 'skills', 'tidy', 'step-1-records.md'), '`isBotBlocked(record)`', 'para', true],
+  [path.join('plugin', 'skills', 'tidy', 'step-1-records.md'), '→ Collect each as: `[blocked]', 'line', false],
+  [path.join('plugin', 'skills', 'backlog', 'attention-mode.md'), '| #{n} | bot:blocked |', 'line', true],
+  [path.join('plugin', 'skills', 'backlog', 'refine-lanes.md'), 'Population: `.blocked`', 'para', true],
+  [path.join('plugin', 'skills', 'backlog', 'refine-mode.md'), 'For every record in `blocked`', 'para', true],
+  [path.join('plugin', 'skills', '_shared', 'github-pr-scan.md'), '   - **`bot:blocked`** —', 'line', true],
+  [path.join('plugin', 'skills', 'backlog', 'SKILL.md'), '- A record hit its retry ceiling', 'line', true],
+  [path.join('plugin', 'skills', '_shared', 'label-bootstrap.md'), '  ["bot:blocked",', 'line', false],
+  [path.join('plugin', 'skills', 'help', 'status-scan.md'), '- Blocked: **', 'line', false],
+  [path.join('plugin', 'skills', '_shared', 'github-pr-scan-triage.md'), '2. **Blocked** —', 'line', false],
+  // The render line also carries the awaiting-answer count (#5053 D8), whose text names "plan-review answer"
+  // on purpose, so only its `Blocked: **{N}** …` code span (`segment`) is held to the retired-cause ban.
+  [path.join('plugin', 'skills', '_shared', 'github-pr-scan-triage.md'), BLOCKED_RENDER_SEGMENT, 'segment', false],
+  [path.join('plugin', 'skills', '_shared', 'work-record-permission-matrix.md'), '| **Executors**', 'line', true],
+  [path.join('docs', 'skill-graph.md'), '| `/dispatch` | `/tidy` Step 4.7', 'line', true],
+];
+
+// The retired plan-review causes, each in its whitespace-collapsed spelling [IL-66].
+const OLD_BLOCKED_CAUSES = [
+  'plan-review-question',
+  'plan-review question awaits',
+  'plan-review question awaiting',
+  'plan-review answer',
+  'awaits an answer',
+  'awaiting an answer',
+  'headless plan-review',
+  'plan-review needs-human stop',
 ];
 
 function passage(text, head, mode) {
   const start = text.indexOf(head);
   assert.ok(start >= 0, `passage head not found: ${head}`);
+  if (mode === 'segment') {
+    const close = text.indexOf('`', start + 1);
+    assert.ok(close > start && !text.slice(start, close).includes('\n'), `segment not closed on its line: ${head}`);
+    return text.slice(start, close + 1);
+  }
   const end = text.indexOf(mode === 'line' ? '\n' : '\n\n', start);
   return text.slice(start, end < 0 ? undefined : end);
 }
 
-test('every bot:blocked explanation names the plan-review question as a cause', () => {
-  for (const [file, head, mode, cause] of BLOCKED_CONSUMERS) {
-    assert.ok(passage(read(file), head, mode).includes(cause), `${file} (${head}) does not name "${cause}"`);
+test('go-red: the Blocked render segment is guarded, and only that segment', () => {
+  const triage = read('plugin', 'skills', '_shared', 'github-pr-scan-triage.md');
+  const seg = passage(triage, BLOCKED_RENDER_SEGMENT, 'segment');
+  assert.ok(seg.endsWith('(retry ceiling)`'), `unexpected Blocked segment: ${seg}`);
+  for (const old of OLD_BLOCKED_CAUSES) {
+    const planted = triage.replace(seg, `${seg.slice(0, -1)} or ${old}\``);
+    assert.notStrictEqual(planted, triage);
+    assert.deepStrictEqual(blockedProblems(passage(planted, BLOCKED_RENDER_SEGMENT, 'segment'), false), [`still names the retired cause "${old}"`], old);
+  }
+  // the sibling Awaiting-answer segment names "plan-review answer" by design and stays outside the slice
+  assert.ok(triage.includes('`Awaiting answer: **{N}** records awaiting a plan-review answer`'), 'Awaiting answer segment moved');
+  assert.deepStrictEqual(blockedProblems(seg, false), []);
+});
+
+// Returns the problems found in one passage; each carries its own message.
+function blockedProblems(text, wantsPointer) {
+  const flat = text.replace(/\s+/g, ' ');
+  const out = [];
+  if (wantsPointer && !flat.includes('needs:answer')) out.push('does not point a plan-review question at needs:answer');
+  for (const old of OLD_BLOCKED_CAUSES) {
+    if (flat.includes(old)) out.push(`still names the retired cause "${old}"`);
+  }
+  return out;
+}
+
+test('every bot:blocked explanation sends a plan-review question to needs:answer', () => {
+  for (const [file, head, mode, wantsPointer] of BLOCKED_CONSUMERS) {
+    assert.deepStrictEqual(blockedProblems(passage(read(file), head, mode), wantsPointer), [], `${file} (${head})`);
   }
 });
 
-test('the widened bot:blocked label description stays within the 100-char cap', () => {
+test('go-red: blockedProblems flags a lost pointer and each retired cause', () => {
+  const [file, head, mode] = BLOCKED_CONSUMERS[0];
+  const live = passage(read(file), head, mode);
+  assert.deepStrictEqual(blockedProblems(live, true), []);
+  const lost = live.split('needs:answer').join('');
+  assert.notStrictEqual(lost, live, 'live Bot state row no longer names needs:answer');
+  assert.deepStrictEqual(blockedProblems(lost, true), ['does not point a plan-review question at needs:answer']);
+  assert.deepStrictEqual(blockedProblems(lost, false), []);
+  for (const old of OLD_BLOCKED_CAUSES) {
+    assert.deepStrictEqual(blockedProblems(`${live} ${old}`, true), [`still names the retired cause "${old}"`], old);
+  }
+});
+
+test('every passage the pointer test reads actually names needs:answer when it must (per-consumer mutation)', () => {
+  let pointers = 0;
+  for (const [file, head, mode, wantsPointer] of BLOCKED_CONSUMERS) {
+    if (!wantsPointer) continue;
+    pointers += 1;
+    const live = passage(read(file), head, mode);
+    const lost = live.split('needs:answer').join('');
+    assert.notStrictEqual(lost, live, `${file} (${head}) has no needs:answer to remove`);
+    assert.ok(blockedProblems(lost, true).includes('does not point a plan-review question at needs:answer'), `${file} (${head})`);
+  }
+  assert.ok(pointers >= 10, `expected at least 10 pointer consumers, saw ${pointers}`);
+});
+
+test('the bot:blocked label description stays within the 100-char cap', () => {
   const { ensureLabelPayload } = require('../plugin/bin/lib/issues/labels.js');
   const match = read('plugin', 'skills', '_shared', 'label-bootstrap.md').match(/\["bot:blocked",\s*"([^"]*)",\s*"([^"]*)"\]/);
   assert.ok(match, 'could not locate the bot:blocked LABELS_JSON row');

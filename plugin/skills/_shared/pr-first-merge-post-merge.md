@@ -29,11 +29,10 @@ none of the PR's closing keywords, so the CLI also closes each still-open `Fixes
 `pendingClose[]` record (the merge may still close it — re-run the step once, then reopen it by
 hand if it closed) in the closing summary, never as anything but `merged`. A `baseUnchecked: true`
 envelope means the PR's base or the default branch could not be read, so nothing was closed and the
-`Fixes` records were not checked: name the envelope's `unchecked[]` records in the closing summary. Exit
-5 or `gh-absent`: the CLI logged its own `SKIP` line; exit 3: the run dir is untrusted and `log-decision.js` refuses it too, so name the gap in the closing summary. Then continue to Step 4.0b. An `armed` outcome never reaches
+`Fixes` records were not checked: name the envelope's `unchecked[]` records in the closing summary. Exit 4
+(run-marker mismatch: the PR body names another run, or none, so nothing was reopened or closed): name the mismatch and PR #{n} in the closing summary, and ask for no hand close of its `Fixes` records, which may belong to another run. Exit 4, exit 5 or `gh-absent`: the CLI logged its own `SKIP` line; exit 3: the run dir is untrusted and `log-decision.js` refuses it too, so name the gap in the closing summary. Then continue to Step 4.0b. An `armed` outcome never reaches
 this step in-session: the reconciler's `post-merge` check (`gh` only) runs the CLI for that run once GitHub has merged the PR for 10 minutes (the merge grace),
-with no settle poll and reopens bounded to 10 minutes after `mergedAt`; with `--keep-open` on the composer, only a
-Development-sidebar link can still close a kept-open record there, a gap tracked in the run's ledger.
+with no settle poll and reopens bounded to 10 minutes after `mergedAt`, so it also reopens a kept-open record (a `Refs` record, or one a Development-sidebar link names) that the merge closed (#4251).
 On a non-default base that late run closes an `armed` merge's still-open `Fixes` records the same
 way, so they no longer wait for a human (#4599). The one in-session exception: merge mode's Already merged section (`wrap-up/merge-mode.md`) runs this step in-session for an already-merged PR, through `bin/post-merge-run.js` rather than the composer's inline call.
 
@@ -151,6 +150,22 @@ The reconciler's `post-merge` check reads this line as the marker that the step 
 does not run Steps 4.0 and 4.0b a second time for this run. On the no-`closingSet[]` path above, the
 `(skipped)` SKIP line is the marker and no summary line follows, so a run carries one marker and
 "0 parent(s) closed" never follows a skipped step. Under `local-files`, or after exit 3, there is no line.
+Then continue to Step 4.0c.
+
+### Step 4.0c: Execute approved follow-up re-checks (#6284)
+
+`$PIPELINE_RUN_DIR` still exists here (Step 4.0); the cwd may be the main checkout — the CLI resolves
+the anchored run dir itself. Multi-spec: pass the parent dir.
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/recheck-followups.js" execute --run "$PIPELINE_RUN_DIR"
+```
+
+It executes every `followup-recheck-*` approval the Review Console recorded (`wrap-up/followup-recheck.md`)
+once the PR is `MERGED` and the record is unchanged — the comment, and for a close the close — drops
+the approval on a closed-unmerged PR, and holds it otherwise; it logs its own lines and exits 0 whatever
+the item outcomes. A non-zero exit names the gap in the closing summary, never anything but `merged`.
+Then continue to Step 4.1.
 
 ### Step 4.1: Which release carried this? (before reconcile)
 
@@ -210,7 +225,7 @@ firing and once stranding a firing whose one-shot turn ended waiting on the back
 
 `--checks mirror,release,archive` scopes the sweep to what this step needs, plus `post-merge`, which `archive` requires and the check expansion adds. When Step 4.0b wrote its marker, `post-merge` skips this run; with no marker (exit 3) the run sits inside the 10-minute merge grace, so `post-merge` defers it and `archive` leaves it in place as `post-merge-pending`. The full
 unscoped default also runs `red-tip`/`reap`/`console` inline (and hands `archive-branches`/
-`remote-prune`/`ledger-residue` to the background pass), none of which this step's own next
+`remote-prune`/`ledger-residue`/`plan-refs` to the background pass), none of which this step's own next
 paragraph describes needing, and `remote-prune`'s inclusion is what forces the full
 `--prune all-refs` fetch (`shared-fetch.js`) instead of the single-ref fetch a `mirror`-only
 request uses. Fast-forwards the mirror (the local integration branch — "mirror" and

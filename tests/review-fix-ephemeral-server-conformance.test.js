@@ -147,7 +147,8 @@ test('AC1.1: code-mode-steps.md applies the coordination stop before Step 4 refl
   // Each sentence sits in its own step's section (Step 4 before Step 5 before Step 6.7).
   assert.ok(cms.indexOf(reflectLine) > cms.indexOf('## Step 4:') && cms.indexOf(reflectLine) < cms.indexOf('## Step 5:'));
   assert.ok(cms.indexOf(simplifyLine) > cms.indexOf('## Step 5:') && cms.indexOf(simplifyLine) < cms.indexOf('## Step 6:'));
-  const s67 = section(cms, '## Step 6.7');
+  // Step 6.7's body lives in late-findings-routing.md (#4359).
+  const s67 = read('review', 'late-findings-routing.md');
   const s67Line = s67.split('\n').find((l) => l.includes('Fix-wave server coordination'));
   assert.ok(s67Line, 'Step 6.7 must cite the coordination');
   assert.ok(s67Line.includes('step 1 stops the run\'s ephemeral server before the wave'), 'Step 6.7 must apply the stop before the wave');

@@ -4,10 +4,12 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const { writeFileAtomic } = require('../atomic-write');
 const deps = require('../deps');
 const policy = require('../policy');
 const wtDetect = require('./worktree-detect');
 const ctxLib = require('./context');
+const holdLib = require('./worktree-hold');
 const sessionResidue = require('./session-residue');
 const { reconcile } = require('../reconcile');
 const { HOOK_FORGE_PROBE_TIMEOUT_MS } = require('../policy-schema');
@@ -31,7 +33,7 @@ function advisoryBanner(header, lines, trailer) {
 // The fast/background split (#820, D8, corrected): SessionStart's own
 // process runs only the cheap read/detect checks inline — everything
 // write-only and janitorial (release/post-merge/archive/archive-branches/remote-prune/
-// ledger-residue/reap) is deferred to a detached `reconcile-background` child process (see
+// ledger-residue/plan-refs/reap) is deferred to a detached `reconcile-background` child process (see
 // bin/hooks.js's `reconcile-background` subcommand), whose result is
 // surfaced on a LATER SessionStart firing via the status-file read below.
 // This corrects the original issue's premise (hooks.json's `async: true`
@@ -52,8 +54,8 @@ const FAST_CHECKS = ['mirror', 'red-tip', 'console'];
 // agent reading its own context -- a catalog read here would add a network
 // dependency to every session start for a diagnostic only ever consulted when
 // something already looks wrong (decided, not left open, per the record's own
-// Deliverables). `env` is injectable for tests; production omits it.
-function resolveBuildLine(env = process.env) {
+// Deliverables). `env` is the hook context's (#5377): no fallback to the process.
+function resolveBuildLine(env) {
   const pluginRoot = env.CLAUDE_PLUGIN_ROOT;
   if (!pluginRoot) return null;
   // #1837 review finding: the plugin.json read/parse/extract this function
@@ -82,15 +84,40 @@ function restampOwnerPidOnResume(ctx) {
   if (!input || typeof input !== 'object' || input.source !== 'resume') return;
   const owned = ctx.ownedRun || {};
   if (!owned.dir || owned.attribution === 'fallback') return;
-  const patch = ctxLib.ownerPidPatch(process.env);
+  const patch = ctxLib.ownerPidPatch(ctx.env);
   if (!('ownerPid' in patch)) return;
   const state = ctxLib.readRunState(owned.dir);
   if (!state || typeof state.sessionId !== 'string' || state.sessionId !== input.session_id) return;
   if (!Number.isInteger(state.ownerPid) || state.ownerPid === patch.ownerPid) return;
-  ctxLib.writeRunState(owned.dir, patch);
+  ctxLib.writeRunState(owned.dir, patch, { env: ctx.env });
+}
+
+// #5392: the launcher (bin/hooks.sh) finds node by PATH, then by the first
+// line of $HOME/.claude-tweaks/node-path, then by well-known install
+// locations. This fills that second rung with the node running this hook, so a
+// later session whose PATH lacks node still reaches hooks.js. `home` comes from
+// the caller: the context's HOME before its homeDir(), because on win32
+// os.homedir() reads USERPROFILE, which can differ from the HOME the
+// launcher's shell reads. Rewrites only on a content difference; a write
+// failure throws and the caller swallows it.
+function saveNodePath({ execPath = process.execPath, home } = {}) {
+  if (typeof home !== 'string' || !home) throw new TypeError('saveNodePath: home is required');
+  const dir = path.join(home, '.claude-tweaks');
+  const file = path.join(dir, 'node-path');
+  const content = execPath + '\n';
+  let current;
+  try { current = fs.readFileSync(file, 'utf8'); } catch { current = undefined; }
+  if (current === content) return 'unchanged';
+  fs.mkdirSync(dir, { recursive: true });
+  writeFileAtomic(file, content);
+  return 'written';
 }
 
 async function run(ctx) {
+  const env = ctxLib.requireEnv(ctx);
+  // The event tail always supplies the home lookup; a context without one would quietly drop the
+  // superpowers notice and fall back to os.homedir() in reconcile, the silent read #5377 closes.
+  if (typeof ctx.homeDir !== 'function') throw new TypeError('hook context has no homeDir: hooks.js builds it for every event');
   const parts = [];
   // Per-invocation cache (#381): memoizes `git worktree list --porcelain` and
   // `resolveIntegrationBranch`'s resolved name, each keyed by repo root, so the
@@ -119,16 +146,30 @@ async function run(ctx) {
   // plain string push that cannot throw, and every session gets it regardless
   // of what else this hook finds to report.
   parts.push(INTERACTION_STYLE_DIRECTIVE);
+  // `nodePathHome` is a test-only seam (undefined falls through to the
+  // context's HOME, then its homeDir()); bin/hooks.js never sets it.
+  try { saveNodePath({ home: ctx.nodePathHome || env.HOME || ctx.homeDir() }); } catch { /* best-effort */ }
   // #2070: single upstream read of CLAUDE_PLUGIN_ROOT, threaded into both
   // resolveBuildLine (below) and the stale-runs report line's fallback
   // (further down) — one place for a future normalization/validation fix to
   // land, instead of two reads that can drift.
-  const pluginRootEnv = process.env.CLAUDE_PLUGIN_ROOT;
+  const pluginRootEnv = env.CLAUDE_PLUGIN_ROOT;
+  // #4960: stamp this session's worktree hold before anything below can spawn a reconcile pass
+  // that reaps — a resume re-stamps under its new pid.
+  try {
+    const holdOutcome = holdLib.stampHoldForCwd({ cwd: ctx.cwd, sessionId, env, ownerBlock: ctxLib.ownerBlock });
+    // A failed write leaves the session standing in its worktree unheld: leave a trace (owned run only).
+    const owned = ctx.ownedRun || {};
+    if (holdOutcome === 'failed' && owned.dir) {
+      ctxLib.appendEvent(owned.dir, 'worktree-hold-failed', { tool: 'SessionStart' }, owned.attribution);
+    }
+  } catch { /* best-effort */ }
   try { restampOwnerPidOnResume(ctx); } catch { /* best-effort */ }
   // #3973: re-stamp the owner block (a resume runs under a new process) before anything below spawns.
   // #4150: restampWhileFresh keeps the full pid probe here — a resume must re-stamp at once, not at the next window edge.
   try { ctxLib.refreshOwnerBlock(ctx, { restampWhileFresh: true }); } catch { /* best-effort */ }
-  try { parts.push(...deps.collect()); } catch { /* best-effort */ }
+  // The scan uses the hook payload's cwd (the context's), which on win32 is searched first; it used the hook process's cwd before #5377.
+  try { parts.push(...deps.collect({ env, cwd: ctx.cwd })); } catch { /* best-effort */ }
   try {
     const buildLine = resolveBuildLine({ CLAUDE_PLUGIN_ROOT: pluginRootEnv });
     if (buildLine) parts.push(buildLine);
@@ -144,7 +185,7 @@ async function run(ctx) {
     const source = ctx.input && typeof ctx.input === 'object' ? ctx.input.source : undefined;
     if (typeof source !== 'string' || source === 'startup') {
       const notice = superpowersNotice({
-        effective: effectiveSuperpowersVersion(ctx.cwd, ctx.superpowersDeps),
+        effective: effectiveSuperpowersVersion(ctx.cwd, { env, homedir: ctx.homeDir, ...ctx.superpowersDeps }),
         floor: SUPERPOWERS_FLOOR,
         projectDir: ctx.cwd,
       });
@@ -162,7 +203,7 @@ async function run(ctx) {
     // ordering: the reaper removes merged worktrees, which breaks branch
     // derivation for the integrity check session-residue.js runs internally.
     const pluginRoot = pluginRootEnv || '${CLAUDE_PLUGIN_ROOT}';
-    const staleEntries = sessionResidue.collectStaleRuns(ctx.cwd, { cache, pluginRoot });
+    const staleEntries = sessionResidue.collectStaleRuns(ctx.cwd, { cache, pluginRoot, env });
     if (staleEntries.length) {
       const lines = staleEntries.map((e) => e.line);
       // #803: the banner previously had no designated consumer — a session could
@@ -170,12 +211,13 @@ async function run(ctx) {
       // consumer: an explicit, model-facing instruction (same pattern as the
       // worktree-always banner below) to relay the list once, in the session's
       // first reply, rather than leaving detection with no assigned follow-through.
+      // #3977: only runs the last reconcile pass named orphaned and whose session
+      // reads dead now — a run a sibling session is still driving is never listed.
       parts.push(advisoryBanner(
-        'claude-tweaks: unfinished pipeline run(s) detected under .claude-tweaks/pipelines/:',
+        'claude-tweaks: orphaned pipeline run(s) whose session is gone, under .claude-tweaks/pipelines/:',
         lines,
-        `Review {run}/decisions.md and staged/ to resume, or close a finished run with: node "${pluginRoot}/bin/hooks.js" close-run --run <dir>\n` +
-          'Relay this list once, in your first reply to the user, one line per run naming its close-run command, or its re-entry command where the line carries one — do not proceed silently without mentioning it, and never run either command yourself.\n' +
-          'Say with it that only the session owning a run should close it: a listed run may be live in a sibling session right now, and closing it ends that run enforcement and event logging mid-flight.',
+        `Each line names why the run needs a human and the command that resumes it; close one you decide is abandoned with: node "${pluginRoot}/bin/hooks.js" close-run --run <dir>\n` +
+          'Relay this list once, in your first reply to the user, one line per run naming its reason and the command on its line — do not proceed silently without mentioning it, and never run any of these commands yourself.',
       ));
     }
   } catch { /* best-effort */ }
@@ -216,9 +258,8 @@ async function run(ctx) {
       parts.push(advisoryBanner(
         'claude-tweaks: closed or archived run(s) whose unattended Review Console left item(s) no human has reviewed:',
         lines,
-        'Read each item, then act on it (apply it, file it with /claude-tweaks:capture, or drop it) and mark the run reviewed with its own command above.\n' +
-          `${sessionResidue.consoleAckAllLine(pluginRoot)}\n` +
-          'Relay this list once, in your first reply to the user, one line per item with its command — do not proceed silently without mentioning it.',
+        `${sessionResidue.consoleAckAllLine(pluginRoot)}\n` +
+          "Relay this list once, in your first reply to the user, one line per item with its command — do not proceed silently without mentioning it, and never run it yourself: no human has reviewed these items, so acting on one (apply, /claude-tweaks:capture, drop) or marking a run reviewed is the user's call, and you do it only when they ask in this session.",
       ));
     }
   } catch { /* best-effort */ }
@@ -230,7 +271,7 @@ async function run(ctx) {
     // for the shared trunk). FAST_CHECKS restricts this inline call to the
     // cheap read/detect checks only (mirror, red-tip, console) — the
     // write-only janitorial checks (release/post-merge/archive/archive-branches/
-    // remote-prune/ledger-residue/reap) run in a detached background process instead (see
+    // remote-prune/ledger-residue/plan-refs/reap) run in a detached background process instead (see
     // the spawn block below), and their results are surfaced on a LATER
     // SessionStart firing via the status-file read below, not here (#820,
     // D8, corrected).
@@ -248,7 +289,7 @@ async function run(ctx) {
     // block below and its comment for why conflating the two was a bug).
     // `sessionId` (hoisted to the top of run(), above) is the hook payload's
     // own session id — the same field hooks.js's dispatcher already reads for
-    // `ownedRun` (`ctxLib.resolveRun(cwd, process.env, input.session_id)`).
+    // `ownedRun` (`ctxLib.resolveRun(cwd, deps.env, input.session_id, …)`, the injected env).
     // FAST_CHECKS never includes 'archive' (see this file's own constant
     // above), so passing it here has no effect on archive-merged.js's
     // ownership gate today — that check only ever runs off the detached
@@ -259,7 +300,7 @@ async function run(ctx) {
     // reconcile() inline, and a real session id is genuinely reachable at it.
     // forgeProbeTimeoutMs: the same hook bound the PreToolUse PR-stamp gate passes (#4578 Decision Q1).
     const result = await reconcile({
-      cwd: ctx.cwd, checks: FAST_CHECKS, skipIfFresh: true, ttlMs: DEFAULT_TTL_MS, cache, sessionId,
+      cwd: ctx.cwd, env, homeDir: ctx.homeDir, checks: FAST_CHECKS, skipIfFresh: true, ttlMs: DEFAULT_TTL_MS, cache, sessionId,
       forgeProbeTimeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS,
     });
 
@@ -337,8 +378,10 @@ async function run(ctx) {
         // Post-merge Steps 4.0/4.0b run late for a PR that merged after its session (#4599); a status file
         // from before that lacks these fields, and the Number.isInteger guards render nothing for it.
         // postMergeParentsClosed and postMergeUnmarkedParentsClosed are disjoint: the closes by runs that
-        // wrote their marker, and by runs whose marker write failed. postMergeParentsClosed counts every
-        // `ran` run's closes, a run whose Step 4.0 failed included (its Step 4.0b can still close one).
+        // wrote their marker, and by runs with none: a failed marker write, or a throw after Step 4.0b's
+        // closes ran (`skipped` / `error`). postMergeParentsClosed counts every `ran` run's closes, a run
+        // whose Step 4.0 failed included (its Step 4.0b can still close one). A holder whose claim another pass
+        // took over is in neither: its changes arrive as `postMergeSuperseded`, rendered further down.
         const unmarkedClosed = Number.isInteger(s.postMergeUnmarkedParentsClosed) ? s.postMergeUnmarkedParentsClosed : 0;
         const ranClosed = Number.isInteger(s.postMergeParentsClosed) ? s.postMergeParentsClosed : 0;
         if (s.postMergeRan) {
@@ -362,9 +405,23 @@ async function run(ctx) {
             : '';
           lines.push(`post-merge steps failed for ${s.postMergeFailed} merged run(s) (${failedRecords}tidy's parent-gate backstop recovers the parents)`);
         }
+        // Step 4.0b's parents left open and step-wide skips (#4798) stand on their own lines, independent of
+        // `postMergeFailed` / `postMergeRan`: a `marker-write-failed` entry is in neither count yet its fields
+        // reach here through the two lists. An older status file lacks them and the formatters return null.
+        const { parentsLeftOpenLine, stepSkipsLine, supersededChangesLine } = require('../reconcile/post-merge');
+        const parentsLine = parentsLeftOpenLine(s.postMergeParentsLeftOpen);
+        if (parentsLine) lines.push(parentsLine);
+        const stepSkipsText = stepSkipsLine(s.postMergeStepSkips);
+        if (stepSkipsText) lines.push(stepSkipsText);
+        // The successor owns a taken-over holder's marker, so the "marker could not be written" wording does not
+        // apply to it. An older status file lacks the field and the formatter returns null.
+        const supersededText = supersededChangesLine(s.postMergeSuperseded);
+        if (supersededText) lines.push(supersededText);
         if (s.archived) lines.push(`${s.archived} pipeline run(s) archived`);
         if (s.archivedBranches) lines.push(`${s.archivedBranches} local branch(es) archived/deleted`);
         if (s.prunedRemote) lines.push(`${s.prunedRemote} merged remote branch(es) deleted on origin`);
+        if (s.planRefsDeleted) lines.push(`${s.planRefsDeleted} closed record plan ref(s) deleted on origin`);
+        if (s.planRefsDeleteFailed) lines.push(`${s.planRefsDeleteFailed} plan ref deletion(s) failed on origin — tell the user once; the command is theirs to run, never run it yourself: node "${pluginRootEnv || '${CLAUDE_PLUGIN_ROOT}'}/bin/hooks.js" reconcile --checks plan-refs`);
         if (s.ledgerResiduePrOpened) lines.push(`${s.ledgerResiduePrOpened} residue-ledger removal PR(s) opened on origin`);
         // Residue ledgers left on the integration branch and why — pre-filtered
         // by the background CLI through ledger-residue.js's QUIET_SKIP_REASONS.
@@ -381,6 +438,23 @@ async function run(ctx) {
           lines.push(
             `worktree(s) left in place: ${s.notableWorktrees.map((w) => `${path.basename(w.path)} (${w.reason})`).join(', ')}`,
           );
+        }
+        // Runs a prior pass held because their PR merged while the run was in flight (#6143), and runs held
+        // because that check failed (merge state unknown, whether or not the PR number is known), each on its
+        // own line keyed on `reason`. An older status file lacks the field.
+        if (Array.isArray(s.hollowMerges) && s.hollowMerges.length) {
+          const checkFailed = s.hollowMerges.filter((e) => e.reason === 'hollow-check-failed');
+          const hollow = s.hollowMerges.filter((e) => e.reason !== 'hollow-check-failed');
+          if (hollow.length) {
+            lines.push(
+              `${hollow.length} merged PR(s) held as hollow merges (run unfinished; claim and run dir kept): ${hollow.map((e) => `${path.basename(String(e.runId))}${e.pr ? ` (PR #${e.pr}${e.phase ? `, ${e.phase} unfinished` : ''})` : ''}`).join(', ')}`,
+            );
+          }
+          if (checkFailed.length) {
+            lines.push(
+              `${checkFailed.length} run(s) held because the hollow-merge check failed (merge state unknown; claim and run dir kept): ${checkFailed.map((e) => `${path.basename(String(e.runId))}${e.pr ? ` (PR #${e.pr})` : ''}`).join(', ')}`,
+            );
+          }
         }
         // Escalate/resolve failures the pass swallowed (#4180) — a count plus the latest one; absent
         // (an older status file) or zero renders nothing.
@@ -405,11 +479,15 @@ async function run(ctx) {
       // stamp, #820 Task 10 fix-up), the `CLAUDE_TWEAKS_SESSION_ID` env
       // threading (#1687) and the detached/windowsHide/'error'-listener spawn
       // hardening all live in the shared helper, which the unscoped
-      // `hooks.js reconcile` CLI also calls (#4032). It never throws.
+      // `hooks.js reconcile` CLI also calls (#4032). It never throws on a failed spawn; a missing
+      // `env` throws before the helper's own try, and this best-effort catch would swallow it, which
+      // is harmless only because the event context always carries `env`.
       require('../reconcile/background-spawn').spawnBackgroundIfStale({
         root: path.dirname(path.dirname(bgStatusPath)), // bgStatusPath = {root}/.claude-tweaks/<status file>
         cwd: ctx.cwd,
         sessionId,
+        env: ctx.env,
+        spawn: ctx.spawn,
       });
     }
   } catch { /* best-effort */ }
@@ -421,7 +499,7 @@ async function run(ctx) {
     // check already applies for the same reason; this file's copy
     // previously forked git on every single SessionStart regardless.
     if (wtDetect.findPolicyFile(ctx.cwd)) {
-      const { repoRoot, isLinkedWorktree } = wtDetect.repoInfo(ctx.cwd);
+      const { repoRoot, isLinkedWorktree } = wtDetect.repoInfo(ctx.cwd, {}, { env });
       if (repoRoot) {
         const { on, matchedKey } = policy.resolveWorktreeAlways(repoRoot);
         parts.push(
@@ -455,7 +533,7 @@ async function run(ctx) {
           );
         } else if (services.length) {
           try {
-            const result = await portsEnsure.ensure(ctx.cwd, { policyServices: services });
+            const result = await portsEnsure.ensure(ctx.cwd, { policyServices: services, home: ctx.homeDir(), env });
             if (result.active) {
               const range = `${result.base}-${result.base + result.ports.length - 1}`;
               // #1927: CLAUDE_TWEAKS_LEASE rides in vars for the env file, not in this line (#1792 AC3's shape).
@@ -487,4 +565,4 @@ async function run(ctx) {
   return { json: { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: parts.join('\n\n') } } };
 }
 
-module.exports = { run, FAST_CHECKS, resolveBuildLine };
+module.exports = { run, FAST_CHECKS, resolveBuildLine, saveNodePath };

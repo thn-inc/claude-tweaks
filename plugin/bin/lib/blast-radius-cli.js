@@ -27,8 +27,9 @@ class BlastRadiusError extends Error {
   }
 }
 
-function defaultGit(args) {
-  return execFileSync('git', args, { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', windowsHide: true });
+// cwd/env are optional: left undefined, the child inherits the process's, as before.
+function defaultGit(args, { cwd, env } = {}) {
+  return execFileSync('git', args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', windowsHide: true });
 }
 
 function defaultReadFile(filePath) {
@@ -40,13 +41,18 @@ function defaultReadFile(filePath) {
   }
 }
 
-function resolveBlastRadiusConfig({ git, readFile, runDir }) {
+// env/homeDir are optional (#6006): they locate the factory policy layer; left undefined,
+// resolvePolicyConfig reads the inherited environment, as before.
+function resolveBlastRadiusConfig({ git, readFile, runDir, cwd, env, homeDir }) {
   let resolved;
   try {
     ({ result: resolved } = resolvePolicyConfig({
       git,
       readFile,
       runDir,
+      cwd,
+      env,
+      homeDir,
       keys: ['merge-sensitive-paths', 'auto-merge-max-lines', 'auto-merge-max-files'],
     }));
   } catch (err) {
@@ -135,11 +141,11 @@ function computeBlastRadius(opts = {}, deps = {}) {
   const { runDir = null } = opts;
 
   const { mergeBase, files } = gatherDiffFiles(opts, deps);
-  const config = resolveBlastRadiusConfig({ git, readFile, runDir });
+  const config = resolveBlastRadiusConfig({ git, readFile, runDir, cwd: deps.cwd, env: deps.env, homeDir: deps.homeDir });
   const summary = blastRadiusSummary(classifyDiffFiles(files, config.mergeSensitivePaths));
   return { mergeBase, config, summary };
 }
 
 module.exports = {
-  computeBlastRadius, gatherDiffFiles, BlastRadiusError, preferOriginRef, resolveBlastRadiusConfig,
+  computeBlastRadius, gatherDiffFiles, BlastRadiusError, preferOriginRef, resolveBlastRadiusConfig, defaultGit,
 };

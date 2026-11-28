@@ -131,13 +131,14 @@ override pushed, PR not re-rendered — release-please has not re-rendered PR #{
 
 The summary's outcome slot reads `failed`, not `PARTIAL`: `PARTIAL` asserts a release exists, and none does here. The `Release-As:` commit **is** on the integration branch, which is why the state is named rather than reported as a clean no-op — a second run must not push a second override commit.
 
-**The PR-check gate — `_shared/pr-first-merge.md`'s Merge-verification gate, not a second implementation.** The console's `CI on tip` row does **not** cover this: `ciTip` is the integration branch's tip, and the console *renders* CI, it does not gate on it. The checks that matter here are the release PR's own. Resolve the lever and read the PR exactly as that gate's Step 2.5 does — its four-field read, its head-run `gh run list --commit {headRefOid}` read, its ordered classification, its bounded watch, its green-exit re-entry check — and apply only the five deltas below. The classification itself is not restated here; read it there:
+**The PR-check gate — `_shared/pr-first-merge.md`'s Merge-verification gate, not a second implementation.** The console's `CI on tip` row does **not** cover this: `ciTip` is the integration branch's tip, and the console *renders* CI, it does not gate on it. The checks that matter here are the release PR's own. Resolve the lever and read the PR exactly as that gate's Step 2.5 does — its state read (`createdAt` included: the settle window's `{pr-created-at}`), its head-run `gh run list --commit {headRefOid}` read, its committer-date read when that list is empty (`{head-committed-at}`), its ordered classification, its bounded watch, its green-exit re-entry check — and apply only the five deltas below. The classification itself is not restated here; read it there:
 
 ```bash
 MERGE_VERIFICATION=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --run "{run-dir}" --values merge-verification)
 node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" merge-verification
-gh pr view {releasePr.value.number} --repo {owner}/{repo} --json state,mergeStateStatus,headRefOid,statusCheckRollup,title
-gh run list --repo {owner}/{repo} --commit {headRefOid from the read above} --limit 100 --json name,workflowName,status,conclusion,url
+gh pr view {releasePr.value.number} --repo {owner}/{repo} --json state,mergeStateStatus,headRefOid,statusCheckRollup,title,createdAt
+gh run list --repo {owner}/{repo} --commit {headRefOid from the read above} --limit 100 --json databaseId,name,workflowName,status,conclusion,url,startedAt,event,createdAt
+gh api repos/{owner}/{repo}/commits/{headRefOid} --jq .commit.committer.date
 ```
 
 An unreadable state is Step 2.5's own first row, unchanged in substance: never merge on a state this gate could not read — a read failure is not "no CI" — reported here as `failed`, reason `state-read-failed`. The five deltas, each a deliberate narrowing, substitution or addition for the release path:
@@ -381,7 +382,7 @@ records: 0 shipped
 
 When the shipped version differed from the gating version, the `release:` line names both — `release: {shipped} — {outcome} (gating version was {gating})` — so a reader never has to reconcile the console's number against the tag by hand.
 
-`HELD` is only ever a **pre-merge** word here — the `gh`-absent Transport stop, delta 5's re-rendered-major re-gate and the reviewed-tip comparison's two stops (`integration branch kept moving`, a blocking delta review), all of which move nothing — alongside the Step 4 HARD-GATEs that fire before this file runs at all. In any mode, `--train` and interactive alike, it asserts that nothing was merged or tagged, so applying it to anything this file did **after** the merge would be a false statement about the repository and would recommend re-running the train against a tag that already exists. Once Step 5 has landed, the only two outcomes are `released` and `PARTIAL`; when Step 5 did not land, the outcome is `failed`.
+`HELD` is only ever a **pre-merge** word here — the `gh`-absent Transport stop, delta 5's re-rendered-major re-gate and the reviewed-tip comparison's two stops (`integration branch kept moving`, a blocking delta review), all of which move nothing — alongside Step 1.5's release-block stop and the Step 4 HARD-GATEs, which fire before this file runs at all. In any mode, `--train` and interactive alike, it asserts that nothing was merged or tagged, so applying it to anything this file did **after** the merge would be a false statement about the repository and would recommend re-running the train against a tag that already exists. Once Step 5 has landed, the only two outcomes are `released` and `PARTIAL`; when Step 5 did not land, the outcome is `failed`.
 
 ## Anti-Patterns
 

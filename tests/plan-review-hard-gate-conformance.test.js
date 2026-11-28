@@ -6,6 +6,7 @@ const path = require('node:path');
 
 const { readText } = require('./helpers/read-skill');
 const { RAIL_BYTES } = require('../plugin/bin/lib/skill-audit/budgets');
+const { ASKED_CLASSES_TEXT } = require('./helpers/planning-decisions-clauses');
 // #3377: /build Common Step 1.6 (build/plan-review.md) adds a HARD-GATE — a
 // plan-review needs-human spec gap stops before Task 1 in every mode. A
 // HARD-GATE `auto` never silences must be registered in the contract's
@@ -28,23 +29,40 @@ const ANCHORS = [
   PHRASE,
   'in every mode',
   'DISPATCH_HEADLESS=1',
-  'bot:blocked',
+  // #5053 D3: the stop waits on `needs:answer` and keeps the grants, in any posture
+  'adds `needs:answer`, keeping every `auto:*` grant',
   'claim is released',
   'worktree and draft PR are left in place',
   // anchored on the report, not the bare word: the row's own name carries BLOCKED
   'reports `BLOCKED`',
-  '/claude-tweaks:backlog refine',
-  're-materializes',
+  // the two answer paths: a reply the bare drain folds in, or a body Decision and a typed resume
+  'a reply on the question comment',
+  '/claude-tweaks:dispatch resume #{n}',
   // Settle releases the dispatched claim; a parallel-wave
-  // member reports to its orchestrator; the re-grant is conditional on the headless block
+  // member reports to its orchestrator
   "Settle steps 1-2, never by the build",
   '`parallel`-wave member reports `hard-gate-failed`',
-  'when the headless block removed it',
+  'the grants were never removed',
 ];
 
 function rowProblems(row) {
   return ANCHORS.filter((a) => !row.includes(a));
 }
+
+// The plan-review clauses #5053 retired from the row, frozen from eaa89bea31's row.
+const RETIRED_ROW_CLAUSES = [
+  'the record goes `bot:blocked` with the question posted on it',
+  'every `auto:*` grant removed',
+  're-grants `auto:build` at `/claude-tweaks:backlog refine` when the headless block removed it',
+];
+const FROZEN_ROW_FRAGMENT = "when `DISPATCH_HEADLESS=1`, the record goes `bot:blocked` with the question posted on it (issue comment, `bot:blocked`, every `auto:*` grant removed — the transport `/claude-tweaks:dispatch` uses for blocked records, without the retry-ceiling count). Exit state (dispatched call): … resume: a human answers on the record, re-grants `auto:build` at `/claude-tweaks:backlog refine` when the headless block removed it, and the next dispatch re-materializes from the answered record.";
+const retiredClauses = (row) => RETIRED_ROW_CLAUSES.filter((c) => row.includes(c));
+
+test('#5053: the HARD-GATE row no longer blocks a headless plan-review stop or asks for a re-grant', () => {
+  assert.deepStrictEqual(retiredClauses(contractRow()), []);
+  // go-red: the frozen pre-change fragment carries every retired clause.
+  assert.deepStrictEqual(retiredClauses(FROZEN_ROW_FRAGMENT), RETIRED_ROW_CLAUSES);
+});
 
 function contractRow() {
   const rows = read(CONTRACT).split('\n').filter((l) => l.startsWith('| HARD-GATE / BLOCKED / STOP conditions'));
@@ -94,6 +112,18 @@ test('AC5.2: the consumer list is complete', () => {
   for (const f of restating) {
     assert.ok(known.has(f), `${f} restates the HARD-GATE families but is not a pinned consumer — cite "${PHRASE}" there and add it to CONSUMERS`);
   }
+});
+
+// The bare clause text is what the pin matches; the full clause adds the `; ` separator, so the control can cut it whole.
+const ASKED_CLASSES_CLAUSE = `; ${ASKED_CLASSES_TEXT}`;
+const NARROWING_MSG = 'the HARD-GATE row lacks the asked-classes narrowing clause (#6051)';
+const narrowsUnderAskedClasses = (row) => row.includes(ASKED_CLASSES_TEXT);
+
+test('the HARD-GATE row narrows the plan-review gate under asked-classes by pointing at _shared/planning-decisions.md (#6051)', () => {
+  assert.ok(narrowsUnderAskedClasses(contractRow()), NARROWING_MSG);
+  // control: the row with the clause removed fails the same assertion with its own message.
+  const doctored = contractRow().split(ASKED_CLASSES_CLAUSE).join(')');
+  assert.throws(() => assert.ok(narrowsUnderAskedClasses(doctored), NARROWING_MSG), { message: NARROWING_MSG });
 });
 
 test('go-red: rowProblems flags each removed anchor', () => {

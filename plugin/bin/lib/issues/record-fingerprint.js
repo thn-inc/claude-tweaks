@@ -6,10 +6,21 @@
 // prose convention alone. No network.
 'use strict';
 
-// Dual-write fingerprint markers: FP_RE_WORK is the current marker written by
+// Fingerprint markers: FP_RE_WORK is the current marker written by
 // recordPayload() (record-payload.js); FP_RE_LEGACY is the pre-work-record
-// marker still present on older issues during the migration window, read
-// from all three health producers (skills/_shared/work-record.md).
+// marker of all three health producers, read only — nothing writes it any more
+// (skills/_shared/work-record.md).
+// Removal condition: remove FP_RE_LEGACY and its branch in extractFingerprint
+// once no issue, open or closed, carries a code-health-fingerprint,
+// harness-health-fingerprint or journey-health-fingerprint marker. The check is
+//   gh issue list --state all --limit 100000 --json number,body -q '[.[] | select(.body | test("(code|harness|journey)-health-fingerprint:"))] | length'
+// and a result of 0 means the condition is met. The command checks only the
+// repository it runs in; a 0 is necessary but not sufficient, because the reader
+// also serves consumer repos this check cannot see, so removal also needs a
+// release note plus a sunset window (or a sweep step that rewrites old markers
+// to `work-fingerprint`). The removal reaches past this file: grep FP_RE_LEGACY
+// and `-health-fingerprint` repo-wide first, since re-exports, skill prose and
+// tests pinning that prose name them too.
 const FP_RE_WORK = /<!--\s*work-fingerprint:\s*([^\s>]+)\s*-->/;
 const FP_RE_LEGACY = /<!--\s*(?:code-health|harness-health|journey-health)-fingerprint:\s*([^\s>]+)\s*-->/;
 
@@ -29,11 +40,12 @@ const FP_RE_WORK_PLAIN = /^work-fingerprint: (\S+)[ \t]*$/m;
 // body -> fingerprint string, or null when no marker is present (also null for
 // null/undefined/empty body). The new work-fingerprint HTML-comment marker wins
 // whenever both it and the legacy HTML-comment marker are present, regardless of
-// which appears first in the body (dual-write/migration period). The plain-text
-// companion (FP_RE_WORK_PLAIN, #1700) is checked last, as a fallback only — it
-// exists specifically for the case where an MCP-fetched body has had every
-// HTML-comment span stripped, so neither HTML-comment regex can match, but the
-// plain-text line survives untouched.
+// which appears first in the body (the legacy marker is still read until the
+// removal condition above holds). The plain-text companion (FP_RE_WORK_PLAIN,
+// #1700) is checked last, as a fallback only — it exists specifically for the
+// case where an MCP-fetched body has had every HTML-comment span stripped, so
+// neither HTML-comment regex can match, but the plain-text line survives
+// untouched.
 function extractFingerprint(body) {
   if (typeof body !== 'string' || !body) return null;
   const work = FP_RE_WORK.exec(body);
@@ -42,6 +54,21 @@ function extractFingerprint(body) {
   if (legacy) return legacy[1];
   const plain = FP_RE_WORK_PLAIN.exec(body);
   return plain ? plain[1] : null;
+}
+
+// body -> every fingerprint marker in body order (work and legacy HTML-comment markers and the
+// plain-text companion lines alike), deduped with the first occurrence keeping its position; [] for a
+// non-string or empty body. A bundle record (#6283) carries one marker per member finding, so a map that
+// dedups against existing records must read all of them; extractFingerprint above stays first-wins for
+// the places that attach ONE fingerprint to a record. Defused text spells none of the three forms.
+function extractFingerprints(body) {
+  if (typeof body !== 'string' || !body) return [];
+  const hits = [];
+  for (const re of [FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN]) {
+    for (const m of body.matchAll(new RegExp(re.source, `${re.flags}g`))) hits.push([m.index, m[1]]);
+  }
+  hits.sort((a, b) => a[0] - b[0]);
+  return [...new Set(hits.map((h) => h[1]))];
 }
 
 // Producer-supplied text quoted into a record body must not spell a fingerprint marker.
@@ -101,5 +128,5 @@ function recordFingerprint(map, fingerprint, number) {
 }
 
 module.exports = {
-  FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, defuse, checkFingerprint, recordFingerprint,
+  FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, extractFingerprints, defuse, checkFingerprint, recordFingerprint,
 };

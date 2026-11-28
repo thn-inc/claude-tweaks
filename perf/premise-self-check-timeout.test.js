@@ -13,12 +13,13 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../tests/helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { premiseReadsUnresolved } = require('../plugin/bin/lib/health-core/premise-self-check');
 
 // Temp dir name deliberately contains a space, matching the tests/ suite's fixture.
-function tmpWithSpace() { return fs.mkdtempSync(path.join(os.tmpdir(), 'premise self-check-')); }
+function tmpWithSpace() { return scratchDir('premise self-check-'); }
 
 test('real shell: a hung command is killed at the timeout and dropped', () => {
   const dir = tmpWithSpace();

@@ -65,7 +65,7 @@ test('auto-decision-log.md: worked example cites the pr-first bootstrap skip (#7
 const BUILD_STEP_SKIP_SITES = [
   { name: 'Spec Step 1 (pr-first draft-PR bootstrap)', source: BUILD_SKILL, pattern: /a no-op under `local-merge`\. \*\*On skip\*\* \(local-merge\), write a `SKIP` entry/ },
   { name: 'Spec Step 2.5 (Manual Steps probing)', source: BUILD_SKILL, pattern: /\*\*No Manual Steps section \(skip\):\*\* write one `SKIP` entry/ },
-  { name: 'Common Step 1.6 (Plan Review gate, #3377)', source: BUILD_SKILL, pattern: /uses the size test alone\. \*\*On skip\*\*, write a `SKIP` entry per `_shared\/auto-decision-log\.md`'s degrade-trace rule/ },
+  { name: 'Common Step 1.6 (Plan Review gate, #3377)', source: BUILD_SKILL, pattern: /drops the fast-lane condition\. \*\*On skip\*\*, write a `SKIP` entry per `_shared\/auto-decision-log\.md`'s degrade-trace rule/ },
   { name: 'Common Step 1.7 (Design Pre-Build gate)', source: BUILD_SKILL, pattern: /see `design-prebuild\.md` in this skill's directory\. \*\*On skip\*\*, write a `SKIP` entry/ },
   { name: 'Common Step 4.5 (Architecture Alignment)', source: BUILD_SKILL, pattern: /\*\*On skip\*\* \(one of the three conditions fires — never for a normal run finding zero deviations\), write a `SKIP` entry/ },
   { name: 'Common Step 5.5 (Operational Checklist)', source: BUILD_SKILL, pattern: /Otherwise skip this step entirely\. \*\*On skip\*\*, write a `SKIP` entry per the degrade-trace rule \(condition: no schema\/env\/IaC\/CI\/platform-config files in diff\)/ },
@@ -103,9 +103,9 @@ function assertFoldRule(text) {
     'dispatch.md must keep the trigger keyed on named steps, not on surface');
   assert.match(text, /\*\*Folded verification task \(#3118\)\.\*\*/,
     'dispatch.md must define the label build/SKILL.md Common Step 5 points at');
-  const anchor = text.indexOf('Common Step 5 runs the full suite once');
+  const anchor = text.indexOf("Common Step 5 runs the branch's one verification");
   const rule = text.indexOf('A plan task folded into Common Step 5');
-  assert.ok(anchor !== -1 && rule > anchor, 'the fold rule must follow the "runs the full suite once" sentence');
+  assert.ok(anchor !== -1 && rule > anchor, 'the fold rule must follow the "runs the branch\'s one verification" sentence');
 }
 
 test('AC1.1: build/dispatch.md states the fold rule — runner checks only; every other named step runs or writes a SKIP entry', () => {

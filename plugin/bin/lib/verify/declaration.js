@@ -13,6 +13,8 @@
 'use strict';
 
 const fs = require('fs');
+const path = require('path');
+const { canonicalRealpath, resolveWithin } = require('../path-guard');
 const { globToRegExp } = require('../issues/blast-radius');
 
 const DECLARATION_PATH = '.claude-tweaks/verify-scope.json';
@@ -21,6 +23,13 @@ const MAX_RETRIES_CEILING = 2;
 const DEFAULT_MAX_AGE_COMMITS = 200;
 const GIT_COMMON_DIR_TOKEN = '{git-common-dir}';
 const IMPACT_KEYS = ['suite', 'command', 'tests', 'maxAgeCommits', 'map', 'fetch'];
+const CI_KEYS = ['workflow', 'job', 'waitSeconds', 'pollSeconds'];
+const CONCURRENCY_KEYS = ['suiteSlots', 'reruns', 'timeoutPatterns'];
+// #4347: a CI run of this repo's suite takes ~3.5 min plus queueing; 15 min
+// matches the job's own timeout-minutes, so a run that is still going past it
+// would have been killed anyway.
+const DEFAULT_CI_WAIT_SECONDS = 900;
+const DEFAULT_CI_POLL_SECONDS = 20;
 
 function isPlainObject(v) { return typeof v === 'object' && v !== null && !Array.isArray(v); }
 
@@ -143,6 +152,112 @@ function readDeclaration(filePath, fsImpl = fs, { selfPath = null } = {}) {
     }
   }
 
+  // ci (#4347): a suite whose full run is taken from the PR's CI job on HEAD
+  // instead of a local run — {suite: {workflow, job, waitSeconds?, pollSeconds?}}.
+  // A reader that predates the key ignores it (no unknown-top-level-key check
+  // above), so the committed declaration stays readable by older builds.
+  let ci = null;
+  if (raw.ci !== undefined) {
+    if (!isPlainObject(raw.ci)) {
+      errors.push('ci: must be an object of suite name to {workflow, job, waitSeconds?, pollSeconds?}');
+    } else {
+      const before = errors.length;
+      const parsedCi = {};
+      for (const [name, src] of Object.entries(raw.ci)) {
+        const where = `ci.${name}`;
+        if (!declared.has(name)) errors.push(`${where}: unknown suite (declared: ${suites.join(', ') || 'none'})`);
+        else if (toolScoped) errors.push(`${where}: cannot take a CI source for a tool-scoped checks.tests command ({base}) — CI runs the whole suite, that tool selects its own tests`);
+        if (!isPlainObject(src)) { errors.push(`${where}: must be an object of {${CI_KEYS.join(', ')}}`); continue; }
+        const unknown = Object.keys(src).filter((k) => !CI_KEYS.includes(k));
+        if (unknown.length) errors.push(`${where}: unknown key(s) ${unknown.map((k) => JSON.stringify(k)).join(', ')} (allowed: ${CI_KEYS.join(', ')})`);
+        for (const key of ['workflow', 'job']) {
+          if (typeof src[key] !== 'string' || src[key].trim() === '') errors.push(`${where}.${key}: must be a non-empty string`);
+        }
+        for (const key of ['waitSeconds', 'pollSeconds']) {
+          if (src[key] !== undefined && (!Number.isInteger(src[key]) || src[key] < 1)) errors.push(`${where}.${key}: must be a positive integer`);
+        }
+        parsedCi[name] = {
+          workflow: src.workflow,
+          job: src.job,
+          waitSeconds: src.waitSeconds === undefined ? DEFAULT_CI_WAIT_SECONDS : src.waitSeconds,
+          pollSeconds: src.pollSeconds === undefined ? DEFAULT_CI_POLL_SECONDS : src.pollSeconds,
+        };
+      }
+      if (errors.length === before) ci = parsedCi;
+    }
+  }
+
+  // localRuns (#5369): "on-request" keeps CI-declared suites off this machine
+  // unless verify.js is given --local. Top-level so a reader that predates the
+  // key ignores it (same expand-contract note as ci); valid only beside a ci
+  // block. Always present on a parsed declaration: 'on-request' or null.
+  let localRuns = null;
+  if (raw.localRuns !== undefined) {
+    if (raw.localRuns !== 'on-request') errors.push(`localRuns: must be "on-request" when present, got ${JSON.stringify(raw.localRuns)}`);
+    else if (raw.ci === undefined) errors.push('localRuns: needs a ci block — "on-request" keeps CI-declared suites off this machine, and no suite declares a ci source');
+    else localRuns = raw.localRuns;
+  }
+
+  // subsetLaneSuites (#5368): declared suites whose own command is small enough
+  // to run in the subset lane. Top-level so a reader that predates the key
+  // ignores it (no unknown-top-level-key check above, same note as ci and
+  // localRuns). Always present on a parsed declaration: the list, or [].
+  let subsetLaneSuites = [];
+  if (raw.subsetLaneSuites !== undefined) {
+    if (!Array.isArray(raw.subsetLaneSuites)) {
+      errors.push('subsetLaneSuites: must be an array of declared suite names');
+    } else {
+      const seen = new Set();
+      const dupes = new Set();
+      const impactSuite = raw.impact && raw.impact.suite;
+      for (const name of raw.subsetLaneSuites) {
+        if (typeof name !== 'string') { errors.push(`subsetLaneSuites: entries must be strings, got ${typeof name}`); continue; }
+        // Judge each name once; its repeats only produce the one duplicate error.
+        if (seen.has(name)) {
+          if (!dupes.has(name)) errors.push(`subsetLaneSuites: "${name}" is listed more than once`);
+          dupes.add(name);
+          continue;
+        }
+        seen.add(name);
+        if (!declared.has(name)) errors.push(`subsetLaneSuites: unknown suite "${name}" (declared: ${suites.join(', ') || 'none'})`);
+        else if (name === impactSuite) errors.push(`subsetLaneSuites: "${name}" is impact.suite — its full command is the whole-suite run the full lane exists for`);
+      }
+      subsetLaneSuites = raw.subsetLaneSuites.filter((n) => typeof n === 'string');
+    }
+  }
+
+  // concurrency (#5119): how many machine-wide suite slots this project's runs
+  // may hold at once. A reader that predates the key ignores it. Always present
+  // on a parsed declaration; suiteSlots null means "not declared".
+  // #5150 adds reruns (how many baseline adjudication reruns may run at once;
+  // null = not declared) and timeoutPatterns (literal substrings that mark a
+  // failure as a timeout; [] = none). The block stays strict: a reader built
+  // before the release carrying #5150 rejects either key as unknown.
+  const concurrency = { suiteSlots: null, reruns: null, timeoutPatterns: [] };
+  if (raw.concurrency !== undefined) {
+    if (!isPlainObject(raw.concurrency)) {
+      errors.push('concurrency: must be an object');
+    } else {
+      const unknown = Object.keys(raw.concurrency).filter((k) => !CONCURRENCY_KEYS.includes(k));
+      if (unknown.length) errors.push(`concurrency: unknown key(s) ${unknown.map((k) => JSON.stringify(k)).join(', ')} (allowed: ${CONCURRENCY_KEYS.join(', ')})`);
+      const slots = raw.concurrency.suiteSlots;
+      if (slots !== undefined) {
+        if (!Number.isInteger(slots) || slots < 1) errors.push('concurrency.suiteSlots: must be a positive integer');
+        else concurrency.suiteSlots = slots;
+      }
+      const reruns = raw.concurrency.reruns;
+      if (reruns !== undefined) {
+        if (!Number.isInteger(reruns) || reruns < 1) errors.push('concurrency.reruns: must be a positive integer');
+        else concurrency.reruns = reruns;
+      }
+      const patterns = raw.concurrency.timeoutPatterns;
+      if (patterns !== undefined) {
+        if (!Array.isArray(patterns) || !patterns.every((p) => typeof p === 'string' && p !== '')) errors.push('concurrency.timeoutPatterns: must be an array of non-empty strings');
+        else concurrency.timeoutPatterns = patterns.slice();
+      }
+    }
+  }
+
   // rules
   const rules = [];
   if (!Array.isArray(raw.rules)) {
@@ -252,7 +367,7 @@ function readDeclaration(filePath, fsImpl = fs, { selfPath = null } = {}) {
     ok: true,
     decl: {
       checks: { types: typeof checks.types === 'string' ? checks.types : null, lint: typeof checks.lint === 'string' ? checks.lint : null, tests },
-      suites, toolScoped, retry, rules, flaky, preExisting, generated, impact,
+      suites, toolScoped, retry, rules, flaky, preExisting, generated, impact, ci, localRuns, subsetLaneSuites, concurrency,
     },
   };
 }
@@ -268,6 +383,25 @@ function generatedExemption(dirtyPaths, generated) {
   return allGenerated ? [...new Set(dirtyPaths)].sort() : null;
 }
 
+// #3017: a relative --scope path resolves against the checkout root (`toplevel`), never the bare cwd; outside a git
+// work tree (`toplevel` null) it resolves against `fallbackDir`, as every other git call the caller makes fails the same way.
+function resolveScopePath(scope, toplevel, fallbackDir) {
+  if (path.isAbsolute(scope)) return scope;
+  return path.join(toplevel ?? fallbackDir, scope);
+}
+
+// #2987: the repo-relative form of a resolved --scope path, so readDeclaration can refuse a `generated` glob covering
+// the declaration actually read. null when it can't be proven inside `toplevel` (a file outside never shows in its dirty set).
+function scopeSelfPath(resolvedPath, toplevel) {
+  if (toplevel === null) return null;
+  const leaf = resolveWithin(resolvedPath, toplevel);
+  if (leaf === null) return null;
+  const rootReal = canonicalRealpath(toplevel);
+  if (rootReal === null) return null;
+  return path.relative(rootReal, leaf).split(path.sep).join('/') || null;
+}
+
 module.exports = {
-  readDeclaration, generatedExemption, DECLARATION_PATH, DEFAULT_MAX_RETRIES, MAX_RETRIES_CEILING, DEFAULT_MAX_AGE_COMMITS, GIT_COMMON_DIR_TOKEN,
+  readDeclaration, generatedExemption, resolveScopePath, scopeSelfPath, DECLARATION_PATH, DEFAULT_MAX_RETRIES, MAX_RETRIES_CEILING, DEFAULT_MAX_AGE_COMMITS, GIT_COMMON_DIR_TOKEN,
+  DEFAULT_CI_WAIT_SECONDS, DEFAULT_CI_POLL_SECONDS, CONCURRENCY_KEYS,
 };

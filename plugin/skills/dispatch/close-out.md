@@ -34,7 +34,12 @@ touching shared state runs one member at a time.
 1. **Re-verify CI is currently green — never trust the parked state (AC1).** Read fresh via `gh pr
    checks {number}` (or `gh pr view {number} --json statusCheckRollup`), summarized as
    `passing`/`failing`/`pending`, plus `_shared/pr-first-merge.md` Step 2.5's head-run `gh run list`
-   read (a not-yet-completed head run is `pending`, not green) — the identical read `resume-confirmation.md`'s own live-value-
+   read (a not-yet-completed head run is `pending`, not green), plus Step 2.5's ready-run read
+   (`bin/ready-run.js`: `awaiting` reads `pending`, `red` or `draft-skip-without-ready-trigger` reads
+   `failing`, and `read-failed` — or a non-zero exit or output with no `state` — stops this candidate
+   as `stopped: CI unreadable`; on a `DIRTY`/`CONFLICTING` PR — step 2's read — `awaiting`,
+   `draft-skip-without-ready-trigger` and an empty rollup's `pending` do not stop here but fall through to step 2, since a
+   conflicting PR gets no workflow run, per Step 2.5's conflict-first rule) — the identical read `resume-confirmation.md`'s own live-value-
    sourcing paragraph already performs for its confirmation, reused rather than re-implemented.
    `failing`: report the failure and stop for this candidate — do not treat a stale prior green as
    current. `pending`: report and stop for this candidate too; a headless close-out that waited on
@@ -58,7 +63,7 @@ touching shared state runs one member at a time.
    read `close-out-update.md` too (it offers `gh pr update-branch`); declining continues, since
    BEHIND was never a stop — except on a resume (the existing `.worktrees/close-out-{number}` or pending marker above), where `close-out-update.md` step 1 offers no skip: declining stops, since that head is unverified. `mergeStateStatus: BLOCKED` with nothing else wrong is the forge
    waiting on required checks/reviews, not a conflict — proceed.
-3. **Convert draft to ready, if needed (AC2).** **Acceptance labeling first** — this check, and
+3. **Convert draft to ready, if needed (AC2).** *Parked check (#4615):* run `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" parked --record {n}` on each of the PR's `Fixes` records, adding `--run "{run-dir}"` when a run dir is already in hand (else omit it; the CLI then reads the repo-root policy). Any exit but 5: stop this candidate, with `stopped: parked awaiting local acceptance — run /claude-tweaks:accept #{record}` for exit 0 and `stopped: park state not confirmed (exit {code})` otherwise, before any Mark-ready call or Step 1 run below. **Acceptance labeling first** — the labeling check, and
    any Step 1 run it leads to, precedes the Mark-ready call below, keeping
    `_shared/pr-first-merge.md`'s own Step 1 → Step 2 order. Apply
    `_shared/acceptance-labeling-landed.md` to this PR (the run-dir resolution, the `verify.json`
@@ -77,6 +82,12 @@ touching shared state runs one member at a time.
    Then, when `isDraft`, run `_shared/pr-first-merge.md`'s Step 2 (Mark ready) now, before the
    confirmation gate — the gate's own question states the PR's current state, and "still draft"
    would already be stale by the time a human reads it otherwise.
+
+   **Re-read CI after Mark ready.** When Mark ready ran, re-run step 1's read — the rollup, the
+   head-run read and the ready-run read — against the now-ready PR before the confirmation gate,
+   with step 1's stop rules (#5153). Right after `gh pr ready`, a workflow that declares
+   `ready_for_review` has no run since the undraft yet, so this read is `pending` and stops the
+   candidate; a later `close-out #{number}` reads the finished ready run.
 4. **Confirmation gate.** Read `close-out-confirmation.md` in this skill's directory and follow it
    (AC4). Declining stops here — the PR stays `pending-review` as it was (an update that already ran stays pushed), and nothing below
    runs for this candidate.
@@ -96,7 +107,7 @@ touching shared state runs one member at a time.
    covered by the confirmation gate above (a project whose deploy step needs its own confirmation
    should say so in its own docs; this mode does not add a second gate on top of step 4's).
 7. **On `merged` — release the claim and clean up.** First run
-   `_shared/pr-first-merge-post-merge.md`'s Step 4.0, then Step 4.0b (`{pr-number}` = `{number}`), with `PIPELINE_RUN_DIR` = step 3's resolved run dir. Then reuse
+   `_shared/pr-first-merge-post-merge.md`'s Step 4.0, then Step 4.0b (`{pr-number}` = `{number}`), then Step 4.0c, with `PIPELINE_RUN_DIR` = step 3's resolved run dir. Then reuse
    `wrap-up/cleanup-procedures-execution.md` Section E (claim release, `bot:in-progress` removal)
    and Section B (run-dir archival) exactly as they are cited elsewhere in this skill — never
    hand-roll the bookkeeping a canonical procedure already owns. Worktree removal (Section C, if
@@ -113,10 +124,10 @@ touching shared state runs one member at a time.
 ## Reporting
 
 One line per candidate: `#{number} — {outcome}` where `{outcome}` is one of `merged`, `armed`,
-`stopped: CI {status}`, `stopped: mergeStateStatus {DIRTY | BEHIND} — update declined`,
+`stopped: CI {status}`, `stopped: CI unreadable`, `stopped: mergeStateStatus {DIRTY | BEHIND} — update declined`,
 `stopped: update failed — {conflict not resolved | verification | push rejected | update-branch rejected | head moved | base not fetched | marker unreadable | marker not written | gh absent | command failed}`,
 `stopped: CI {status} after update`, `stopped: mergeStateStatus {status} after update`,
-`stopped: acceptance labeling unverifiable — no run dir`, or `declined at confirmation gate`.
+`stopped: acceptance labeling unverifiable — no run dir`, `stopped: parked awaiting local acceptance — run /claude-tweaks:accept #{record}`, `stopped: park state not confirmed (exit {code})`, or `declined at confirmation gate`.
 The bare form's summary line names how many candidates were found, merged/armed, stopped, and declined. This mode is never headless-self-reporting like bare
 `/dispatch`'s own Preflight failures (`_shared/headless-self-report.md`) — its confirmation gate
 (step 4) requires a human present by construction (`close-out-confirmation.md`'s no-carve-out

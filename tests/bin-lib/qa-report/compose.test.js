@@ -24,6 +24,11 @@ test('exports the status and category vocabularies', () => {
   assert.deepEqual([...CATEGORIES].sort(), ['code-bug', 'flaky-env', 'stale-selector', 'story-bug', 'ux-issue']);
 });
 
+test('base_url passes through, and absent is null', () => {
+  assert.equal(compose([story('a', 'PASS')], { base_url: 'http://localhost:3000' }).report.base_url, 'http://localhost:3000');
+  assert.equal(compose([story('a', 'PASS')]).report.base_url, null);
+});
+
 test('summary agrees with the stories array', () => {
   const { report, error } = compose([
     story('a', 'PASS'), story('b', 'PASS_WITH_CAVEATS', { caveats: ['x'] }),

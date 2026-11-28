@@ -469,7 +469,7 @@ test('AC4 e2e (spec AC5, shadow-dup half): a console-auto run with one copy per 
     readFile: (p) => fs.readFileSync(p, 'utf8'),
     readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
     gitApplyCheck: () => ({ ok: true }),
-    readGrants: (numbers) => Object.fromEntries(numbers.map((n) => [n, { labels: ['auto:merge'], pendingSince: null }])),
+    readGrants: (numbers) => Object.fromEntries(numbers.map((n) => [n, { labels: ['auto:build', 'auto:merge'], pendingSince: null }])),
     now: () => Date.parse('2026-09-06T12:00:00Z'),
   };
   const r = resolveAll({ runDir: f.runDir, policy: 'console-auto', deps: resolveDeps });

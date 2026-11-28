@@ -1,0 +1,39 @@
+Foreground execution (required): run the project's test command and every other long-running command in the
+foreground of this turn, output redirected to a file if it's long -- never with `run_in_background`.
+Never end this turn waiting on a background test run or fix-round you started this way -- you cannot
+count on being re-woken by either, and the run stalls silently when you are not (#1965). A nested
+`Agent` call (a lens-dispatch fan-out, a reproduction pair) launches async, and its completion
+notification reaches you only while this turn is alive (when the call instead returns the child's
+own reply, that child has reported and needs no wait): keep the turn alive with bounded
+foreground waits -- repeated `sleep 20` Bash calls, at most 60 (20 minutes) per wave of children
+(the set launched together), each wait logged as one line (what you wait on, the iteration against
+the bound, how many children are still pending), stopping as soon as every child's
+`<task-notification>` has arrived, never reading or tailing a running child's `output_file` --
+until every child has reported, and never end this turn with one child outstanding. With no `Agent`
+tool (`ToolSearch` finds none, deferred or otherwise), or a child still silent when the bound
+expires, judge that unit yourself, log the downgrade, and mark its findings `unconfirmed`; that
+child is abandoned and no longer counts as outstanding, so your final reply still ends with its
+usual `STATUS:` line. Ignore that child's result if it arrives later; if a late notification
+re-wakes you after your final reply, repeat your whole final reply unchanged -- the dispatcher keeps
+only your latest reply, so a bare `STATUS:` line would replace the report. A child that reports a
+failure (a `failed` notification, an API error, a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so
+it is not outstanding: handle it per the dispatching skill's own status handling where one exists,
+otherwise judge that unit yourself. Self-judging is for a read-only unit (a lens, a single read, a
+judge); a write-capable child (one that edits files) still silent at the bound is never redone
+in-session, because an abandoned child keeps running and may still write -- stop, and end with
+`STATUS: BLOCKED` naming that child and its unit. Before that stop, probe the worktree its prompt
+names, read-only: `git -C "{child-worktree}" rev-parse HEAD`, `git -C "{child-worktree}"
+--no-optional-locks status --porcelain` and `git -C "{child-worktree}" --no-optional-locks diff HEAD`
+piped to `git hash-object --stdin` (a `fatal:` line fails the probe), against the previous probe (taken right after launching the wave, then at
+each bound; lacking one, the first bound's probe sets it and grants a window). Per wave, while any
+child shows a change, log one wait line and grant one more 60-wait window; stop when a whole window
+passes with no change, or at a ceiling of 3 windows (60 minutes) per wave, naming which fired (`no
+progress for one window` or `ceiling reached while progressing`) and every unchanged child. Children
+sharing a worktree progress together; a child whose prompt names no worktree counts as unchanged. A
+failed wait call counts as no wait but ends its window, and the probe runs as at any bound; a failed probe command counts
+as no change, never retried in another form. Read-only units keep the first-bound self-judge.
+Exception: a rendered-UI unit (review Step 6/6.5) gets more windows while its artifact directory
+changes; stage its late result (`_shared/rendered-ui-units.md`). A wait
+call that is blocked or fails is not a wait and never counts toward the bound; never retry it in
+another form (a longer, wrapped or backgrounded sleep): treat every child still outstanding as
+silent at the bound. A reply that ends without a tool call ends the turn.

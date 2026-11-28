@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -13,6 +14,7 @@ const { createPrStateResolver } = require('../../../plugin/bin/lib/reconcile/pr-
 const { GRANT_LABELS } = require('../../../plugin/bin/lib/release-claim/release');
 const { CLOSING_KEYWORD_ALTERNATION } = require('../../../plugin/bin/lib/issue-branch-tracking');
 const { STUB_SKIP } = require('../../helpers/path-stub');
+const { gateOriginRepo } = require('../../../plugin/bin/lib/repo-resolve');
 
 // The label a `gh api -X DELETE .../labels/{name}` fake call removes: the last argv entry, URL-encoded.
 function deletedLabelName(args) {
@@ -83,6 +85,11 @@ test('decideRelease: transport failures still skip even with closed issue', () =
 test('decideRelease: invalid-arguments skips with reason invalid-arguments (#3416)', () => {
   assert.deepStrictEqual(decideRelease('live', 'invalid-arguments', undefined, undefined), { action: 'skip', reason: 'invalid-arguments' });
 });
+test('decideRelease: unknown-host skips with reason unknown-host, even with a closed issue — never pr-closed-unmerged (#4794)', () => {
+  assert.deepStrictEqual(decideRelease('live', 'unknown-host', 'CLOSED', undefined), { action: 'skip', reason: 'unknown-host' });
+  assert.deepStrictEqual(decideRelease('stale', 'unknown-host', undefined, undefined), { action: 'skip', reason: 'unknown-host' });
+  assert.equal(needsIssueEvidence('unknown-host'), false);
+});
 
 test('decideRelease: tombstone/absent/unreadable never release on issue-closed', () => {
   assert.strictEqual(decideRelease('tombstone', null, 'CLOSED').action, 'skip');
@@ -125,7 +132,7 @@ test('shouldSkipClaimRead: no cached entry (undefined) does not skip — first s
 });
 
 test('releaseMerged: a tombstoned claim with an unchanged sha is never re-fetched on the next pass', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-cache-'));
+  const root = scratchDir('ct-release-cache-');
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
 
@@ -147,6 +154,27 @@ test('releaseMerged: a tombstoned claim with an unchanged sha is never re-fetche
   assert.equal(readCalls, 1, 'second pass must skip the read for an unchanged terminal-state sha');
 });
 
+// #4794: the origin goes through the #4933 gate (repoTargetOf) before any gh call, so a host the gate
+// refuses (an SSH alias) reports unknown-host with the gate's own text, not a bare-slug guess.
+test('#4794: an SSH-alias origin refuses before any gh call — failure unknown-host, detail the gate refusal', async () => {
+  const root = scratchDir('ct-release-alias-');
+  execFileSync('git', ['init', '-q'], { cwd: root });
+  execFileSync('git', ['remote', 'add', 'origin', 'git@github-work:acme/w.git'], { cwd: root });
+  const gateDeps = { env: {}, readFile: () => { throw new Error('ENOENT'); } };
+  const calls = [];
+  const ghApi = (args) => { calls.push(args); return { stdout: '', failure: null, status: null }; };
+
+  const result = await releaseMerged({ cwd: root, ghApi, gateDeps });
+
+  assert.equal(result.failure, 'unknown-host');
+  assert.deepEqual(result.released, []);
+  assert.deepEqual(result.skipped, []);
+  assert.equal(result.detail, gateOriginRepo('git@github-work:acme/w.git', gateDeps).refusal);
+  assert.match(result.detail, /GH_HOST=github\.com/);
+  assert.doesNotMatch(result.detail, /GH_HOST=github-work/);
+  assert.deepEqual(calls, [], 'a refused origin makes no gh call');
+});
+
 // Task 7's Critical TOCTOU fix, pinned (#820 final review). Every other
 // fixture in this file gives the directory listing and the blob read the
 // SAME sha, so both would still pass if the cache write reverted to the
@@ -161,7 +189,7 @@ test('releaseMerged: a tombstoned claim with an unchanged sha is never re-fetche
 //       would make shouldSkipClaimRead match the (unchanged) listing entry
 //       forever, permanently freezing a claim on evidence never read.
 test('releaseMerged: caches the blob sha actually classified, not the directory listing\'s sha (Task 7 TOCTOU)', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-toctou-'));
+  const root = scratchDir('ct-release-toctou-');
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
 
@@ -203,7 +231,7 @@ test('releaseMerged: caches the blob sha actually classified, not the directory 
 // fires twice). Only its blob READ is reused by sha (#4032, tests further
 // down) — an unchanged git blob sha names unchanged content.
 test('releaseMerged: a live claim with an unchanged sha is still re-evaluated every pass (join re-run, blob read reused)', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-cache-live-'));
+  const root = scratchDir('ct-release-cache-live-');
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
 
@@ -249,7 +277,7 @@ test('releaseMerged: a live claim with an unchanged sha is still re-evaluated ev
 // `contents/claims/issue-*.json` reads and answers the issue-state lookup OPEN
 // (no run-state for the runId, so the claim resolves to an ordinary skip).
 function claimBlobHarness(prefix) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const root = scratchDir(prefix);
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
   const content = JSON.stringify({
@@ -334,7 +362,7 @@ test('releaseMerged: Phase 1.5 resolves prState via the pool and reaches a merge
   // to /private/var, and `git worktree list --porcelain` always reports the
   // resolved form — resolving here once keeps every path built from `root`
   // consistent with what git reports, avoiding a spurious no-branch join.
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-prstate-')));
+  const root = fs.realpathSync(scratchDir('ct-release-prstate-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
   execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'init'], { cwd: root });
@@ -364,7 +392,7 @@ test('releaseMerged: Phase 1.5 resolves prState via the pool and reaches a merge
 
   // A `gh` wrapper on PATH answers `gh pr list --head run-1-branch ...` with
   // a merged PR — the real gh binary is never invoked.
-  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-ghwrap-'));
+  const wrapperDir = scratchDir('ct-release-ghwrap-');
   const wrapperPath = path.join(wrapperDir, 'gh');
   fs.writeFileSync(
     wrapperPath,
@@ -396,7 +424,7 @@ test('releaseMerged: Phase 1.5 resolves prState via the pool and reaches a merge
 // once at PR-early-lifecycle time, never cleared) is what the by-number
 // fallback resolves instead.
 test('releaseMerged: releases a live claim via the by-number fallback when the worktree AND its branch are both gone (#3249)', { skip: STUB_SKIP }, async () => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-bynumber-')));
+  const root = fs.realpathSync(scratchDir('ct-release-bynumber-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
   execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'init'], { cwd: root });
@@ -431,7 +459,7 @@ test('releaseMerged: releases a live claim via the by-number fallback when the w
 
   // A `gh` wrapper on PATH answers `gh pr view 3249001 ...` with a merged PR
   // — `gh pr list --head {branch}` must never be called (no branch resolved).
-  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-bynumber-ghwrap-'));
+  const wrapperDir = scratchDir('ct-release-bynumber-ghwrap-');
   const wrapperPath = path.join(wrapperDir, 'gh');
   fs.writeFileSync(
     wrapperPath,
@@ -469,7 +497,7 @@ test('releaseMerged: releases a live claim via the by-number fallback when the w
 // issue 62, not the claim's issue 61, and there is no mergeCommit field, so no
 // commit fetch is attempted — the claim is kept.
 test('releaseMerged: the by-number fallback keeps the claim when the merged PR does not close the issue (#3412)', { skip: STUB_SKIP }, async () => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-bynumber-notclosing-')));
+  const root = fs.realpathSync(scratchDir('ct-release-bynumber-notclosing-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
   execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'init'], { cwd: root });
@@ -500,7 +528,7 @@ test('releaseMerged: the by-number fallback keeps the claim when the merged PR d
     throw new Error(`unexpected ${args.join(' ')}`);
   };
 
-  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-bynumber-notclosing-ghwrap-'));
+  const wrapperDir = scratchDir('ct-release-bynumber-notclosing-ghwrap-');
   const marker = path.join(wrapperDir, 'pr-view-called');
   const wrapperPath = path.join(wrapperDir, 'gh');
   fs.writeFileSync(
@@ -536,7 +564,7 @@ test('releaseMerged: the by-number fallback keeps the claim when the merged PR d
 // live-branch` here would answer with a MERGED PR, so the by-number answer
 // must win and `gh pr list` must never run.
 test('releaseMerged: resolves by stamped pr.number ahead of the live-worktree branch join (#3416)', { skip: STUB_SKIP }, async () => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-bynumber-first-')));
+  const root = fs.realpathSync(scratchDir('ct-release-bynumber-first-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
   execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'init'], { cwd: root });
@@ -566,7 +594,7 @@ test('releaseMerged: resolves by stamped pr.number ahead of the live-worktree br
     throw new Error(`unexpected ${args.join(' ')}`);
   };
 
-  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-bynumber-first-ghwrap-'));
+  const wrapperDir = scratchDir('ct-release-bynumber-first-ghwrap-');
   const wrapperPath = path.join(wrapperDir, 'gh');
   fs.writeFileSync(
     wrapperPath,
@@ -600,7 +628,7 @@ test('releaseMerged: resolves by stamped pr.number ahead of the live-worktree br
 // 3375) must not release a live run's claim. The run's stamped PR (3406) is
 // the one the claim is judged by; its probe result is supplied per test.
 function writeReusedBranchFixture(prefix, prViewLine) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `ct-release-${prefix}-`)));
+  const root = fs.realpathSync(scratchDir(`ct-release-${prefix}-`));
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
   execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'init'], { cwd: root });
@@ -632,7 +660,7 @@ function writeReusedBranchFixture(prefix, prViewLine) {
     throw new Error(`unexpected ${args.join(' ')}`);
   };
 
-  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), `ct-release-${prefix}-ghwrap-`));
+  const wrapperDir = scratchDir(`ct-release-${prefix}-ghwrap-`);
   const putMarker = path.join(wrapperDir, 'put-called');
   const wrapperPath = path.join(wrapperDir, 'gh');
   fs.writeFileSync(
@@ -694,7 +722,7 @@ test('AC3.1 transport failure: a failed by-number probe on a branch-resolved can
 // false and decideRelease skip on the transport failure instead — a
 // regression for a closed record whose pr.number probe happens to fail.
 test('releaseMerged: a failed by-number probe still lets a CLOSED issue release the claim via issue-closed (#3249)', { skip: STUB_SKIP }, async () => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-bynumber-fail-')));
+  const root = fs.realpathSync(scratchDir('ct-release-bynumber-fail-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
   execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'init'], { cwd: root });
@@ -729,7 +757,7 @@ test('releaseMerged: a failed by-number probe still lets a CLOSED issue release 
     throw new Error(`unexpected ${args.join(' ')}`);
   };
 
-  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-bynumber-fail-ghwrap-'));
+  const wrapperDir = scratchDir('ct-release-bynumber-fail-ghwrap-');
   const wrapperPath = path.join(wrapperDir, 'gh');
   fs.writeFileSync(
     wrapperPath,
@@ -763,7 +791,7 @@ test('releaseMerged: a failed by-number probe still lets a CLOSED issue release 
 // archive-merged.js, which only reports no-worktree when fallbackBranch
 // ALSO fails. No pr.number here, so the by-number fallback can't rescue it.
 test('releaseMerged: an unstamped worktree with a fallbackBranch-recovered branch still joins by branch (#3249)', { skip: STUB_SKIP }, async () => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-unstamped-')));
+  const root = fs.realpathSync(scratchDir('ct-release-unstamped-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
   execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'init'], { cwd: root });
@@ -791,7 +819,7 @@ test('releaseMerged: an unstamped worktree with a fallbackBranch-recovered branc
     throw new Error(`unexpected ${args.join(' ')}`);
   };
 
-  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-unstamped-ghwrap-'));
+  const wrapperDir = scratchDir('ct-release-unstamped-ghwrap-');
   const wrapperPath = path.join(wrapperDir, 'gh');
   fs.writeFileSync(
     wrapperPath,
@@ -826,7 +854,7 @@ test('releaseMerged: an unstamped worktree with a fallbackBranch-recovered branc
 // uses, and the removal is logged as an AUTO decisions.md entry against the
 // candidate's own run dir.
 test('releaseMerged: a merged: release strips every GRANT_LABELS entry and logs the removal to decisions.md', { skip: STUB_SKIP }, async () => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-grants-')));
+  const root = fs.realpathSync(scratchDir('ct-release-grants-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
   execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'init'], { cwd: root });
@@ -856,7 +884,7 @@ test('releaseMerged: a merged: release strips every GRANT_LABELS entry and logs 
     throw new Error(`unexpected ${args.join(' ')}`);
   };
 
-  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-grants-ghwrap-'));
+  const wrapperDir = scratchDir('ct-release-grants-ghwrap-');
   const wrapperPath = path.join(wrapperDir, 'gh');
   fs.writeFileSync(
     wrapperPath,
@@ -890,7 +918,7 @@ test('releaseMerged: a merged: release strips every GRANT_LABELS entry and logs 
 // wrap-up/cleanup-procedures-execution.md Section E step 6's existing rule.
 // Only `bot:in-progress` (removeInProgressLabel, pre-existing) is deleted.
 test('releaseMerged: an issue-closed release does not touch grant labels', { skip: STUB_SKIP }, async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-issueclosed-'));
+  const root = scratchDir('ct-release-issueclosed-');
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
 
@@ -920,7 +948,7 @@ test('releaseMerged: an issue-closed release does not touch grant labels', { ski
   // writeTombstone's PUT always shells through this module's own raw ghRunner
   // (real execFileSync), not the injectable `api` — a `gh` wrapper on PATH
   // answers it, same technique as the merged-PR test above.
-  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-issueclosed-ghwrap-'));
+  const wrapperDir = scratchDir('ct-release-issueclosed-ghwrap-');
   const wrapperPath = path.join(wrapperDir, 'gh');
   fs.writeFileSync(wrapperPath, '#!/bin/sh\necho \'{}\'\n');
   fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
@@ -944,7 +972,7 @@ test('releaseMerged: an issue-closed release does not touch grant labels', { ski
 // must preserve that write, not silently revert it to the stale entry-time
 // snapshot (which here is `null`, since no cache file exists yet at entry).
 test('releaseMerged: does not revert a concurrent process\'s cache write made during its own async phases', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-cache-race-'));
+  const root = scratchDir('ct-release-cache-race-');
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
 
@@ -1046,7 +1074,7 @@ test('prClosesIssue: every shared closing-keyword form matches; Refs and a trail
 // attempted release would succeed and show up in `released` / `labelDeletes`.
 // `refs` undefined omits closingIssuesReferences; `withMergeCommit: false` omits mergeCommit.
 async function run3348Scenario({ refs, commit, issueState, putExit, withMergeCommit = true }) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-3348-')));
+  const root = fs.realpathSync(scratchDir('ct-release-3348-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
   execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'init'], { cwd: root });
@@ -1087,7 +1115,7 @@ async function run3348Scenario({ refs, commit, issueState, putExit, withMergeCom
     number: 3348, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
     mergeCommit: withMergeCommit ? { oid: 'a39cd61' } : undefined, closingIssuesReferences: refs, // undefined fields are omitted from the JSON
   }]);
-  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-3348-ghwrap-'));
+  const wrapperDir = scratchDir('ct-release-3348-ghwrap-');
   const wrapperPath = path.join(wrapperDir, 'gh');
   fs.writeFileSync(
     wrapperPath,
@@ -1212,7 +1240,7 @@ test('releaseMerged: merged-not-closing references and no mergeCommit field -> p
 // PR's closingIssuesReferences names some OTHER issue (9001 / 9002), so only
 // the merge-commit message can decide — and A's oid must answer A's claim.
 async function runTwoCandidateScenario({ issueA, issueB, messageForOidA, messageForOidB }) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-twocand-')));
+  const root = fs.realpathSync(scratchDir('ct-release-twocand-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
   execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'init'], { cwd: root });
@@ -1260,7 +1288,7 @@ async function runTwoCandidateScenario({ issueA, issueB, messageForOidA, message
     number, state: 'MERGED', mergedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
     mergeCommit: { oid: oids[key] }, closingIssuesReferences: [ref(otherIssue)],
   }]);
-  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-twocand-ghwrap-'));
+  const wrapperDir = scratchDir('ct-release-twocand-ghwrap-');
   const wrapperPath = path.join(wrapperDir, 'gh');
   fs.writeFileSync(
     wrapperPath,
@@ -1361,7 +1389,7 @@ test('releaseMerged: prStates async answers replace live lookups (#4032)', { ski
     runId: 'run-x', sessionId: 's1', claimedAt: new Date().toISOString(), ttlHours: 72, host: 'h',
   });
   const build = () => {
-    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-prstates-')));
+    const root = fs.realpathSync(scratchDir('ct-release-prstates-'));
     execFileSync('git', ['init', '-q'], { cwd: root });
     execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
     execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'init'], { cwd: root });
@@ -1395,7 +1423,7 @@ test('releaseMerged: prStates async answers replace live lookups (#4032)', { ski
 
   // Control: no prStates — the wrapped gh answers MERGED-closing for both claims.
   const control = build();
-  const okDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-okgh-'));
+  const okDir = scratchDir('ct-release-okgh-');
   fs.writeFileSync(
     path.join(okDir, 'gh'),
     '#!/bin/sh\ncase "$*" in\n'
@@ -1412,7 +1440,7 @@ test('releaseMerged: prStates async answers replace live lookups (#4032)', { ski
 
   // Subject: failing gh + a resolver whose async twins answer.
   const subject = build();
-  const failDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-failgh-'));
+  const failDir = scratchDir('ct-release-failgh-');
   const marker = path.join(failDir, 'gh-was-called');
   // The claim write (`api --method PUT`) still succeeds; every other call is a PR lookup.
   fs.writeFileSync(path.join(failDir, 'gh'), `#!/bin/sh\ncase "$*" in\n  *"api --method PUT"*) exit 0 ;;\nesac\ntouch "${marker}"\nexit 1\n`);
@@ -1452,7 +1480,7 @@ function prefetchScenario(prefetch) {
   const liveContent = JSON.stringify({
     runId: 'run-x', sessionId: 's1', claimedAt: new Date().toISOString(), ttlHours: 72, host: 'h',
   });
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-prefetch-')));
+  const root = fs.realpathSync(scratchDir('ct-release-prefetch-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
   execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'init'], { cwd: root });
@@ -1484,7 +1512,7 @@ function prefetchScenario(prefetch) {
     },
   };
   // Only the tombstone write reaches the real gh; every PR lookup is the resolver's.
-  const ghDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-release-prefetch-gh-'));
+  const ghDir = scratchDir('ct-release-prefetch-gh-');
   fs.writeFileSync(path.join(ghDir, 'gh'), '#!/bin/sh\ncase "$*" in\n  *"api --method PUT"*) exit 0 ;;\nesac\nexit 1\n');
   fs.chmodSync(path.join(ghDir, 'gh'), 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
   return { root, ghApi, prStates, ghDir, branchOpts };
@@ -1532,4 +1560,54 @@ test('a throwing prefetch never changes release\'s verdicts', { skip: STUB_SKIP 
   const baseline = await runPrefetchScenario(async () => {});
   assert.deepStrictEqual(thrown, baseline);
   assert.equal(thrown.released.length, 3);
+});
+
+// #6143: a run whose PR merged while it was in flight is held whole — the same fixture as the #1378
+// grant-strip test above (the AC5 baseline: MERGED + closing releases and strips), with the run listed.
+test('hollow-merge: a listed runId is skipped, no tombstone write, no label edit', { skip: STUB_SKIP }, async () => {
+  const root = fs.realpathSync(scratchDir('ct-release-hollow-'));
+  execFileSync('git', ['init', '-q'], { cwd: root });
+  execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
+  execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'init'], { cwd: root });
+  const wtPath = path.join(root, '.worktrees', 'wt-run-hollow');
+  execFileSync('git', ['worktree', 'add', '-q', '-b', 'run-hollow-branch', wtPath], { cwd: root });
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', 'run-hollow');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active', worktree: wtPath }));
+  const liveContent = JSON.stringify({
+    runId: 'run-hollow', sessionId: 's1', claimedAt: new Date().toISOString(), ttlHours: 72, host: 'h',
+  });
+  const apiCalls = [];
+  const ghApi = (args) => {
+    apiCalls.push(args.join(' '));
+    if (args[0].includes('/git/trees/claims-registry')) {
+      return { stdout: JSON.stringify({ truncated: false, entries: [{ name: 'issue-22.json', sha: 'live-sha' }] }), failure: null, status: null };
+    }
+    if (args[0].includes('/contents/claims/issue-22.json')) {
+      return { stdout: JSON.stringify({ content: liveContent, sha: 'live-sha' }), failure: null, status: null };
+    }
+    return { stdout: '', failure: null, status: null };
+  };
+  const wrapperDir = scratchDir('ct-release-hollow-ghwrap-');
+  const wrapperPath = path.join(wrapperDir, 'gh');
+  const logPath = path.join(wrapperDir, 'gh-calls.log');
+  fs.writeFileSync(
+    wrapperPath,
+    `#!/bin/sh\necho "$@" >> "${logPath}"\ncat <<'EOF'\n[{"number":56,"state":"MERGED","mergedAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z","closingIssuesReferences":[{"number":22,"repository":{"name":"w","owner":{"login":"acme"}}}]}]\nEOF\n`,
+  );
+  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
+  try {
+    const result = await releaseMerged({ cwd: root, ghApi, hollowRunIds: ['run-hollow'] });
+    assert.deepEqual(result.released, []);
+    assert.deepEqual(result.skipped, [{ issueNumber: 22, runId: 'run-hollow', reason: 'hollow-merge' }]);
+    assert.deepEqual(apiCalls.filter((c) => c.includes('/labels/')), [], 'no label edit (bot:in-progress or grant)');
+    const ghCalls = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : '';
+    assert.ok(!/(^|\s)(-X|--method)\s+(PUT|DELETE|POST|PATCH)/m.test(ghCalls), `no write through the gh runner, saw: ${ghCalls}`);
+    assert.ok(!/claims\/issue-22/.test(ghCalls), `the gh runner never touched the claim blob (no tombstone write), saw: ${ghCalls}`);
+    assert.ok(!fs.existsSync(path.join(runDir, 'decisions.md')), 'no grant-strip log entry');
+  } finally {
+    process.env.PATH = originalPath;
+  }
 });

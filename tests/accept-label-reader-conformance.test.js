@@ -12,6 +12,7 @@ const { classifyWatchedRecord } = require('../plugin/bin/lib/issues/merge-lane-b
 const { trustRows } = require('../plugin/bin/lib/issues/trust');
 const { runVerify } = require('../plugin/bin/lib/wrap-up/engine-verify');
 const { publishPacket } = require('../plugin/bin/lib/wrap-up/packet-post');
+const { automaticLabelAction, verdictLabelEdits } = require('../plugin/bin/lib/issues/accept-entry');
 
 // #4610 expand step: the acceptance verdict labels are read under two spellings,
 // demo:* (legacy) and accept:* (successor), until the contract step removes the
@@ -143,6 +144,11 @@ const DEMO_LABEL_READERS = {
     what: 'the acceptance-labeling closure check',
     run: (labels) => acceptanceLabelingResult(labels),
     expect: { pending: 'pass', approved: 'fail', 'changes-requested': 'fail', none: 'fail' },
+  },
+  'lib/issues/accept-entry.js': {
+    what: "/accept's automatic entry, which labels only a record with no acceptance state",
+    run: (labels) => automaticLabelAction(labels),
+    expect: { pending: 'none', approved: 'none', 'changes-requested': 'none', none: 'apply-pending' },
   },
   'lib/wrap-up/packet-post.js': {
     what: 'the failed-publish clear, which removes a pending label in either spelling',
@@ -384,12 +390,13 @@ const collapse = (text) => text.replace(/\s+/g, ' ');
 const LABEL_RE = /`((?:demo|accept):[a-z-]+)`/g;
 const labelsIn = (text) => [...text.matchAll(LABEL_RE)].map((m) => m[1]).sort();
 
-// The labels /demo's replacement rule removes, per bullet.
-function demoRemovals() {
-  const skill = skillText('demo', 'SKILL.md');
-  const from = skill.indexOf('**A verdict replaces any prior acceptance label the record carries.**');
-  assert.notEqual(from, -1, 'the replacement rule must exist in /demo Step 3');
-  const rule = skill.slice(from, skill.indexOf('**Provenance signal', from));
+// The labels /accept's replacement rule removes, per bullet. #4613 moved the rule from the
+// skill's Step 3 into verdict-interim.md and made the edit accept-entry.js labels' output.
+function acceptRemovals() {
+  const interim = skillText('accept', 'verdict-interim.md');
+  const from = interim.indexOf('**A verdict replaces any prior acceptance label the record carries.**');
+  assert.notEqual(from, -1, 'the replacement rule must exist in /accept verdict-interim.md');
+  const rule = interim.slice(from, interim.indexOf('**Provenance signal', from));
   const bullet = (name) => {
     const line = rule.split('\n').find((l) => l.startsWith(`- **${name}`));
     assert.ok(line, `the replacement rule must have a ${name} bullet`);
@@ -400,86 +407,106 @@ function demoRemovals() {
     every: bullet('Every verdict:'),
     approve: bullet('Approve:'),
     single: bullet('Single-record Approve'),
+    batch: bullet('Batch-sourced Approve:'),
     changes: bullet('Request changes:'),
   };
 }
 
-test('/demo Step 3: a verdict replaces prior acceptance labels, so a later Approve takes effect', () => {
-  const { every, approve, single, changes } = demoRemovals();
-  assert.deepEqual(every, ['accept:pending', 'demo:pending']);
-  assert.deepEqual(approve, ['accept:changes-requested', 'demo:changes-requested']);
-  assert.deepEqual(single, ['accept:approved-batch', 'demo:approved-batch']);
-  assert.deepEqual(changes, ['accept:approved', 'accept:approved-batch', 'demo:approved', 'demo:approved-batch']);
+// Every record a verdict can land on: each subset of the three states and the batch marker,
+// both spellings.
+const PRIOR_LABELS = [...STATES, 'approved-batch'].flatMap((state) => [`demo:${state}`, `accept:${state}`]);
 
-  // Every record a verdict can land on: each subset of the three states and the batch
-  // marker, both spellings.
-  const prior = [...STATES, 'approved-batch'].flatMap((state) => [`demo:${state}`, `accept:${state}`]);
-  const apply = (labels, removed, added) => [...labels.filter((l) => !removed.includes(l)), ...added];
-  for (let mask = 0; mask < 2 ** prior.length; mask += 1) {
-    const labels = prior.filter((_, i) => mask & (1 << i));
+test('/accept Step 3: a verdict replaces prior acceptance labels, so a later Approve takes effect', () => {
+  const { every, approve, single, batch, changes } = acceptRemovals();
+  assert.deepEqual(every, ['accept:pending', 'demo:pending']);
+  assert.deepEqual(approve, ['accept:changes-requested', 'demo:approved', 'demo:changes-requested']);
+  assert.deepEqual(single, ['accept:approved-batch', 'demo:approved-batch']);
+  assert.deepEqual(batch, ['demo:approved-batch']);
+  assert.deepEqual(changes, ['accept:approved', 'accept:approved-batch', 'demo:approved', 'demo:approved-batch', 'demo:changes-requested']);
+
+  // The prose rule is what the labels command computes, on a record holding every label.
+  const removed = (verdict, opts) => [...verdictLabelEdits(PRIOR_LABELS, verdict, opts).remove].sort();
+  assert.deepEqual(removed('approved'), [...every, ...approve, ...single].sort());
+  assert.deepEqual(removed('approved', { batch: true }), [...every, ...approve, ...batch].sort());
+  assert.deepEqual(removed('changes-requested'), [...every, ...changes].sort());
+
+  const apply = (labels, verdict, opts) => {
+    const { add, remove } = verdictLabelEdits(labels, verdict, opts);
+    for (const name of remove) assert.ok(labels.includes(name), `removes only a held label: ${name}`);
+    return [...labels.filter((l) => !remove.includes(l)), ...add];
+  };
+  for (let mask = 0; mask < 2 ** PRIOR_LABELS.length; mask += 1) {
+    const labels = PRIOR_LABELS.filter((_, i) => mask & (1 << i));
     const name = labels.join('+');
-    const individual = apply(labels, [...every, ...approve, ...single], ['demo:approved']);
+    const individual = apply(labels, 'approved');
     assert.equal(acceptanceOf(individual), 'approved', name);
     assert.equal(approvalProvenance(individual), 'walkthrough', `an individual Approve replaces the batch one: ${name}`);
-    const batch = apply(labels, [...every, ...approve], ['demo:approved', 'demo:approved-batch']);
-    assert.equal(approvalProvenance(batch), 'batch', `the batch action keeps its own label: ${name}`);
-    assert.equal(acceptanceOf(apply(labels, [...every, ...changes], ['demo:changes-requested'])), 'changes-requested', name);
+    const batched = apply(labels, 'approved', { batch: true });
+    assert.equal(approvalProvenance(batched), 'batch', `the batch action keeps its own label: ${name}`);
+    const changed = apply(labels, 'changes-requested');
+    assert.equal(acceptanceOf(changed), 'changes-requested', name);
+    for (const result of [individual, batched, changed]) {
+      assert.deepEqual(result.filter((l) => l.startsWith('demo:')), [], `no demo:* twin survives a verdict: ${name}`);
+    }
   }
 });
 
-test('/demo Step 3: a batch-sourced Approve cannot strip the batch label it writes', () => {
-  const { rule } = demoRemovals();
-  assert.match(rule, /A batch-sourced Approve \(the Provenance signal note below\) removes neither batch label/);
+test('/accept Step 3: a batch-sourced Approve cannot strip the batch label it writes', () => {
+  const { rule } = acceptRemovals();
+  assert.match(rule, /A batch-sourced Approve \(the Provenance signal note below\) keeps `accept:approved-batch`/);
 });
 
 // One verdict's command text, from its opener up to where the other driver's branch starts.
 function verdictCommand(opener, end) {
-  const skill = skillText('demo', 'SKILL.md');
-  const from = skill.indexOf(opener);
+  const interim = skillText('accept', 'verdict-interim.md');
+  const from = interim.indexOf(opener);
   assert.notEqual(from, -1, `the verdict command must open with: ${opener}`);
-  const to = skill.indexOf(end, from);
+  const to = interim.indexOf(end, from);
   assert.notEqual(to, -1, `the verdict command must end before: ${end}`);
-  return skill.slice(from, to);
+  return interim.slice(from, to);
 }
 
-test('/demo Step 3: each removal is conditional on the fetched labels, demo:pending included', () => {
-  const skill = skillText('demo', 'SKILL.md');
-  const { rule } = demoRemovals();
+test('/accept Step 3: each removal is conditional on the fetched labels, demo:pending included', () => {
+  const interim = skillText('accept', 'verdict-interim.md');
+  const { rule } = acceptRemovals();
   assert.match(rule, /only when those labels hold it\*\*, `demo:pending` included/);
   assert.match(rule, /exits 1 with "not found"/);
-  assert.doesNotMatch(skill, /silent no-op/);
+  assert.match(rule, /Fetch the labels fresh/, 'the labels are re-read right before the edit');
+  assert.doesNotMatch(interim, /silent no-op/);
 });
 
-test('/demo Step 3: each verdict command names no literal removal and cites the replacement rule', () => {
+test('/accept Step 3: each verdict command names no literal label and cites the replacement rule', () => {
   const commands = [
     ['Approve', verdictCommand('- **Approve** — `gh issue edit', '`work-backend: local-files`')],
     ['Request changes', verdictCommand('1. **`work-backend: github-issues`:** `gh issue edit', '**`work-backend: local-files`:**')],
   ];
   for (const [name, command] of commands) {
     // A literal label here would run unconditionally, whichever position it holds.
-    assert.doesNotMatch(command, /--remove-label[\s=]+\S*(?:demo|accept):/, name);
-    assert.ok(command.includes(`plus the \`--remove-label\` flags the replacement rule above selects for ${name}`), `${name} must cite the rule`);
+    assert.doesNotMatch(command, /--(?:remove|add)-label[\s=]+\S*(?:demo|accept):/, name);
+    assert.ok(command.includes(`the flags the replacement rule above selects for ${name}, computed by the labels command`), `${name} must cite the rule`);
   }
-  assert.match(commands[0][1], /for a batch-sourced verdict .{0,60}add `--add-label demo:approved-batch`/);
+  assert.match(commands[0][1], /plus `--batch` for a batch-sourced verdict/);
 });
 
-test('the permission matrix gives /demo the same removals as its Step 3, and adds no accept:* label', () => {
-  const { every, approve, single, changes } = demoRemovals();
-  const row = skillText('_shared', 'work-record-permission-matrix.md').split('\n').find((l) => l.startsWith('| **`/demo`** |'));
-  assert.ok(row, 'the matrix must have a /demo row');
+test('the permission matrix gives /accept the same removals as its Step 3, and adds only accept:* labels', () => {
+  const { every, approve, single, batch, changes } = acceptRemovals();
+  const row = skillText('_shared', 'work-record-permission-matrix.md').split('\n').find((l) => l.startsWith('| **`/accept`**'));
+  assert.ok(row, 'the matrix must have an /accept row');
   const [, adds, removes] = row.split(' | ').map((cell) => cell.trim());
-  assert.deepEqual(labelsIn(removes), [...every, ...approve, ...single, ...changes].sort());
-  assert.match(removes, /on a single-record Approve, never on a batch-sourced one/);
+  assert.deepEqual(labelsIn(removes), [...every, ...approve, ...single, ...batch, ...changes].sort());
+  assert.match(removes, /on a single-record Approve, and only `demo:approved-batch` on a batch-sourced one/);
   assert.match(removes, /only when the record holds it/);
-  assert.deepEqual(labelsIn(adds).filter((l) => l.startsWith('accept:')), []);
+  assert.deepEqual([...new Set(labelsIn(adds))], ['accept:approved', 'accept:approved-batch', 'accept:changes-requested', 'accept:pending']);
+  assert.ok(!row.startsWith('| **`/demo`**') && !skillText('_shared', 'work-record-permission-matrix.md').includes('| **`/demo`** |'), 'the /demo row became the /accept row');
 });
 
-test('the two contract files state /demo as the one exception to "no skill writes accept:*"', () => {
+test('the two contract files state /accept as the one skill that writes accept:*', () => {
   const matrix = collapse(skillText('_shared', 'work-record-permission-matrix.md'));
   const bootstrap = collapse(skillText('_shared', 'label-bootstrap.md'));
-  assert.match(matrix, /no skill adds an `accept:\*` label today\. The one exception on the removing side is `\/demo`/);
-  assert.match(bootstrap, /No skill adds an `accept:\*` label yet; `\/demo` removes them/);
-  assert.doesNotMatch(matrix, /adds or removes an `accept:\*` label/);
+  assert.match(matrix, /`\/accept` is the one skill that adds an `accept:\*` label/);
+  assert.match(bootstrap, /`\/accept` is the one skill that adds an `accept:\*` label/);
+  assert.doesNotMatch(matrix, /no skill adds an `accept:\*` label today/);
+  assert.doesNotMatch(bootstrap, /No skill adds an `accept:\*` label yet/);
   assert.doesNotMatch(bootstrap, /no skill writes `accept:\*`/);
 });
 
@@ -498,22 +525,26 @@ test('every acceptance bootstrap list provisions the four accept:* rows, byte-eq
     assert.deepEqual(rows.filter(([name]) => name.startsWith('demo:')).map(([name]) => name), ['demo:pending'], file.join('/'));
   }
 
-  // /demo lists names and copies the rows from the canonical array.
-  const skill = skillText('demo', 'SKILL.md');
-  const from = skill.indexOf('**Label-backed entries** (Step 1');
-  const list = labelsIn(skill.slice(from, skill.indexOf('**A verdict replaces', from)));
-  for (const [name] of acceptRows) assert.ok(list.includes(name), `/demo Step 3 must bootstrap ${name}`);
+  // /accept lists names and copies the rows from the canonical array.
+  const interim = skillText('accept', 'verdict-interim.md');
+  const from = interim.indexOf('**Label-backed entries** (Step 1');
+  assert.notEqual(from, -1, 'verdict-interim.md must carry the bootstrap list');
+  const list = labelsIn(interim.slice(from, interim.indexOf('**A verdict replaces', from)));
+  for (const [name] of acceptRows) assert.ok(list.includes(name), `/accept Step 3 must bootstrap ${name}`);
+  assert.deepEqual(list.filter((name) => name.startsWith('demo:')), [], '/accept Step 3 adds no demo:* label, so bootstraps none');
 });
 
 test('/demo fetches the fresh brief when any pending label is present, even one a verdict outranks', () => {
-  const paths = collapse(skillText('demo', 'entry-paths.md'));
+  const paths = collapse(skillText('accept', 'entry-paths.md'));
   assert.match(paths, /If the labels just fetched carry a pending acceptance label in either spelling .{0,120}even one a verdict outranks/);
+  // #4613 R1: the state classifier agrees, so the fresh brief is reachable.
+  assert.match(paths, /reads changes-requested beside a pending label as awaiting re-acceptance, never `already-decided`/);
   assert.match(paths, /If the record carries \*\*no\*\* pending acceptance label/);
   assert.doesNotMatch(paths, /acceptance facet does \*\*not\*\* read `pending`/);
 });
 
 test('/demo Input states the same fallback condition as its entry path', () => {
-  const skill = collapse(skillText('demo', 'SKILL.md'));
+  const skill = collapse(skillText('accept', 'SKILL.md'));
   assert.match(skill, /falling back — when it carries no pending acceptance label \(either spelling/);
   assert.doesNotMatch(skill, /when its acceptance facet does not read `pending`/);
 });

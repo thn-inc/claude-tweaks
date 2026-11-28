@@ -7,7 +7,12 @@ const os = require('os');
 const path = require('path');
 const {
   postMerge, postMergeOne, classifyEntry, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim, MARKER_STEP, ATTEMPT_STEP, MAX_ATTEMPTS, CLOSE_WINDOW_MS, MERGE_GRACE_MS, CLAIM_STALE_MS, CLAIM_FILENAME,
+  heartbeatClaim, releaseClaim, CLAIM_MAX_IDLE_MS, GH_TIMEOUT_CEILING_MS, CLAIM_ASIDE_MAX_AGE_MS,
+  parentsLeftOpen, stepSkipsOf, parentsLeftOpenLine, stepSkipsLine,
+  isSupersededEntry, supersededChanges, supersededChangesLine,
+  CLAIM_LOST_DETAIL, SUPERSEDED_LOCATION_SUFFIX, markSuperseded,
 } = require('../../../plugin/bin/lib/reconcile/post-merge');
+const { gateOriginRepo } = require('../../../plugin/bin/lib/repo-resolve');
 const { formatEntry, parseEntry } = require('../../../plugin/bin/lib/log-decision/append');
 const { DELIBERATE_SKIP_REASONS } = require('../../../plugin/bin/lib/issues/below-floor-parent-close');
 
@@ -55,13 +60,13 @@ function fakePrStates(table) {
   return { byNumberAsync: async (n) => table[n] };
 }
 
-// A closing-links fake that prints `envelope` and exits `code`.
+// A closing-links fake standing in for the exported core: it returns `{ code, envelope }`, the envelope
+// object only on exit 0 (the real core's contract).
 function fakeClosingLinks(envelope, code = 0) {
   const calls = [];
-  const fn = (argv, d) => {
-    calls.push({ argv, deps: d });
-    if (envelope) d.stdout(`${JSON.stringify(envelope)}\n`);
-    return code;
+  const fn = (opts, d) => {
+    calls.push({ opts, deps: d });
+    return { code, envelope: code === 0 ? envelope : null };
   };
   fn.calls = calls;
   return fn;
@@ -85,11 +90,11 @@ function run(root, { prs, links, close, dryRun = false, extra = {} } = {}) {
     prStates: fakePrStates(prs),
     dryRun,
     now,
-    deps: { gh: fakeGh, closingLinksRun: links, closeParents: close, ...extra },
+    deps: { gh: fakeGh, closingLinks: links, closeParents: close, ...extra },
   });
 }
 
-test('merged unmarked run: Step 4.0 argv, Step 4.0b arguments, parent line plus summary marker, entry ran', async () => {
+test('merged unmarked run: Step 4.0 options, Step 4.0b arguments, parent line plus summary marker, entry ran', async () => {
   const root = mainCheckout();
   const dir = addRun(root, '2026-10-30T090000-spec-1');
   const links = fakeClosingLinks({ ...ENVELOPE, action: 'reopened', reopened: [103], pendingClose: [104], failed: [{ issue: 105 }] });
@@ -100,14 +105,15 @@ test('merged unmarked run: Step 4.0 argv, Step 4.0b arguments, parent line plus 
   const r = await run(root, { prs: { 11: merged() }, links, close });
 
   assert.deepEqual(r, {
-    entries: [{ runDir: dir, pr: 11, action: 'ran', closingLinks: 'reopened', parentsClosed: 1 }],
+    entries: [{
+      runDir: dir, pr: 11, action: 'ran', closingLinks: 'reopened', parentsClosed: 1, parentFailures: [{ issue: 102, reason: 'gh-failed', detail: 'boom' }],
+    }],
     deferred: [],
   });
   assert.equal(links.calls.length, 1);
-  assert.deepEqual(links.calls[0].argv, [
-    '--run', dir, '--mode', 'post-merge', '--settle-ms', '0', '--close-window-ms', String(CLOSE_WINDOW_MS),
-  ]);
+  assert.deepEqual(links.calls[0].opts, { run: dir, mode: 'post-merge', settleMs: 0, closeWindowMs: CLOSE_WINDOW_MS });
   const d = links.calls[0].deps;
+  assert.ok(!('stdout' in d), 'the core prints nothing, so post-merge passes no stdout');
   assert.equal(d.cwd(), root);
   assert.equal(d.mainRoot, root);
   assert.equal(d.ghAvailable(), true);
@@ -248,7 +254,7 @@ test('a prStates call that throws is a transient network-failure, never a crash'
   const dir = addRun(root, '2026-10-30T090000-spec-1');
   const r = await postMerge({
     cwd: root, now, prStates: { byNumberAsync: async () => { throw new Error('boom'); } },
-    deps: { gh: fakeGh, closingLinksRun: fakeClosingLinks(ENVELOPE), closeParents: fakeCloseParents() },
+    deps: { gh: fakeGh, closingLinks: fakeClosingLinks(ENVELOPE), closeParents: fakeCloseParents() },
   });
   assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'network-failure' }]);
   assert.deepEqual(r.deferred, [dir]);
@@ -259,7 +265,7 @@ test('a missing or malformed prStates is a caller bug: failure no-pr-states up f
   const dir = addRun(root, '2026-10-30T090000-spec-1');
   const links = fakeClosingLinks(ENVELOPE);
   for (const prStates of [undefined, null, {}, { byNumberAsync: 'nope' }]) {
-    const r = await postMerge({ cwd: root, now, prStates, deps: { gh: fakeGh, closingLinksRun: links, closeParents: fakeCloseParents() } });
+    const r = await postMerge({ cwd: root, now, prStates, deps: { gh: fakeGh, closingLinks: links, closeParents: fakeCloseParents() } });
     assert.deepEqual(r, { entries: [], deferred: [], failure: 'no-pr-states' });
   }
   assert.equal(links.calls.length, 0);
@@ -287,7 +293,7 @@ test('merge grace: a merge 2 minutes old, or with no mergedAt, is skipped, untou
   for (const pr of [11, 12, 13]) assert.deepEqual([byPr[pr].action, byPr[pr].reason], ['skipped', 'merge-grace']);
   assert.equal(byPr[14].action, 'ran');
   assert.equal(links.calls.length, 1);
-  assert.equal(links.calls[0].argv[1], old);
+  assert.equal(links.calls[0].opts.run, old);
   for (const dir of [fresh, noStamp, garbled]) assert.equal(decisionsOf(dir), '');
   assert.deepEqual(new Set(r.deferred), new Set([fresh, noStamp, garbled]));
   assert.equal(MERGE_GRACE_MS, 10 * 60 * 1000);
@@ -310,7 +316,7 @@ test('merge grace boundary: a merge exactly MERGE_GRACE_MS old is still in grace
   assert.deepEqual([byPr[11].action, byPr[11].reason], ['skipped', 'merge-grace']);
   assert.deepEqual(r.deferred, [edge]);
   assert.equal(byPr[12].action, 'ran');
-  assert.deepEqual(links.calls.map((c) => c.argv[1]), [past]);
+  assert.deepEqual(links.calls.map((c) => c.opts.run), [past]);
   // closing-links settles a still-open record only once now > mergedAt + window, so the window must
   // never outlast the grace: every run that gets here is strictly past it.
   assert.ok(CLOSE_WINDOW_MS <= MERGE_GRACE_MS);
@@ -368,6 +374,20 @@ test('claim: a fresh lock file means in-flight, no fake is called and the lock s
   assert.ok(fs.existsSync(lockOf(dir)));
 });
 
+test('claim: an ownerless lock idle between CLAIM_MAX_IDLE_MS and CLAIM_STALE_MS is still in-flight', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  fs.writeFileSync(lockOf(dir), '');
+  const idle = (NOW - 7 * 60 * 1000) / 1000; // past the 5-minute idle backstop, under the 10-minute ownerless rule
+  fs.utimesSync(lockOf(dir), idle, idle);
+  assert.ok(CLAIM_MAX_IDLE_MS < 7 * 60 * 1000 && 7 * 60 * 1000 < CLAIM_STALE_MS);
+  const links = fakeClosingLinks(ENVELOPE);
+  const r = await run(root, { prs: { 11: merged() }, links, close: fakeCloseParents() });
+  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight' }]);
+  assert.equal(links.calls.length, 0);
+  assert.ok(fs.existsSync(lockOf(dir)));
+});
+
 test('claim: a lock 11 minutes old is taken over, the run proceeds and no lock remains', async () => {
   const root = mainCheckout();
   const dir = addRun(root, '2026-10-30T090000-spec-1');
@@ -388,11 +408,10 @@ test('claim: a closing-links runner that throws leaves no lock, no marker, and l
   const bad = addRun(root, '2026-10-30T090000-spec-1', { pr: 11 });
   const good = addRun(root, '2026-10-30T090001-spec-2', { pr: 12 });
   let n = 0;
-  const links = (argv, d) => {
+  const links = (opts) => {
     n += 1;
-    if (argv[1] === bad) throw new Error('kaboom');
-    d.stdout(`${JSON.stringify(ENVELOPE)}\n`);
-    return 0;
+    if (opts.run === bad) throw new Error('kaboom');
+    return { code: 0, envelope: ENVELOPE };
   };
   const r = await run(root, { prs: { 11: merged(), 12: merged() }, links, close: fakeCloseParents() });
   const byPr = Object.fromEntries(r.entries.map((e) => [e.pr, e]));
@@ -457,8 +476,8 @@ test('M7: closing-links exit 5 (a gh failure) retries: an attempt line, never a 
   assert.equal(close.calls.length, 0);
 });
 
-test('M7: a deterministic closing-links exit (2, 3) writes the marker at once and is not deferred', async () => {
-  for (const code of [2, 3]) {
+test('M7: a deterministic closing-links exit (3, 4) writes the marker at once and is not deferred', async () => {
+  for (const code of [3, 4]) {
     const root = mainCheckout();
     const dir = addRun(root, '2026-10-30T090000-spec-1');
     const r = await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(null, code), close: fakeCloseParents() });
@@ -521,16 +540,6 @@ test('M7: hasPostMergeMarker never reads an attempt line as a marker', () => {
   assert.equal(hasPostMergeMarker(`${attempt}\n${attempt}\n${attempt}\n`), false);
 });
 
-test('K4: an exit-0 envelope with neither closingSet nor action is labelled unreadable and flagged step40Failed', async () => {
-  const root = mainCheckout();
-  const dir = addRun(root, '2026-10-30T090000-spec-1');
-  const r = await run(root, { prs: { 11: merged() }, links: fakeClosingLinks({ pr: 11, unexpected: true }), close: fakeCloseParents() });
-  assert.deepEqual(r.entries, [{
-    runDir: dir, pr: 11, action: 'ran', closingLinks: 'an unreadable envelope', parentsClosed: 0, step40Failed: true,
-  }]);
-  assert.match(decisionsOf(dir), /Step 4\.0 returned an unreadable envelope, no closingSet/);
-});
-
 test('M3: a multi-spec run whose Step 4.0b logged its marker in spec-N/decisions.md is done: no lookup, no call, not prefetched', async () => {
   const root = mainCheckout();
   const dir = addRun(root, '2026-10-30T090000-spec-1');
@@ -544,7 +553,7 @@ test('M3: a multi-spec run whose Step 4.0b logged its marker in spec-N/decisions
   const links = fakeClosingLinks(ENVELOPE);
   const r = await postMerge({
     cwd: root, now, prStates: { byNumberAsync: async (n) => { looked.push(n); return merged(); } },
-    deps: { gh: fakeGh, closingLinksRun: links, closeParents: fakeCloseParents() },
+    deps: { gh: fakeGh, closingLinks: links, closeParents: fakeCloseParents() },
   });
   assert.deepEqual(r, { entries: [], deferred: [] });
   assert.deepEqual(looked, []);
@@ -592,12 +601,12 @@ test('M4: once the pass budget reads exceeded, every remaining run that would ru
   const r = await postMerge({
     cwd: root, now, budgetExceeded,
     prStates: fakePrStates({ 11: merged(), 12: { number: 12, state: 'OPEN' }, 13: merged(), 14: merged() }),
-    deps: { gh: fakeGh, closingLinksRun: links, closeParents: fakeCloseParents() },
+    deps: { gh: fakeGh, closingLinks: links, closeParents: fakeCloseParents() },
   });
   // The walk order is the run listing's, so which merged run goes first is not pinned: exactly one runs.
   const ran = r.entries.filter((e) => e.action === 'ran').map((e) => e.runDir);
   assert.equal(ran.length, 1);
-  assert.equal(links.calls[0].argv[1], ran[0]);
+  assert.equal(links.calls[0].opts.run, ran[0]);
   const exhausted = r.entries.filter((e) => e.reason === 'budget-exhausted').map((e) => e.runDir);
   assert.deepEqual(new Set([...ran, ...exhausted]), new Set([first, second, third]));
   assert.equal(r.entries.length, 3, 'an OPEN PR is not a run that would have run: no entry');
@@ -615,12 +624,12 @@ test('M4: once the pass budget reads exceeded, every remaining run that would ru
   assert.deepEqual(r2.entries.map((e) => e.action), ['ran', 'ran']);
 });
 
-test('step40Failed marks a non-zero exit and an unreadable exit-0 envelope, never a readable envelope without a closing set', async () => {
+test('step40Failed marks a non-zero exit, never a readable envelope without a closing set', async () => {
   const root = mainCheckout();
   const dir = addRun(root, '2026-10-30T090000-spec-1');
-  const unreadable = await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(null, 0), close: fakeCloseParents() });
-  assert.deepEqual(unreadable.entries, [{
-    runDir: dir, pr: 11, action: 'ran', closingLinks: 'an unreadable envelope', parentsClosed: 0, step40Failed: true,
+  const failed = await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(null, 3), close: fakeCloseParents() });
+  assert.deepEqual(failed.entries, [{
+    runDir: dir, pr: 11, action: 'ran', closingLinks: 'exit 3', parentsClosed: 0, step40Failed: true,
   }]);
   const root2 = mainCheckout();
   const dir2 = addRun(root2, '2026-10-30T090000-spec-1');
@@ -631,6 +640,22 @@ test('step40Failed marks a non-zero exit and an unreadable exit-0 envelope, neve
   addRun(root3, '2026-10-30T090000-spec-1');
   const ok = await run(root3, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents() });
   assert.ok(!('step40Failed' in ok.entries[0]));
+});
+
+test('postMerge without deps.closingLinks falls back to the exported closingLinks core', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  // Production calls postMerge with no deps, so it reaches the default binding the injected fakes above
+  // never do. The real core, with a gh that answers '', cannot parse `gh pr view` and returns exit 5; a
+  // default naming an unbound identifier would instead throw a ReferenceError out of postMerge itself, since
+  // the default is read before the per-run try.
+  const r = await postMerge({
+    cwd: root, now, prStates: fakePrStates({ 11: merged() }),
+    deps: { gh: fakeGh, closeParents: fakeCloseParents() },
+  });
+  assert.deepEqual(r.entries, [{
+    runDir: dir, pr: 11, action: 'skipped', reason: 'transient-failure', detail: 'Step 4.0 returned exit 5 (a gh failure)', attempt: 1,
+  }]);
 });
 
 test('an exit-0 envelope with no closingSet (not-merged) is a SKIP marker naming its action', async () => {
@@ -668,7 +693,7 @@ test('R2: the default gh runs through the timed wrapper with cwd at the main che
   const close = (args) => { received = args; args.gh(['issue', 'view', '7'], 'body'); return { closed: [], skipped: [] }; };
   await postMerge({
     cwd: root, now, prStates: fakePrStates({ 11: merged() }),
-    deps: { closingLinksRun: fakeClosingLinks(ENVELOPE), closeParents: close },
+    deps: { closingLinks: fakeClosingLinks(ENVELOPE), closeParents: close },
   });
   assert.equal(received.riskFloor, 'medium');
   assert.equal(received.workLinks, 'native');
@@ -715,7 +740,10 @@ test('an unreadable policy.yml skips Step 4.0b fail-closed: no close attempted, 
   const r = await run(root, { prs: { 11: merged() }, links, close });
   assert.equal(links.calls.length, 1, 'Step 4.0 still runs');
   assert.equal(close.calls.length, 0, 'no below-floor close is attempted');
-  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 0 }]); // AC4.2
+  assert.deepEqual(r.entries, [{
+    runDir: dir, pr: 11, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 0,
+    parentFailures: [{ reason: 'unreadable-policy', detail: '.claude-tweaks/policy.yml: EISDIR' }],
+  }]); // AC4.2
   const lines = entriesOf(dir);
   assert.deepEqual(lines.map((e) => e.location), [MARKER_STEP], 'the marker only, no parent line');
   assert.match(lines[0].action, /; 0 parent\(s\) closed; skipped step \(unreadable-policy: \.claude-tweaks\/policy\.yml: EISDIR\)\./);
@@ -814,7 +842,7 @@ test('AC8.2 post-merge setupContext (#4933): unknown origin host → failure unk
   const dir = addRun(root, '2026-10-30T090000-spec-1');
   const links = fakeClosingLinks(ENVELOPE);
   const close = fakeCloseParents();
-  const deps = { gh: unexpectedGh, closingLinksRun: links, closeParents: close, gateDeps: NO_GH_HOSTS };
+  const deps = { gh: unexpectedGh, closingLinks: links, closeParents: close, gateDeps: NO_GH_HOSTS };
 
   let r;
   await assert.doesNotReject(async () => {
@@ -842,6 +870,34 @@ test('AC8.2 post-merge setupContext (#4933): unknown origin host → failure unk
   assert.equal(links.calls.length, 0);
 });
 
+test('#4794: an SSH-alias origin refuses Step 4.0b — failure unknown-host, the alias advice, no gh call', async () => {
+  const origin = 'git@github-work:acme/w.git';
+  const root = mainCheckout({ origin });
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const links = fakeClosingLinks(ENVELOPE);
+  const close = fakeCloseParents();
+  const ghCalls = [];
+  const gh = (...args) => { ghCalls.push(args); throw new Error('unexpected gh call'); };
+  const deps = { gh, closingLinks: links, closeParents: close, gateDeps: NO_GH_HOSTS };
+  const refusal = gateOriginRepo(origin, NO_GH_HOSTS).refusal;
+  assert.ok(refusal, 'the gate refuses an SSH-alias origin');
+
+  const r = await postMerge({ cwd: root, prStates: fakePrStates({ 11: merged() }), now, deps });
+  assert.equal(r.failure, 'unknown-host');
+  assert.equal(r.detail, refusal);
+  assert.match(r.detail, /GH_HOST=github\.com/);
+  assert.doesNotMatch(r.detail, /GH_HOST=github-work/);
+  assert.deepEqual(r.entries, []);
+
+  const one = await postMergeOne({ runDir: dir, cwd: root, prStates: fakePrStates({ 11: merged() }), now, deps });
+  assert.equal(one.reason, 'unknown-host');
+  assert.equal(one.detail, refusal);
+  assert.equal(ghCalls.length, 0, 'no gh call');
+  assert.equal(links.calls.length, 0);
+  assert.equal(close.calls.length, 0);
+  assert.equal(decisionsOf(dir), '', 'no marker is written');
+});
+
 test('AC8.3 post-merge (#4933): a failure with no detail (no-remote, not-github-issues) adds no detail key; an exported GH_HOST opts the host in', async () => {
   const noRemote = mainCheckout({ origin: false });
   const r = await postMerge({ cwd: noRemote, prStates: fakePrStates({}), now, deps: { gh: unexpectedGh, gateDeps: NO_GH_HOSTS } });
@@ -856,7 +912,7 @@ test('AC8.3 post-merge (#4933): a failure with no detail (no-remote, not-github-
     cwd: root,
     prStates: fakePrStates({ 11: merged() }),
     now,
-    deps: { gh: fakeGh, closingLinksRun: fakeClosingLinks(ENVELOPE), closeParents: close, gateDeps: { ...NO_GH_HOSTS, env: { GH_HOST: 'git.corp.invalid' } } },
+    deps: { gh: fakeGh, closingLinks: fakeClosingLinks(ENVELOPE), closeParents: close, gateDeps: { ...NO_GH_HOSTS, env: { GH_HOST: 'git.corp.invalid' } } },
   });
   assert.equal(optedIn.failure, undefined);
   assert.deepEqual([close.calls[0].host, close.calls[0].owner, close.calls[0].repo], ['git.corp.invalid', 'o', 'r']);
@@ -901,10 +957,48 @@ test('R3 two takeovers: the taker that loses the rename skips in-flight and leav
     },
   });
   const loser = takeClaim(dir, NOW, fsApi);
-  assert.deepEqual(winner, { ok: true });
+  assert.equal(winner.ok, true);
   assert.deepEqual(loser, { ok: false, reason: 'in-flight' });
   assert.ok(fs.existsSync(lockOf(dir)), 'the winner still holds the lock');
   assert.deepEqual(fs.readdirSync(dir).filter((f) => f.includes('.stale-')), []);
+});
+
+// The winner's whole takeover lands between the loser's stat and rename, so the rename moves the winner's live
+// claim aside; the loser must not delete that aside unless the claim is back at its path.
+function loserWithFailingLink(dir, { failRenameBack }) {
+  let winner;
+  let renames = 0;
+  const fsApi = {
+    ...fs,
+    linkSync: () => { throw Object.assign(new Error('hard links unsupported'), { code: 'EPERM' }); },
+    renameSync: (from, to) => {
+      renames += 1;
+      if (renames === 1) winner = takeClaim(dir, NOW); // the other taker completes its whole takeover first
+      else if (failRenameBack) throw Object.assign(new Error('rename refused'), { code: 'EPERM' });
+      return fs.renameSync(from, to);
+    },
+  };
+  return { winner: () => winner, loser: takeClaim(dir, NOW, fsApi) };
+}
+
+test('R3 link-back: a link that fails for a reason other than EEXIST renames the live claim back, never deleting it', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  staleLock(dir);
+  const { winner, loser } = loserWithFailingLink(dir, { failRenameBack: false });
+  assert.equal(winner().ok, true);
+  assert.deepEqual(loser, { ok: false, reason: 'in-flight' });
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), winner().token, "the winner's claim is back at its path");
+  assert.deepEqual(fs.readdirSync(dir).filter((f) => f.includes('.stale-')), []);
+});
+
+test('R3 link-back: when the link and the rename back both fail, the live claim stays in its aside', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  staleLock(dir);
+  const { winner, loser } = loserWithFailingLink(dir, { failRenameBack: true });
+  assert.deepEqual(loser, { ok: false, reason: 'in-flight' });
+  const asides = fs.readdirSync(dir).filter((f) => f.includes('.stale-'));
+  assert.equal(asides.length, 1, 'the only copy of the live claim is not deleted');
+  assert.equal(fs.readFileSync(path.join(dir, asides[0]), 'utf8'), winner().token);
 });
 
 test('R3 two takeovers: a taker whose retry create hits EEXIST skips in-flight and leaves the other lock alone', () => {
@@ -948,6 +1042,218 @@ test('takeClaim: a non-EEXIST create error is claim-failed', () => {
   assert.deepEqual(takeClaim(missing, NOW), { ok: false, reason: 'claim-failed' });
 });
 
+const setMtime = (dir, ms) => fs.utimesSync(lockOf(dir), ms / 1000, ms / 1000);
+const mtimeOf = (dir) => fs.statSync(lockOf(dir)).mtimeMs;
+// A file mtime equals an injected time to within filesystem timestamp precision. Not a wall-clock budget: both sides are times the test set.
+const mtimeNear = (actualMs, expectedMs) => Math.abs(actualMs - expectedMs) < 1000;
+
+test('AC1.1 takeClaim: a live holder that took the claim past CLAIM_STALE_MS ago and refreshes it is in-flight, its claim untouched', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const takenAt = NOW - CLAIM_STALE_MS - 60 * 1000;
+  const holder = takeClaim(dir, NOW);
+  assert.equal(holder.ok, true);
+  setMtime(dir, takenAt); // the claim's create time; without the refresh below it is idle and taken over
+  assert.equal(heartbeatClaim(dir, holder.token, NOW - 60 * 1000), true);
+  assert.deepEqual(takeClaim(dir, NOW), { ok: false, reason: 'in-flight' });
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), holder.token);
+  assert.deepEqual(fs.readdirSync(dir).filter((f) => f.includes('.stale-')), []);
+});
+
+test('AC1.1 postMerge: a live, refreshing holder past CLAIM_STALE_MS skips in-flight, defers, and calls no fake', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const takenAt = NOW - CLAIM_STALE_MS - 60 * 1000;
+  const holder = takeClaim(dir, NOW);
+  setMtime(dir, takenAt);
+  heartbeatClaim(dir, holder.token, NOW - 60 * 1000);
+  const links = fakeClosingLinks(ENVELOPE);
+  const r = await run(root, { prs: { 11: merged() }, links, close: fakeCloseParents() });
+  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight' }]);
+  assert.deepEqual(r.deferred, [dir]);
+  assert.equal(links.calls.length, 0);
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), holder.token);
+});
+
+test('takeClaim: a dead holder is reclaimed at once, fresh mtime or not, and the new claim carries our token', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  fs.writeFileSync(lockOf(dir), '424242-dead');
+  setMtime(dir, NOW - 1000);
+  const r = takeClaim(dir, NOW, fs, { isAlive: (pid) => pid !== 424242 });
+  assert.equal(r.ok, true);
+  assert.match(r.token, new RegExp(`^${process.pid}-`));
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), r.token);
+});
+
+test('takeClaim: a live holder idle just under CLAIM_MAX_IDLE_MS is still in-flight', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const held = `${process.pid}-held`;
+  fs.writeFileSync(lockOf(dir), held);
+  setMtime(dir, NOW - CLAIM_MAX_IDLE_MS + 60 * 1000);
+  assert.deepEqual(takeClaim(dir, NOW), { ok: false, reason: 'in-flight' });
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), held);
+});
+
+test('takeClaim: a live-reading holder idle past CLAIM_MAX_IDLE_MS (a reused pid) is reclaimed', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  fs.writeFileSync(lockOf(dir), `${process.pid}-held`);
+  setMtime(dir, NOW - CLAIM_MAX_IDLE_MS - 60 * 1000);
+  const r = takeClaim(dir, NOW);
+  assert.equal(r.ok, true);
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), r.token);
+});
+
+test('CLAIM_MAX_IDLE_MS is 5 minutes, at least 2.5 x the gh-timeout-ms schema ceiling', () => {
+  const { POLICY_KEYS } = require('../../../plugin/bin/lib/policy-schema');
+  assert.equal(GH_TIMEOUT_CEILING_MS, POLICY_KEYS.find((k) => k.key === 'gh-timeout-ms').max);
+  assert.ok(CLAIM_MAX_IDLE_MS >= 2.5 * GH_TIMEOUT_CEILING_MS);
+  assert.equal(CLAIM_MAX_IDLE_MS, 5 * 60 * 1000);
+});
+
+test('heartbeatClaim: refreshes only a claim still carrying our token', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const mine = takeClaim(dir, NOW);
+  const old = NOW - 4 * 60 * 1000;
+  setMtime(dir, old);
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), true);
+  assert.ok(mtimeNear(mtimeOf(dir), NOW), 'our claim was refreshed');
+  fs.writeFileSync(lockOf(dir), `${process.pid}-successor`);
+  setMtime(dir, old);
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), false);
+  assert.ok(mtimeNear(mtimeOf(dir), old), "the successor's mtime is untouched");
+  assert.equal(heartbeatClaim(dir, undefined, NOW), false);
+  fs.unlinkSync(lockOf(dir));
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), false, 'a missing claim is not ours');
+});
+
+test('heartbeatClaim: a claim moved aside by a judging pass, carrying our token, is still ours and is not refreshed', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const mine = takeClaim(dir, NOW);
+  const aside = `${lockOf(dir)}.stale-99999-${NOW - 1000}`;
+  fs.renameSync(lockOf(dir), aside); // mid-takeover: the judger has renamed it and not yet linked it back
+  const old = NOW - 4 * 60 * 1000;
+  fs.utimesSync(aside, old / 1000, old / 1000);
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), true);
+  assert.ok(mtimeNear(fs.statSync(aside).mtimeMs, old), 'the aside is not touched');
+  assert.ok(!fs.existsSync(lockOf(dir)), 'the heartbeat creates nothing at the claim path');
+  fs.writeFileSync(aside, `${process.pid}-other`);
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), false, "another holder's aside is not ours");
+});
+
+test('heartbeatClaim: an orphaned aside older than CLAIM_ASIDE_MAX_AGE_MS proves nothing, even carrying our token', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const mine = takeClaim(dir, NOW);
+  const orphan = `${lockOf(dir)}.stale-99999-${NOW - CLAIM_ASIDE_MAX_AGE_MS - 60 * 1000}`;
+  fs.renameSync(lockOf(dir), orphan); // a judger died before its link-back, or its aside unlink failed
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), false);
+  fs.renameSync(orphan, `${lockOf(dir)}.stale-99999-notanumber`);
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), false, 'a name with no parseable ms is not young');
+});
+
+test('heartbeatClaim: a young aside carrying our token is owned only if the judger would find it live', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const mine = takeClaim(dir, NOW);
+  const aside = `${lockOf(dir)}.stale-99999-${NOW - 1000}`;
+  fs.renameSync(lockOf(dir), aside); // mid-takeover: renamed, not yet linked back
+  const idle = NOW - CLAIM_MAX_IDLE_MS - 60 * 1000;
+  fs.utimesSync(aside, idle / 1000, idle / 1000);
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), false, 'idle past CLAIM_MAX_IDLE_MS: the judger deletes it, not links it back');
+  const fresh = NOW - 60 * 1000;
+  fs.utimesSync(aside, fresh / 1000, fresh / 1000);
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), true, 'fresh mtime: the judger links it back');
+  assert.equal(heartbeatClaim(dir, mine.token, NOW, fs, { isAlive: () => false }), false, 'a dead pid: the judger deletes it');
+  const unstattable = { ...fs, statSync: () => { throw Object.assign(new Error('gone'), { code: 'ENOENT' }); } };
+  assert.equal(heartbeatClaim(dir, mine.token, NOW, unstattable), false, 'a stat failure on the aside is not owned');
+});
+
+test('heartbeatClaim: an aside named with a future ms is not young, even carrying our token', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const mine = takeClaim(dir, NOW);
+  fs.renameSync(lockOf(dir), `${lockOf(dir)}.stale-99999-${NOW + CLAIM_ASIDE_MAX_AGE_MS + 60 * 1000}`);
+  assert.equal(heartbeatClaim(dir, mine.token, NOW), false);
+});
+
+test('heartbeatClaim: a failed refresh still reports our claim as owned', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const mine = takeClaim(dir, NOW);
+  const noUtimes = { ...fs, utimesSync: () => { throw Object.assign(new Error('denied'), { code: 'EPERM' }); } };
+  assert.equal(heartbeatClaim(dir, mine.token, NOW, noUtimes), true);
+});
+
+test('heartbeatClaim: a non-ENOENT first read is not owned, even with a young aside carrying our token', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const mine = takeClaim(dir, NOW);
+  fs.writeFileSync(`${lockOf(dir)}.stale-99999-${NOW - 1000}`, mine.token);
+  const unreadable = {
+    ...fs,
+    readFileSync: (p, ...rest) => {
+      if (p === lockOf(dir)) throw Object.assign(new Error('denied'), { code: 'EACCES' });
+      return fs.readFileSync(p, ...rest);
+    },
+  };
+  assert.equal(heartbeatClaim(dir, mine.token, NOW, unreadable), false);
+});
+
+test('heartbeatClaim: a claim restored by a link-back between the first read and the listing is found by the re-read', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const mine = takeClaim(dir, NOW);
+  let reads = 0;
+  const linkBackRace = {
+    ...fs,
+    readFileSync: (p, ...rest) => {
+      if (p === lockOf(dir) && reads++ === 0) throw Object.assign(new Error('gone'), { code: 'ENOENT' });
+      return fs.readFileSync(p, ...rest);
+    },
+  };
+  assert.equal(heartbeatClaim(dir, mine.token, NOW, linkBackRace), true);
+  assert.equal(reads, 2, 'the claim path was read twice');
+});
+
+test('AC2.1 releaseClaim: a caller whose claim was taken over leaves the successor claim in place', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const first = takeClaim(dir, NOW);
+  assert.equal(first.ok, true);
+  // The first holder is judged dead: a successor takes the claim over.
+  const second = takeClaim(dir, NOW, fs, { isAlive: () => false });
+  assert.equal(second.ok, true);
+  assert.notEqual(second.token, first.token);
+  releaseClaim(dir, first.token);
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), second.token, 'the stale release left the successor claim');
+  releaseClaim(dir, second.token);
+  assert.ok(!fs.existsSync(lockOf(dir)), 'the owner release removes it');
+});
+
+test('releaseClaim: no token removes nothing', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const r = takeClaim(dir, NOW);
+  releaseClaim(dir, undefined);
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), r.token);
+});
+
+test('takeClaim: a claim file that exists but cannot be read is ownerless — in flight while fresh, taken over past CLAIM_STALE_MS, never claim-failed', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  fs.writeFileSync(lockOf(dir), `${process.pid}-held`);
+  const unreadable = {
+    ...fs,
+    readFileSync: (p, ...rest) => {
+      if (p === lockOf(dir)) throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+      return fs.readFileSync(p, ...rest);
+    },
+  };
+  setMtime(dir, NOW - 60 * 1000);
+  assert.deepEqual(takeClaim(dir, NOW, unreadable), { ok: false, reason: 'in-flight' });
+  setMtime(dir, NOW - CLAIM_STALE_MS - 60 * 1000);
+  const r = takeClaim(dir, NOW, unreadable);
+  assert.equal(r.ok, true);
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), r.token);
+});
+
+test('takeClaim: a token write that fails removes the half-made claim and is claim-failed', () => {
+  const dir = addRun(mainCheckout(), '2026-10-30T090000-spec-1');
+  const fsApi = { ...fs, writeSync: () => { throw Object.assign(new Error('disk full'), { code: 'ENOSPC' }); } };
+  assert.deepEqual(takeClaim(dir, NOW, fsApi), { ok: false, reason: 'claim-failed' });
+  assert.ok(!fs.existsSync(lockOf(dir)));
+});
+
 // #4032's batched lookup: postMerge dispatches ahead of archive's own warm-up, so without this
 // prefetch every active run would cost one live `gh pr view` per pass.
 test('prefetchPostMergePrStates: warms exactly the PR numbers postMerge would probe — unmarked, clean included, deduplicated', async () => {
@@ -976,7 +1282,7 @@ test('prefetchPostMergePrStates: nothing is looked up for a project postMerge wo
   await assert.doesNotReject(prefetchPostMergePrStates(root, null));
 });
 
-// ---- M6: end to end — the real postMerge, closing-links run() and closeBelowFloorParents; only gh is faked ----
+// ---- M6: end to end — the real postMerge, closing-links' closingLinks() core and closeBelowFloorParents; only gh is faked ----
 
 // A merged PR #11 whose Fixes block names `fixes` (default #101); #101 and #102 are the sub-issues of parent
 // #100 (native links). `live` is each sub-issue's state as GitHub reports it now, an hour after the merge.
@@ -1112,6 +1418,86 @@ test('AC4.1 #4549 end to end: a Fixes record Step 4.0 could not close (closeFail
   assert.match(marker.action, /0 parent\(s\) closed; skipped #100 \(sibling-unsettled\)\./);
 });
 
+// #4251: a merged PR #11 whose Fixes block names #101 and one `Refs #N — kept open` line per `refs` entry.
+// By default the refs are also sidebar-linked (closingIssuesReferences; `sidebar: false` leaves them only in the
+// Refs lines), and the world reports them closed 2 s after mergedAt until an `issue reopen N` call; #101 closes
+// 2 s after the merge and has no parent. Any other gh call throws.
+function refsWorld({ refs, sidebar = true }) {
+  const mergedAt = new Date(NOW - 60 * 60 * 1000).toISOString();
+  const closedAt = new Date(Date.parse(mergedAt) + 2000).toISOString();
+  const repository = { name: 'w', owner: { login: 'acme' } };
+  const calls = [];
+  const reopened = new Set();
+  const refLines = refs.map((n) => `Refs #${n} — kept open`).join('\n');
+  const gh = (args, input) => {
+    const key = args.join(' ');
+    calls.push({ key, input });
+    if (key === 'pr view 11 --json state,mergedAt,body,closingIssuesReferences,url,mergeCommit,baseRefName') {
+      return JSON.stringify({
+        state: 'MERGED', mergedAt, url: 'https://github.com/acme/w/pull/11', mergeCommit: { oid: 'abcdef1' }, baseRefName: 'main',
+        body: `<!-- claude-tweaks-run: 2026-10-30T090000-spec-101 -->\n\n<!-- fixes-start -->\nFixes #101\n${refLines}\n<!-- fixes-end -->\n`,
+        closingIssuesReferences: [101, ...(sidebar ? refs : [])].map((number) => ({ number, repository })),
+      });
+    }
+    if (key === 'api repos/{owner}/{repo}/commits/abcdef1 --jq .commit.message') return 'fix (#11)\n\nFixes #101\n';
+    if (key === 'repo view github.com/acme/w --json defaultBranchRef -q .defaultBranchRef.name') return 'main\n';
+    let m = /^issue view (\d+) --json state,closedAt$/.exec(key);
+    if (m) {
+      const n = Number(m[1]);
+      if (n === 101) return JSON.stringify({ state: 'CLOSED', closedAt });
+      if (refs.includes(n)) {
+        return JSON.stringify(reopened.has(n) ? { state: 'OPEN', closedAt: null } : { state: 'CLOSED', closedAt });
+      }
+    }
+    m = /^issue reopen (\d+) --comment /.exec(key);
+    if (m && refs.includes(Number(m[1]))) { reopened.add(Number(m[1])); return ''; }
+    if (args[0] === 'api' && args[1] === 'graphql') {
+      if (args[3].startsWith('query={ __type')) return JSON.stringify({ data: { __type: { fields: [{ name: 'subIssues' }] } } });
+      const n = Number(/i(\d+):/.exec(args[3])[1]);
+      return JSON.stringify({ data: { repository: { [`i${n}`]: { number: n, parent: null } } } });
+    }
+    throw new Error(`unexpected gh call: ${key}`);
+  };
+  return { gh, calls, mergedAt };
+}
+
+test('AC1.1 #4251 end to end: an armed merge closed a kept-open Refs record that is also sidebar-linked — the late Step 4.0 reopens it and logs it, then writes the marker', async () => {
+  const { root, dir } = e2eCheckout();
+  const world = refsWorld({ refs: [103] });
+  const r = await e2ePass(root, world);
+  assert.deepEqual(r.entries.map((e) => [e.runDir, e.pr, e.action, e.closingLinks, e.parentsClosed]), [[dir, 11, 'ran', 'reopened', 0]]);
+  assert.ok(world.calls.some((c) => /^issue reopen 103 --comment /.test(c.key)), 'the Refs record is reopened');
+  assert.match(decisionsOf(dir), /^- AUTO \d{2}:\d{2}:\d{2} — Closing links: reopened #103 after PR #11's merge closed it/m);
+  assert.equal(entriesOf(dir).at(-1).location, MARKER_STEP, 'the marker is written last');
+  const before = world.calls.length;
+  assert.deepEqual(await e2ePass(root, world), { entries: [], deferred: [] });
+  assert.equal(world.calls.length, before, 'a second pass makes no gh call');
+});
+
+// With no sidebar link GitHub would not normally close #103 on merge; the world still reports it CLOSED after mergedAt
+// (this fixture models no closing channel for it) — the reconciler's late run reopens a closed kept-open Refs record
+// named by the fixes span's Refs line, whichever channel closed it.
+test('AC1.2 #4251 end to end: an armed merge closed a kept-open Refs record that no sidebar link names — the late Step 4.0 reopens it from the fixes span\'s Refs line', async () => {
+  const { root, dir } = e2eCheckout();
+  const world = refsWorld({ refs: [103], sidebar: false });
+  const r = await e2ePass(root, world);
+  assert.deepEqual(r.entries.map((e) => [e.runDir, e.pr, e.action, e.closingLinks, e.parentsClosed]), [[dir, 11, 'ran', 'reopened', 0]]);
+  assert.ok(world.calls.some((c) => /^issue reopen 103 --comment /.test(c.key)), 'the Refs record is reopened');
+  assert.match(decisionsOf(dir), /^- AUTO \d{2}:\d{2}:\d{2} — Closing links: reopened #103 after PR #11's merge closed it/m);
+  assert.equal(entriesOf(dir).at(-1).location, MARKER_STEP, 'the marker is written last');
+});
+
+// Step 4.0b's below-floor parent path makes its own `gh issue` calls (pinned by the 'M6 end to end: an armed merge's
+// last sub-issue closes its below-floor parent once' test); this world's Fixes record has no parent.
+test('AC2.1 #4251 end to end: a run whose fixes span has no Refs record and whose Fixes record has no parent makes no gh issue call', async () => {
+  const { root, dir } = e2eCheckout();
+  const world = refsWorld({ refs: [] });
+  const r = await e2ePass(root, world);
+  assert.deepEqual(r.entries.map((e) => [e.action, e.closingLinks]), [['ran', 'nothing-closed']]);
+  assert.deepEqual(world.calls.filter((c) => /^issue /.test(c.key)).map((c) => c.key), []);
+  assert.equal(entriesOf(dir).at(-1).location, MARKER_STEP);
+});
+
 // postMergeOne (#4692): the one guarded single-run path merge mode's already-merged route drives.
 const oneArgs = (root, dir, { prs, links, close, takeClaimFn, extra = {} } = {}) => ({
   runDir: dir,
@@ -1119,7 +1505,7 @@ const oneArgs = (root, dir, { prs, links, close, takeClaimFn, extra = {} } = {})
   prStates: fakePrStates(prs),
   now,
   deps: {
-    gh: fakeGh, closingLinksRun: links, closeParents: close, ...(takeClaimFn ? { takeClaim: takeClaimFn } : {}), ...extra,
+    gh: fakeGh, closingLinks: links, closeParents: close, ...(takeClaimFn ? { takeClaim: takeClaimFn } : {}), ...extra,
   },
 });
 
@@ -1148,9 +1534,7 @@ test('postMergeOne processes an archive/{run-id} dir postMerge never walks', asy
   const entry = await postMergeOne(oneArgs(root, path.relative(root, dir), { prs: { 11: merged() }, links, close }));
   assert.equal(entry.action, 'ran');
   assert.equal(entry.runDir, dir);
-  assert.deepEqual(links.calls[0].argv, [
-    '--run', dir, '--mode', 'post-merge', '--settle-ms', '0', '--close-window-ms', String(CLOSE_WINDOW_MS),
-  ]);
+  assert.deepEqual(links.calls[0].opts, { run: dir, mode: 'post-merge', settleMs: 0, closeWindowMs: CLOSE_WINDOW_MS });
   assert.equal(close.calls[0].selfInclude, false, 'past the grace: the late-merge parameters');
   assert.ok(hasPostMergeMarker(decisionsOf(dir)));
   assert.ok(!fs.existsSync(lockOf(dir)), 'the claim is released');
@@ -1203,7 +1587,7 @@ test('postMergeOne runs inside MERGE_GRACE_MS under the claim with the in-sessio
   }));
   assert.equal(entry.action, 'ran');
   assert.equal(claims, 1);
-  assert.deepEqual(links.calls[0].argv, ['--run', dir, '--mode', 'post-merge']);
+  assert.deepEqual(links.calls[0].opts, { run: dir, mode: 'post-merge' });
   assert.equal(close.calls[0].selfInclude, true);
   assert.ok(hasPostMergeMarker(decisionsOf(dir)));
   assert.ok(!fs.existsSync(lockOf(dir)));
@@ -1329,7 +1713,7 @@ test('postMergeOne reports setup failures with pr null', async () => {
   assert.deepEqual(await postMergeOne({ ...base, cwd: ok, prStates: null }), { runDir: path.resolve(ok, dir), pr: null, action: 'skipped', reason: 'no-pr-states', verdict: 'failed', next: 'none' });
 });
 
-test('I1: postMergeOne lists Step 4.0b failures in parentFailures; a deliberate policy skip is not one; postMerge entries carry none', async () => {
+test('I1: postMergeOne and postMerge entries list the same Step 4.0b failures; a deliberate policy skip is not one', async () => {
   const skipped = [
     { parent: 100, reason: 'gh-failed', detail: 'HTTP 502' },
     { issue: 103, reason: 'internal-error', detail: 'boom' },
@@ -1370,7 +1754,171 @@ test('I1: postMergeOne lists Step 4.0b failures in parentFailures; a deliberate 
   addRun(other, '2026-10-30T090000-spec-1');
   const loop = await run(other, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents({ closed: [], skipped }) });
   assert.equal(loop.entries.length, 1);
-  assert.ok(!('parentFailures' in loop.entries[0]));
+  assert.deepEqual(loop.entries[0].parentFailures, entry.parentFailures);
+});
+
+test('AC1.1: a gh-failed Step 4.0b skip in the reconcile loop rides on the entry, which is not a clean ran (#4798)', async () => {
+  const root = mainCheckout();
+  addRun(root, '2026-10-30T090000-spec-1');
+  const r = await run(root, {
+    prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE),
+    close: fakeCloseParents({ closed: [], skipped: [{ parent: 100, reason: 'gh-failed', detail: 'HTTP 502' }, { parent: 88, reason: 'above-floor' }] }),
+  });
+  assert.equal(r.entries[0].action, 'ran');
+  assert.deepEqual(r.entries[0].parentFailures, [{ parent: 100, reason: 'gh-failed', detail: 'HTTP 502' }]);
+  assert.ok(!('stepSkips' in r.entries[0]));
+  assert.deepEqual(classifyEntry(r.entries[0]), { verdict: 'failed', next: 'none', failedSteps: ['4.0b'] });
+});
+
+test('Q2-Q4: a parentless Step 4.0b skip on an empty effective closing set is a stepSkips element, never a parent left open, on both paths (#4798)', async () => {
+  const EISDIR = { reason: 'unreadable-policy', detail: '.claude-tweaks/policy.yml: EISDIR' };
+  const emptySet = { ...ENVELOPE, closingSet: [] };
+  // Loop path, policySkipOf's skip.
+  const { root, dir } = policyCheckout(null);
+  fs.mkdirSync(path.join(root, '.claude-tweaks', 'policy.yml'));
+  const loop = await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(emptySet), close: fakeCloseParents() });
+  assert.deepEqual(loop.entries, [{ runDir: dir, pr: 11, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 0, stepSkips: [EISDIR] }]);
+  assert.equal(classifyEntry(loop.entries[0]).verdict, 'clean');
+  // Single-run path: same split, parentFailures still present and empty.
+  const { root: oneRoot, dir: oneDir } = policyCheckout(null);
+  fs.mkdirSync(path.join(oneRoot, '.claude-tweaks', 'policy.yml'));
+  const one = await postMergeOne(oneArgs(oneRoot, oneDir, { prs: { 11: merged() }, links: fakeClosingLinks(emptySet), close: fakeCloseParents() }));
+  assert.deepEqual(one.parentFailures, []);
+  assert.deepEqual(one.stepSkips, [EISDIR]);
+  assert.equal(one.verdict, 'clean');
+  // Q3 + Q4: closeParents' own parentless skips (any reason) on a closing set the close window emptied.
+  const winRoot = mainCheckout();
+  addRun(winRoot, '2026-10-30T090000-spec-1');
+  const windowed = await run(winRoot, {
+    prs: { 11: merged() }, links: fakeClosingLinks({ ...ENVELOPE, closingSet: [101], closedAfterWindow: [101] }),
+    close: fakeCloseParents({ closed: [], skipped: [{ reason: 'invalid-risk-floor' }, { reason: 'internal-error', detail: 'boom' }] }),
+  });
+  assert.deepEqual(windowed.entries[0].stepSkips, [{ reason: 'invalid-risk-floor' }, { reason: 'internal-error', detail: 'boom' }]);
+  assert.ok(!('parentFailures' in windowed.entries[0]));
+  // A non-empty effective closing set: the same skip is a parent left open.
+  const { root: setRoot } = policyCheckout(null);
+  fs.mkdirSync(path.join(setRoot, '.claude-tweaks', 'policy.yml'));
+  const withSet = await run(setRoot, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents() });
+  assert.deepEqual(withSet.entries[0].parentFailures, [EISDIR]);
+  assert.ok(!('stepSkips' in withSet.entries[0]));
+});
+
+test('Q5: a marker-write-failed entry keeps the run\'s parentFailures and stepSkips, on both paths (#4798)', async () => {
+  const readOnly = { appendEntries: () => { throw new Error('read-only'); } };
+  // Loop path: a parent left open.
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const loop = await run(root, {
+    prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE),
+    close: fakeCloseParents({ closed: [], skipped: [{ parent: 100, reason: 'gh-failed', detail: 'HTTP 502' }] }),
+    extra: readOnly,
+  });
+  assert.deepEqual(loop.entries, [{
+    runDir: dir, pr: 11, action: 'skipped', reason: 'marker-write-failed', parentsClosed: 0,
+    parentFailures: [{ parent: 100, reason: 'gh-failed', detail: 'HTTP 502' }],
+  }]);
+  // Single-run path: a step skip on an empty effective closing set.
+  const { root: oneRoot, dir: oneDir } = policyCheckout(null);
+  fs.mkdirSync(path.join(oneRoot, '.claude-tweaks', 'policy.yml'));
+  const one = await postMergeOne(oneArgs(oneRoot, oneDir, {
+    prs: { 11: merged() }, links: fakeClosingLinks({ ...ENVELOPE, closingSet: [] }), close: fakeCloseParents(), extra: readOnly,
+  }));
+  assert.equal(one.reason, 'marker-write-failed');
+  assert.deepEqual(one.parentFailures, []);
+  assert.deepEqual(one.stepSkips, [{ reason: 'unreadable-policy', detail: '.claude-tweaks/policy.yml: EISDIR' }]);
+  assert.deepEqual([one.verdict, one.next], ['failed', 'rerun']);
+});
+
+test('Q5: a throw after closeParents returns keeps the run\'s parentFailures on the error entry, which is not deferred (#4798)', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  // The null in `closed` makes the parent-line map throw after the split has run.
+  const r = await run(root, {
+    prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE),
+    close: fakeCloseParents({ closed: [null], skipped: [{ parent: 100, reason: 'gh-failed', detail: 'HTTP 502' }] }),
+  });
+  assert.equal(r.entries.length, 1);
+  const entry = r.entries[0];
+  assert.equal(entry.runDir, dir);
+  assert.equal(entry.action, 'skipped');
+  assert.equal(entry.reason, 'error');
+  assert.equal(typeof entry.detail, 'string');
+  assert.deepEqual(entry.parentFailures, [{ parent: 100, reason: 'gh-failed', detail: 'HTTP 502' }]);
+  assert.equal(entry.parentsClosed, 1, 'the closes already happened on GitHub, so the error entry still counts them');
+  assert.deepEqual(r.deferred, [], 'an error entry is not deferred, as for a thrown error today');
+  assert.ok(!fs.existsSync(lockOf(dir)));
+});
+
+test('parentsLeftOpen and stepSkipsOf flatten every entry carrying the fields, in order, any action or verdict, detail dropped (#4798)', () => {
+  const entries = [
+    { pr: 11, action: 'ran', parentFailures: [{ parent: 100, reason: 'gh-failed', detail: 'x' }, { issue: 103, reason: 'internal-error' }] },
+    { pr: 12, action: 'ran', parentFailures: [], stepSkips: [{ reason: 'unreadable-policy', detail: 'y' }] },
+    { pr: 13, action: 'skipped', reason: 'marker-write-failed', parentFailures: [{ parent: 9, reason: 'gh-failed' }], stepSkips: [{ reason: 'invalid-risk-floor' }] },
+    { pr: 14, action: 'ran', parentFailures: 'junk', stepSkips: 'junk' },
+    { pr: 15, action: 'ran', closingLinks: 'close-failed', stepSkips: [{ reason: 'internal-error' }] },
+  ];
+  assert.deepEqual(parentsLeftOpen(entries), [
+    { pr: 11, parent: 100, reason: 'gh-failed' }, { pr: 11, issue: 103, reason: 'internal-error' }, { pr: 13, parent: 9, reason: 'gh-failed' },
+  ]);
+  assert.deepEqual(stepSkipsOf(entries), [{ pr: 12, reason: 'unreadable-policy' }, { pr: 13, reason: 'invalid-risk-floor' }, { pr: 15, reason: 'internal-error' }]);
+  assert.deepEqual(parentsLeftOpen(null), []);
+  assert.deepEqual(stepSkipsOf(undefined), []);
+});
+
+test('parentsLeftOpenLine and stepSkipsLine render the valid items and nothing for none (#4798)', () => {
+  assert.equal(
+    parentsLeftOpenLine([{ pr: 11, parent: 100, reason: 'gh-failed' }, { pr: 11, issue: 103, reason: 'internal-error' }, { pr: 12, reason: 'unreadable-policy' }, 'x', null, { pr: 'x', parent: 1, reason: 'gh-failed' }]),
+    "post-merge Step 4.0b left parent record(s) open: #100 (gh-failed, PR #11), the parent of record #103 (internal-error, PR #11), every parent (unreadable-policy, PR #12) — tidy's parent-gate backstop recovers them",
+  );
+  assert.equal(
+    stepSkipsLine([{ pr: 13, reason: 'invalid-risk-floor' }, null, { pr: 14, reason: 5 }]),
+    'post-merge Step 4.0b skipped step-wide, leaving no parent open (nothing left to close): invalid-risk-floor (PR #13)',
+  );
+  for (const junk of [undefined, null, 'x', [], [null], [{ pr: 11, reason: 5 }]]) {
+    assert.equal(parentsLeftOpenLine(junk), null);
+    assert.equal(stepSkipsLine(junk), null);
+  }
+});
+
+test('supersededChanges + supersededChangesLine: name every GitHub change of a taken-over holder, numbers only', () => {
+  const lost = { action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL };
+  const entries = [
+    { runDir: '/r/a', pr: 12, ...lost, parentsClosed: 2, recordsReopened: [7, 9], recordsClosed: [8] },
+    { runDir: '/r/b', pr: 13, ...lost, recordsReopened: [10] },
+    { runDir: '/r/c', pr: 14, ...lost }, // superseded, changed nothing: today's in-flight skip
+    { runDir: '/r/d', pr: 15, action: 'skipped', reason: 'in-flight', parentsClosed: 1 }, // a plain in-flight skip
+    { runDir: '/r/e', pr: 16, action: 'ran', closingLinks: 'reopened', parentsClosed: 1 },
+  ];
+  assert.equal(isSupersededEntry(entries[2]), true);
+  assert.equal(isSupersededEntry(entries[3]), false);
+  const items = supersededChanges(entries);
+  assert.deepEqual(items, [
+    { pr: 12, parentsClosed: 2, recordsReopened: [7, 9], recordsClosed: [8] },
+    { pr: 13, recordsReopened: [10] },
+  ]);
+  assert.equal(
+    supersededChangesLine(items),
+    'post-merge steps in run(s) whose claim another pass took over had already changed GitHub: PR #12 closed 2 parent record(s) below the oversight floor, reopened #7, #9, closed #8; PR #13 reopened #10',
+  );
+  assert.equal(supersededChangesLine([]), null);
+  assert.equal(supersededChangesLine(undefined), null);
+  assert.deepEqual(supersededChanges(null), []);
+});
+
+test('isSupersededEntry + supersededChanges + supersededChangesLine: all three entry fields must match; malformed counts and numbers are dropped (#4797)', () => {
+  const lostDetail = { detail: CLAIM_LOST_DETAIL };
+  assert.equal(isSupersededEntry({ action: 'skipped', reason: 'error', ...lostDetail }), false);
+  assert.equal(isSupersededEntry({ action: 'ran', reason: 'in-flight', ...lostDetail }), false);
+  assert.equal(isSupersededEntry(null), false);
+  const lost = { action: 'skipped', reason: 'in-flight', ...lostDetail };
+  assert.deepEqual(supersededChanges([
+    { pr: 1, ...lost, parentsClosed: 0, recordsReopened: [], recordsClosed: ['x', null] },
+    { pr: 2, ...lost, parentsClosed: '3', recordsReopened: [5, 'x', 6] },
+    { pr: 'x', ...lost, recordsReopened: [7] },
+    { ...lost, recordsReopened: [8] },
+    null,
+  ]), [{ pr: 2, recordsReopened: [5, 6] }], 'an entry whose pr is not an integer is dropped');
+  assert.equal(supersededChangesLine([{ pr: 'x', parentsClosed: 1 }, null, { pr: 3 }]), null);
 });
 
 // Driven from the producer's own list, so a member added there is covered here with no edit.
@@ -1432,13 +1980,15 @@ test('classifyEntry classifies every action word closing-links.js emits', () => 
   const words = new Set();
   for (const m of src.matchAll(/\baction(?::|\s*=)\s*'([a-z-]+)'/g)) words.add(m[1]);
   for (const m of src.matchAll(/\baction:\s*[\w.]+\s*\?\s*'([a-z-]+)'\s*:\s*'([a-z-]+)'/g)) { words.add(m[1]); words.add(m[2]); }
-  // Post-merge mode's words, then pre-merge mode's (never on this path; denied like any unknown word).
+  // Post-merge mode's words, then pre-merge mode's, then screen mode's (`clean` is shared with pre-merge);
+  // pre-merge and the CLI-only screen mode are never on this path, so denied like any unknown word.
   const EXPECTED = {
     'nothing-closed': 'clean', closed: 'clean', reopened: 'clean', 'no-fixes-span': 'clean', 'not-merged': 'clean', 'no-pr': 'clean',
     'reopen-failed': 'failed', 'close-failed': 'failed', 'base-unchecked': 'failed', 'close-pending': 'failed', 'gh-absent': 'failed',
     clean: 'failed', unlinked: 'failed', 'still-linked': 'failed',
+    neutralized: 'failed',
   };
-  assert.ok(words.size >= 14, `the scan found every producer site (${[...words].join(', ')})`);
+  assert.ok(words.size >= 15, `the scan found every producer site (${[...words].join(', ')})`);
   assert.deepEqual([...words].sort(), Object.keys(EXPECTED).sort());
   for (const [word, verdict] of Object.entries(EXPECTED)) {
     assert.equal(classifyEntry({ action: 'ran', closingLinks: word, parentsClosed: 0 }).verdict, verdict, word);
@@ -1525,4 +2075,865 @@ test('M8: postMergeOne carries Step 4.0\'s logFailed on a ran entry; a postMerge
     prs: { 11: merged() }, links: fakeClosingLinks({ ...ENVELOPE, action: 'reopen-failed', logFailed: true }), close: fakeCloseParents(),
   });
   assert.equal(failingLoop.entries[0].logFailed, true, 'a non-clean word: the loop entry carries logFailed');
+});
+
+test('heartbeat: every gh call through the shared path refreshes the held claim, in Step 4.0 and in Step 4.0b', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const seen = [];
+  const probe = (gh, label) => {
+    setMtime(dir, NOW - 4 * 60 * 1000);
+    gh(['api', 'user']);
+    seen.push([label, mtimeOf(dir)]);
+  };
+  const links = (argv, d) => { probe(d.gh, '4.0'); return { code: 0, envelope: ENVELOPE }; };
+  const close = (args) => { probe(args.gh, '4.0b'); return { closed: [], skipped: [] }; };
+  const r = await run(root, { prs: { 11: merged() }, links, close });
+  assert.equal(r.entries[0].action, 'ran');
+  assert.deepEqual(seen.map(([label]) => label), ['4.0', '4.0b']);
+  for (const [label, m] of seen) assert.ok(mtimeNear(m, NOW), `the ${label} gh call refreshed the claim`);
+  assert.ok(!fs.existsSync(lockOf(dir)), 'the owner release removed the claim');
+});
+
+test('markSuperseded: suffixes the location of an entry line and leaves any other string alone', () => {
+  assert.equal(
+    markSuperseded('- AUTO 09:00:00 — Closing links: reopened #7 after PR #11\'s merge closed it. Reversibility: high.'),
+    `- AUTO 09:00:00 — Closing links${SUPERSEDED_LOCATION_SUFFIX}: reopened #7 after PR #11's merge closed it. Reversibility: high.`,
+  );
+  assert.equal(markSuperseded('## /wrap-up'), '## /wrap-up');
+});
+
+test('Q2 + Q4: a holder taken over during Step 4.0 makes no further gh call, keeps only its GitHub-change lines (marked superseded), and skips in-flight, deferred', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const ghCalls = [];
+  const successor = `${process.pid}-successor`;
+  const close = fakeCloseParents();
+  const links = (opts, d) => {
+    d.gh(['issue', 'reopen', '101']);
+    fs.writeFileSync(lockOf(dir), successor); // a successor takes the claim over
+    assert.throws(() => d.gh(['issue', 'view', '102']), 'the call after the takeover throws');
+    assert.throws(() => d.gh(['issue', 'view', '103']), 'every later call throws too');
+    d.appendDecision({ runDir: opts.run, entry: '- AUTO 09:00:00 — Closing links: reopened #101 after PR #11\'s merge closed it (closing link or merge-commit keyword). Reversibility: high.' });
+    d.appendDecision({ runDir: opts.run, entry: '- SKIP 09:00:00 — Closing links (degraded): condition: could not read #102 → fallback: x. Reversibility: n/a.' });
+    return { code: 0, envelope: { ...ENVELOPE, action: 'reopen-failed', reopened: [101], failed: [{ issue: 102 }, { issue: 103 }] } };
+  };
+  const r = await run(root, { prs: { 11: merged() }, links, close, extra: { gh: (args) => { ghCalls.push(args.join(' ')); return '{}'; } } });
+  assert.deepEqual(ghCalls, ['issue reopen 101'], 'only the call made before the takeover ran');
+  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL, recordsReopened: [101] }]);
+  assert.deepEqual(r.deferred, [dir]);
+  assert.equal(close.calls.length, 0, 'Step 4.0b never starts');
+  const log = decisionsOf(dir);
+  assert.match(log, /— Closing links \(superseded holder\): reopened #101 /, 'the reopen it made is logged, marked');
+  assert.doesNotMatch(log, /SKIP/, 'no degraded line, no attempt line, no SKIP marker');
+  assert.equal(hasPostMergeMarker(log), false, 'the successor still owns the marker');
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), successor, 'the successor claim stays');
+});
+
+test('Q2 + Q4: a takeover during Step 4.0b stops the pass before its marker; each parent it closed is logged as a superseded line and reported', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const successor = `${process.pid}-successor`;
+  const close = (args) => {
+    args.gh(['issue', 'close', '100']);
+    fs.writeFileSync(lockOf(dir), successor);
+    assert.throws(() => args.gh(['issue', 'close', '200']));
+    return { closed: [{ parent: 100, maxTier: 'low' }], skipped: [{ parent: 200, reason: 'gh-failed', detail: CLAIM_LOST_DETAIL }] };
+  };
+  // A non-default base: Step 4.0 closed #101 itself before Step 4.0b ran.
+  const links = fakeClosingLinks({ ...ENVELOPE, action: 'closed', nonDefaultBase: true, closed: [101], closeFailed: [], closingSet: [101] });
+  const r = await run(root, { prs: { 11: merged() }, links, close });
+  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL, parentsClosed: 1, recordsClosed: [101] }]);
+  assert.deepEqual(r.deferred, [dir]);
+  const log = decisionsOf(dir);
+  assert.match(log, /— reconcile post-merge parent-close \(superseded holder\): closed parent #100 below the oversight floor/);
+  assert.doesNotMatch(log, /#200/);
+  assert.equal(hasPostMergeMarker(log), false, 'no summary marker');
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), successor);
+});
+
+test('Q4 fix: a takeover after the last gh call still stops the marker write', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const successor = `${process.pid}-successor`;
+  // Step 4.0b makes no gh call (as on the policy-skip path); the takeover lands before the marker write.
+  const close = () => { fs.writeFileSync(lockOf(dir), successor); return { closed: [], skipped: [] }; };
+  const r = await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close });
+  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL }]);
+  assert.equal(decisionsOf(dir), '', 'no marker, nothing else to log');
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), successor);
+});
+
+// A `now` that installs the successor on the second read after the closing-links fake returns: the first is the
+// ownership check right after Step 4.0, the second is `stamp = now()`, so the takeover lands between that check and
+// the write guard's own check. Pinned to that point: `arm` ages the claim's mtime, a passing ownership check
+// refreshes it to NOW, and the helper records whether the refresh had happened when it fired. If processRun gains
+// a `now()` call ahead of the post-Step-4.0 check, the takeover lands on that check instead and `ownedAtTakeover`
+// reads false, so the tests fail rather than pass on the wrong check.
+function takeoverBeforeTheWrite(dir, successor) {
+  let armed = false;
+  let reads = 0;
+  let owned = null;
+  return {
+    arm: () => { armed = true; setMtime(dir, NOW - 60 * 1000); },
+    ownedAtTakeover: () => owned,
+    now: () => {
+      if (armed && ++reads === 2) {
+        owned = mtimeNear(mtimeOf(dir), NOW);
+        fs.writeFileSync(lockOf(dir), successor);
+      }
+      return NOW;
+    },
+  };
+}
+
+test('Q2: a holder taken over between the Step 4.0 ownership check and the attempt-line write returns the lost entry and writes no attempt line', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const successor = `${process.pid}-successor`;
+  const takeover = takeoverBeforeTheWrite(dir, successor);
+  const links = () => { takeover.arm(); return { code: 5, envelope: null }; };
+  const r = await postMerge({
+    cwd: root, prStates: fakePrStates({ 11: merged() }), now: takeover.now,
+    deps: { gh: fakeGh, closingLinks: links, closeParents: fakeCloseParents() },
+  });
+  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL }]);
+  assert.deepEqual(r.deferred, [dir]);
+  assert.equal(takeover.ownedAtTakeover(), true, 'the post-Step-4.0 check read owned; the takeover landed after it');
+  assert.equal(decisionsOf(dir), '', 'no attempt line');
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), successor, 'the successor claim stays');
+});
+
+test('Q2: a holder taken over between the Step 4.0 ownership check and the SKIP-marker write returns the lost entry and writes no marker', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const successor = `${process.pid}-successor`;
+  const takeover = takeoverBeforeTheWrite(dir, successor);
+  const links = () => { takeover.arm(); return { code: 0, envelope: { action: 'not-merged', state: 'OPEN' } }; };
+  const r = await postMerge({
+    cwd: root, prStates: fakePrStates({ 11: merged() }), now: takeover.now,
+    deps: { gh: fakeGh, closingLinks: links, closeParents: fakeCloseParents() },
+  });
+  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL }]);
+  assert.deepEqual(r.deferred, [dir]);
+  assert.equal(takeover.ownedAtTakeover(), true, 'the post-Step-4.0 check read owned; the takeover landed after it');
+  assert.equal(decisionsOf(dir), '', 'no SKIP marker');
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), successor, 'the successor claim stays');
+});
+
+test('a claim with no token (a takeClaim fake) never refuses a gh call or a write', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const ghCalls = [];
+  const links = (opts, d) => { d.gh(['pr', 'view', '11']); d.gh(['issue', 'view', '101']); return { code: 0, envelope: ENVELOPE }; };
+  const r = await run(root, {
+    prs: { 11: merged() }, links, close: fakeCloseParents(),
+    extra: { takeClaim: () => ({ ok: true }), gh: (args) => { ghCalls.push(args.join(' ')); return '{}'; } },
+  });
+  assert.equal(r.entries[0].action, 'ran');
+  assert.deepEqual(ghCalls, ['pr view 11', 'issue view 101']);
+  assert.equal(hasPostMergeMarker(decisionsOf(dir)), true);
+});
+
+// ---- #6143: hollow-merge detection (detectHollowMerges) and postMerge's hollowRunDirs skip ----
+// Fixtures use the real writers: the PR body from pr-body.js's composePrEarlyBody (rows flipped by
+// pr-checklist.js's setPhaseRow), every phase-exit line from formatEntry + appendEntry under
+// PHASE_SECTIONS[phase], and one case's run-state.json from `hooks.js record-worktree` + `record-pr`.
+const { detectHollowMerges, HOLLOW_STEP } = require('../../../plugin/bin/lib/reconcile/post-merge');
+const { composePrEarlyBody, composeExpressBody } = require('../../../plugin/bin/lib/flow/pr-body');
+const { setPhaseRow } = require('../../../plugin/bin/lib/flow/pr-checklist');
+const { appendEntry } = require('../../../plugin/bin/lib/log-decision/append');
+const { PHASE_SECTIONS } = require('../../../plugin/bin/pr-merge-state');
+const { PHASE_EXIT_STEP, phaseExitText } = require('../../../plugin/bin/lib/phase-exit/exit-record');
+const { cleanGitEnv } = require('../../helpers/git-fixtures');
+const { runCli } = require('../../helpers/run-cli');
+
+const HOOKS_JS = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'hooks.js');
+const HR = '2026-11-23T162803-record-6143';
+const HOLLOW_MERGED_AT = '2026-11-23T17:00:00Z';
+const ONE_LINE_DECISION = `## /flow\n${formatEntry({ status: 'AUTO', now: NOW, step: 'Claim', text: 'claimed #6143' })}\n`;
+
+function hollowBody(runId, { check = [], express = false } = {}) {
+  if (express) return composeExpressBody({ runId, specSummary: 's', fixesLines: ['Fixes #6143'] });
+  let body = composePrEarlyBody({ runId, specSummary: 's', target: '#6143', nextStep: 'build', fixesLines: ['Fixes #6143'] });
+  for (const phase of check) body = setPhaseRow({ body, phase }).body;
+  return body;
+}
+
+function logPhaseExit(runDir, phase) {
+  fs.mkdirSync(runDir, { recursive: true });
+  appendEntry({ runDir, section: PHASE_SECTIONS[phase], entry: formatEntry({ status: 'AUTO', now: NOW, step: PHASE_EXIT_STEP, text: phaseExitText(phase, 'abc1234') }) });
+}
+
+const ref = (number, login = 'acme', name = 'w') => ({ number, repository: { name, owner: { login } } });
+
+// A gh fake: `views` maps a PR number to its `pr view` JSON (an object, a raw string, or an Error to throw);
+// `commentThrows` names issue numbers whose `issue comment` throws.
+function hollowGh({ views = {}, commentThrows = [] } = {}) {
+  const calls = [];
+  const fn = (args, input) => {
+    calls.push({ args, input });
+    if (args[0] === 'pr' && args[1] === 'view') {
+      const v = views[Number(args[2])];
+      if (v instanceof Error) throw v;
+      return typeof v === 'string' ? v : JSON.stringify(v);
+    }
+    if (args[0] === 'issue' && args[1] === 'comment' && commentThrows.includes(Number(args[2]))) throw new Error('HTTP 502');
+    return '';
+  };
+  fn.calls = calls;
+  fn.comments = () => calls.filter((c) => c.args[0] === 'issue' && c.args[1] === 'comment');
+  return fn;
+}
+
+const view = (body, closing = [ref(6143)]) => ({ body, closingIssuesReferences: closing, mergedAt: HOLLOW_MERGED_AT });
+const hollowMarkers = (dir) => decisionsOf(dir).split('\n').map(parseEntry).filter((e) => e && e.location === HOLLOW_STEP);
+const detect = (root, { prs = { 11: merged() }, gh, dryRun = false, extra = {}, prStates, clock } = {}) => detectHollowMerges({
+  cwd: root, prStates: prStates || fakePrStates(prs), dryRun, deps: { gh, ...extra }, ...(clock ? { now: clock } : {}),
+});
+
+test('AC4.1 (detection): a merged PR whose marker names an active run with build unchecked and no build phase-exit record is held, commented once, and marked', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  const gh = hollowGh({ views: { 11: view(hollowBody(HR)) } });
+  const r = await detect(root, { gh });
+  assert.deepEqual(r, {
+    entries: [{ runDir: dir, runId: HR, pr: 11, action: 'held', reason: 'hollow-merge', phase: 'build', records: [6143], commented: [6143] }],
+    hollowRunDirs: [dir],
+  });
+  assert.deepEqual(gh.calls[0].args, ['pr', 'view', '11', '--json', 'body,closingIssuesReferences,mergedAt']);
+  const comments = gh.comments();
+  assert.equal(comments.length, 1);
+  assert.deepEqual(comments[0].args, ['issue', 'comment', '6143', '--body-file', '-']);
+  assert.equal(comments[0].input, `Reconcile: PR #11 (run ${HR}) was merged at ${HOLLOW_MERGED_AT} while the run's build phase was unfinished — a hollow merge. The claim, the auto:build grant and the run directory are left in place; the code this record asked for may not have landed. Reopen this record if the merge closed it, then resume or settle the run.`);
+  const markers = hollowMarkers(dir);
+  assert.equal(markers.length, 1);
+  assert.equal(markers[0].status, 'AUTO');
+  assert.ok(markers[0].action.startsWith(`hollow merge of PR #11 commented on #6143 (merged ${HOLLOW_MERGED_AT}, build unfinished)`), markers[0].action);
+  assert.match(decisionsOf(dir), /## \/reconcile\n- AUTO [^\n]*reconcile hollow-merge: hollow merge of PR #11/);
+});
+
+test('AC4.2 (detection): build finished (exit recorded) but test unfinished is held with phase test', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  logPhaseExit(dir, 'build');
+  const gh = hollowGh({ views: { 11: view(hollowBody(HR)) } });
+  const r = await detect(root, { gh });
+  assert.equal(r.entries.length, 1);
+  assert.equal(r.entries[0].reason, 'hollow-merge');
+  assert.equal(r.entries[0].phase, 'test');
+  assert.match(gh.comments()[0].input, /while the run's test phase was unfinished/);
+});
+
+test('hollow merge: a second detectHollowMerges call on the same fixture holds again with zero new comments', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  const gh = hollowGh({ views: { 11: view(hollowBody(HR)) } });
+  await detect(root, { gh });
+  const second = await detect(root, { gh });
+  assert.deepEqual(second.entries, [{ runDir: dir, runId: HR, pr: 11, action: 'held', reason: 'hollow-merge', phase: 'build', records: [6143], commented: [] }]);
+  assert.deepEqual(second.hollowRunDirs, [dir]);
+  assert.equal(gh.comments().length, 1, 'one comment across both passes');
+  assert.equal(hollowMarkers(dir).length, 1);
+});
+
+// The comment and its marker are posted under the run's post-merge claim (takeClaim/releaseClaim), so an inline
+// reconcile racing reconcile-background cannot both read "unmarked" and post twice (lock-race-test-seam).
+test('hollow merge: the comment is posted while this pass holds the run\'s post-merge claim, released after', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  const inner = hollowGh({ views: { 11: view(hollowBody(HR)) } });
+  let interloper = null;
+  const gh = (args, input) => {
+    // The seam: a second pass trying to claim the run at the moment the first posts its comment.
+    if (args[0] === 'issue' && args[1] === 'comment') interloper = takeClaim(dir, Date.now());
+    return inner(args, input);
+  };
+  const r = await detect(root, { gh });
+  assert.equal(inner.comments().length, 1);
+  assert.deepEqual(r.entries[0].commented, [6143]);
+  assert.deepEqual(interloper, { ok: false, reason: 'in-flight' }, 'a second taker is refused while the comment is posted');
+  assert.equal(fs.existsSync(lockOf(dir)), false, 'the claim is released after the comment and its marker');
+});
+
+test('hollow merge: a run whose post-merge claim another pass holds is still held, with no comment and no marker', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  const held = takeClaim(dir, Date.now());
+  assert.equal(held.ok, true);
+  const gh = hollowGh({ views: { 11: view(hollowBody(HR)) } });
+  const r = await detect(root, { gh });
+  assert.deepEqual(r.entries, [{ runDir: dir, runId: HR, pr: 11, action: 'held', reason: 'hollow-merge', phase: 'build', records: [6143], commented: [] }]);
+  assert.deepEqual(r.hollowRunDirs, [dir]);
+  assert.equal(gh.comments().length, 0);
+  assert.equal(hollowMarkers(dir).length, 0);
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), held.token, 'the other pass\'s claim is left alone');
+  releaseClaim(dir, held.token);
+  const next = await detect(root, { gh });
+  assert.deepEqual(next.entries[0].commented, [6143], 'the next pass, with the claim free, comments');
+  assert.equal(gh.comments().length, 1);
+});
+
+test('hollow merge: the marker is read after the claim is taken, so a pass that marked the record first is not repeated', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  const gh = hollowGh({ views: { 11: view(hollowBody(HR)) } });
+  // A racing pass that finished (commented and marked) between this pass's first read and its claim.
+  const racing = (runDir, nowMs) => {
+    appendEntry({
+      runDir, section: '/reconcile', createParent: false,
+      entry: formatEntry({ status: 'AUTO', now: NOW, step: HOLLOW_STEP, text: `hollow merge of PR #11 commented on #6143 (merged ${HOLLOW_MERGED_AT}, build unfinished)` }),
+    });
+    return takeClaim(runDir, nowMs);
+  };
+  const r = await detect(root, { gh, extra: { takeClaim: racing } });
+  assert.equal(gh.comments().length, 0, 'no second comment');
+  assert.deepEqual(r.entries[0].commented, []);
+  assert.equal(hollowMarkers(dir).length, 1);
+});
+
+test('hollow merge: a claim taken over mid-loop stops the comments; the run is still held and the next pass finishes', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  const inner = hollowGh({ views: { 11: view(hollowBody(HR), [ref(6143), ref(6144)]) } });
+  let takenOver = false;
+  const gh = (args, input) => {
+    const out = inner(args, input);
+    // Another pass takes the claim over right after the first comment lands.
+    if (args[0] === 'issue' && args[1] === 'comment' && !takenOver) { takenOver = true; fs.writeFileSync(lockOf(dir), 'other-holder'); }
+    return out;
+  };
+  const r = await detect(root, { gh });
+  assert.deepEqual(inner.comments().map((c) => c.args[2]), ['6143'], 'no comment after the claim was lost');
+  assert.equal(r.entries[0].reason, 'hollow-merge');
+  assert.deepEqual(r.entries[0].commented, [6143]);
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), 'other-holder', 'the successor\'s claim is not released');
+  fs.unlinkSync(lockOf(dir));
+  const healed = hollowGh({ views: { 11: view(hollowBody(HR), [ref(6143), ref(6144)]) } });
+  await detect(root, { gh: healed });
+  assert.deepEqual(healed.comments().map((c) => c.args[2]), ['6144']);
+});
+
+test('hollow merge: a throwing second comment holds the run as hollow-check-failed; the next pass comments only on the second record', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  const failing = hollowGh({ views: { 11: view(hollowBody(HR), [ref(6143), ref(6144)]) }, commentThrows: [6144] });
+  const r = await detect(root, { gh: failing });
+  assert.equal(r.entries.length, 1);
+  assert.equal(r.entries[0].action, 'held');
+  assert.equal(r.entries[0].reason, 'hollow-check-failed');
+  assert.match(r.entries[0].detail, /HTTP 502/);
+  assert.deepEqual(r.hollowRunDirs, [dir]);
+  assert.deepEqual(hollowMarkers(dir).map((m) => /commented on #(\d+)/.exec(m.action)[1]), ['6143']);
+
+  const healed = hollowGh({ views: { 11: view(hollowBody(HR), [ref(6143), ref(6144)]) } });
+  const next = await detect(root, { gh: healed });
+  assert.deepEqual(healed.comments().map((c) => c.args[2]), ['6144']);
+  assert.equal(next.entries[0].reason, 'hollow-merge');
+  assert.deepEqual(next.entries[0].commented, [6144]);
+  assert.deepEqual(hollowMarkers(dir).map((m) => /commented on #(\d+)/.exec(m.action)[1]), ['6143', '6144']);
+});
+
+test('hollow merge: a marker for #6143 does not count as one for #61 (prefix boundary)', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  appendEntry({ runDir: dir, section: '/reconcile', entry: formatEntry({ status: 'AUTO', now: NOW, step: HOLLOW_STEP, text: 'hollow merge of PR #11 commented on #6143 (merged x, build unfinished)' }) });
+  const gh = hollowGh({ views: { 11: view(hollowBody(HR), [ref(61), ref(6143)]) } });
+  const r = await detect(root, { gh });
+  assert.deepEqual(gh.comments().map((c) => c.args[2]), ['61']);
+  assert.deepEqual(r.entries[0].commented, [61]);
+});
+
+test('hollow merge: a run with no pr field resolves its PR through prStates.byBranchAsync and is held', async () => {
+  const root = mainCheckout();
+  git(root, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--allow-empty', '-q', '-m', 'init');
+  git(root, 'branch', 'feat-6143');
+  const lifecycle = formatEntry({ status: 'AUTO', now: NOW, step: 'PR-early run lifecycle', text: 'PR-early run lifecycle: pushed feat-6143 to origin' });
+  const dir = addRun(root, HR, { pr: null, decisions: `${ONE_LINE_DECISION}${lifecycle}\n` });
+  const branchCalls = [];
+  const prStates = {
+    byNumberAsync: async (n) => ({ 42: merged() }[n]),
+    byBranchAsync: async (b) => { branchCalls.push(b); return b === 'feat-6143' ? { number: 42, state: 'MERGED' } : null; },
+  };
+  const gh = hollowGh({ views: { 42: view(hollowBody(HR)) } });
+  const r = await detect(root, { gh, prStates });
+  assert.deepEqual(branchCalls, ['feat-6143']);
+  assert.equal(r.entries.length, 1);
+  assert.equal(r.entries[0].pr, 42);
+  assert.equal(r.entries[0].reason, 'hollow-merge');
+  assert.deepEqual(r.hollowRunDirs, [dir]);
+});
+
+test('AC7.1 + AC7.2 (detection): an unreadable run-state.json behind a marker-bearing merged PR gives hollow-check-failed, held', async () => {
+  const root = mainCheckout();
+  git(root, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--allow-empty', '-q', '-m', 'init');
+  git(root, 'branch', 'feat-6143');
+  const lifecycle = formatEntry({ status: 'AUTO', now: NOW, step: 'PR-early run lifecycle', text: 'PR-early run lifecycle: pushed feat-6143 to origin' });
+  const dir = addRun(root, HR, { pr: null, decisions: `${ONE_LINE_DECISION}${lifecycle}\n` });
+  fs.writeFileSync(path.join(dir, 'run-state.json'), '{not json');
+  const prStates = { byNumberAsync: async () => merged(), byBranchAsync: async () => ({ number: 42 }) };
+  const gh = hollowGh({ views: { 42: view(hollowBody(HR)) } });
+  const r = await detect(root, { gh, prStates });
+  assert.equal(r.entries.length, 1);
+  assert.equal(r.entries[0].reason, 'hollow-check-failed');
+  assert.match(r.entries[0].detail, /run-state\.json is missing or unreadable/);
+  assert.deepEqual(r.hollowRunDirs, [dir]);
+  assert.equal(gh.comments().length, 0);
+});
+
+test('hollow merge: a run with no pr field and no resolvable branch gets no entry', async () => {
+  const root = mainCheckout();
+  addRun(root, HR, { pr: null, decisions: ONE_LINE_DECISION });
+  const gh = hollowGh();
+  const r = await detect(root, { gh, prStates: { byNumberAsync: async () => merged(), byBranchAsync: async () => ({ number: 42 }) } });
+  assert.deepEqual(r, { entries: [], hollowRunDirs: [] });
+  assert.equal(gh.calls.length, 0);
+});
+
+test('hollow merge: a multi-spec run whose build and test exits are recorded only in spec-1/decisions.md gets no entry', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  logPhaseExit(path.join(dir, 'spec-1'), 'build');
+  logPhaseExit(path.join(dir, 'spec-1'), 'test');
+  const gh = hollowGh({ views: { 11: view(hollowBody(HR)) } });
+  const r = await detect(root, { gh });
+  assert.deepEqual(r, { entries: [], hollowRunDirs: [] });
+  assert.equal(gh.comments().length, 0);
+});
+
+test('hollow merge: a multi-spec run merged mid-series (spec 1 done, spec 2 at build) is held, though the run-wide rows are checked', async () => {
+  const { manifestInit, transitionSpec } = require('../../../plugin/bin/lib/flow/manifest');
+  const root = mainCheckout();
+  const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  assert.equal(manifestInit({ runDir: dir, specs: [6143, 6144] }).ok, true);
+  assert.equal(transitionSpec({ runDir: dir, specId: 6143, status: 'complete', phase: 'wrap-up' }).ok, true);
+  assert.equal(transitionSpec({ runDir: dir, specId: 6144, status: 'running', phase: 'build' }).ok, true);
+  logPhaseExit(path.join(dir, 'spec-6143'), 'build');
+  logPhaseExit(path.join(dir, 'spec-6143'), 'test');
+  const gh = hollowGh({ views: { 11: view(hollowBody(HR, { check: ['build', 'test'] })) } });
+  const r = await detect(root, { gh });
+  assert.equal(r.entries.length, 1);
+  assert.equal(r.entries[0].reason, 'hollow-merge');
+  assert.equal(r.entries[0].phase, 'build');
+  assert.deepEqual(r.hollowRunDirs, [dir]);
+});
+
+test('hollow merge: an unparseable manifest.yml holds the run as hollow-check-failed', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  fs.writeFileSync(path.join(dir, 'manifest.yml'), 'not a manifest\n');
+  const r = await detect(root, { gh: hollowGh({ views: { 11: view(hollowBody(HR, { check: ['build', 'test'] })) } }) });
+  assert.equal(r.entries[0].reason, 'hollow-check-failed');
+  assert.match(r.entries[0].detail, /manifest\.yml does not parse/);
+  assert.deepEqual(r.hollowRunDirs, [dir]);
+});
+
+test('AC5.1 (detection): a merged PR whose phases are all checked yields no entry, and a clean run is never read', async () => {
+  const root = mainCheckout();
+  addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  addRun(root, '2026-11-20T090000-record-1', { pr: 12, status: 'clean', decisions: ONE_LINE_DECISION });
+  const gh = hollowGh({ views: { 11: view(hollowBody(HR, { check: ['build', 'test', 'review', 'wrap-up'] })) } });
+  const r = await detect(root, { gh, prs: { 11: merged(), 12: merged() } });
+  assert.deepEqual(r, { entries: [], hollowRunDirs: [] });
+  assert.deepEqual(gh.calls.map((c) => c.args.slice(0, 3).join(' ')), ['pr view 11'], 'the clean run gets no gh call');
+});
+
+test('AC6.1 + AC6.2 (detection): a non-terminal run whose decisions.md records the build and test phase exits yields no entry, even with both rows unchecked', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  logPhaseExit(dir, 'build');
+  logPhaseExit(dir, 'test');
+  const gh = hollowGh({ views: { 11: view(hollowBody(HR)) } });
+  const r = await detect(root, { gh });
+  assert.deepEqual(r, { entries: [], hollowRunDirs: [] });
+  assert.equal(gh.comments().length, 0);
+});
+
+test('AC7.1 + AC7.2 (detection): a body read that throws gives hollow-check-failed, held, with no comment and no marker', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  const gh = hollowGh({ views: { 11: new Error('HTTP 504') } });
+  const r = await detect(root, { gh });
+  assert.deepEqual(r.entries, [{ runDir: dir, runId: HR, pr: 11, action: 'held', reason: 'hollow-check-failed', detail: 'HTTP 504' }]);
+  assert.deepEqual(r.hollowRunDirs, [dir]);
+  assert.equal(gh.comments().length, 0);
+  assert.equal(hollowMarkers(dir).length, 0);
+});
+
+test('AC7.1 + AC7.2 (detection): an unparseable body read gives hollow-check-failed', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  const r = await detect(root, { gh: hollowGh({ views: { 11: 'not json' } }) });
+  assert.equal(r.entries[0].reason, 'hollow-check-failed');
+  assert.deepEqual(r.hollowRunDirs, [dir]);
+});
+
+test('AC7.1 + AC7.2 (detection): a missing decisions.md with build unchecked gives hollow-check-failed, held', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, HR);
+  const gh = hollowGh({ views: { 11: view(hollowBody(HR)) } });
+  const r = await detect(root, { gh });
+  assert.equal(r.entries.length, 1);
+  assert.equal(r.entries[0].reason, 'hollow-check-failed');
+  assert.match(r.entries[0].detail, /ENOENT/);
+  assert.deepEqual(r.hollowRunDirs, [dir]);
+  assert.equal(gh.comments().length, 0);
+});
+
+test('AC7.1 + AC7.2 (detection): a deps seam that throws mid-check holds that run as hollow-check-failed and still judges the others', async () => {
+  const root = mainCheckout();
+  const a = addRun(root, '2026-11-23T100000-record-1', { pr: 11, decisions: ONE_LINE_DECISION });
+  const b = addRun(root, '2026-11-23T110000-record-2', { pr: 12, decisions: ONE_LINE_DECISION });
+  const gh = hollowGh({ views: {
+    11: view(hollowBody(path.basename(a)), []),
+    12: view(hollowBody(path.basename(b))),
+  } });
+  const r = await detect(root, {
+    gh,
+    prs: { 11: merged(), 12: merged() },
+    extra: { readSpecNumber: () => { throw new Error('config.yml unreadable'); } },
+  });
+  const byRun = Object.fromEntries(r.entries.map((e) => [e.runDir, e]));
+  assert.equal(byRun[a].reason, 'hollow-check-failed');
+  assert.match(byRun[a].detail, /config\.yml unreadable/);
+  assert.equal(byRun[b].reason, 'hollow-merge');
+  assert.deepEqual([...r.hollowRunDirs].sort(), [a, b].sort());
+});
+
+test('hollow merge: no closing reference in this repo falls back to the config.yml spec number', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  fs.writeFileSync(path.join(dir, 'config.yml'), 'spec: 6150\nmode: auto\n');
+  const gh = hollowGh({ views: { 11: view(hollowBody(HR), [ref(9, 'other', 'repo')]) } });
+  const r = await detect(root, { gh });
+  assert.deepEqual(r.entries[0].records, [6150]);
+  assert.deepEqual(gh.comments().map((c) => c.args[2]), ['6150']);
+});
+
+test('AC7.1 + AC7.2 (detection): a body with no run marker gives no entry', async () => {
+  const root = mainCheckout();
+  addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  const body = hollowBody(HR).split('\n').slice(2).join('\n');
+  const r = await detect(root, { gh: hollowGh({ views: { 11: view(body) } }) });
+  assert.deepEqual(r, { entries: [], hollowRunDirs: [] });
+});
+
+test('hollow merge: inside MERGE_GRACE_MS the run is held with no comment and no marker; past it the comment is posted', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  const gh = hollowGh({ views: { 11: view(hollowBody(HR)) } });
+  const mergedMs = Date.parse(HOLLOW_MERGED_AT);
+  const r = await detect(root, { gh, clock: () => mergedMs + MERGE_GRACE_MS });
+  assert.deepEqual(r.entries, [{
+    runDir: dir, runId: HR, pr: 11, action: 'held', reason: 'hollow-merge', phase: 'build', records: [6143], commented: [],
+    detail: 'merged within the merge grace: comment deferred',
+  }]);
+  assert.deepEqual(r.hollowRunDirs, [dir]);
+  assert.equal(gh.comments().length, 0);
+  assert.equal(hollowMarkers(dir).length, 0);
+  const later = await detect(root, { gh, clock: () => mergedMs + MERGE_GRACE_MS + 1 });
+  assert.deepEqual(later.entries[0].commented, [6143]);
+  assert.equal(gh.comments().length, 1);
+});
+
+test('hollow merge: a run with no phase-exit record whose decisions.md carries a /wrap-up entry (started on an earlier release) gets no entry, though both rows are unchecked', async () => {
+  const root = mainCheckout();
+  const wrapUp = formatEntry({ status: 'AUTO', now: NOW, step: 'Review Console', text: 'console resolved' });
+  addRun(root, HR, { decisions: `${ONE_LINE_DECISION}## /wrap-up\n${wrapUp}\n` });
+  const gh = hollowGh({ views: { 11: view(hollowBody(HR)) } });
+  const r = await detect(root, { gh });
+  assert.deepEqual(r, { entries: [], hollowRunDirs: [] });
+  assert.equal(gh.comments().length, 0);
+});
+
+test('hollow merge: dryRun holds with no comment and no marker', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  const gh = hollowGh({ views: { 11: view(hollowBody(HR)) } });
+  const r = await detect(root, { gh, dryRun: true });
+  assert.deepEqual(r.entries, [{ runDir: dir, runId: HR, pr: 11, action: 'held', reason: 'hollow-merge', phase: 'build', records: [6143], commented: [] }]);
+  assert.deepEqual(r.hollowRunDirs, [dir]);
+  assert.equal(gh.comments().length, 0);
+  assert.equal(hollowMarkers(dir).length, 0);
+});
+
+test('hollow merge: a marker naming another run, or an express body, gives no entry', async () => {
+  const root = mainCheckout();
+  addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  const other = await detect(root, { gh: hollowGh({ views: { 11: view(hollowBody('2026-01-01T000000-record-9')) } }) });
+  assert.deepEqual(other, { entries: [], hollowRunDirs: [] });
+  const express = await detect(root, { gh: hollowGh({ views: { 11: view(hollowBody(HR, { express: true })) } }) });
+  assert.deepEqual(express, { entries: [], hollowRunDirs: [] });
+});
+
+test('hollow merge: an OPEN PR or a definitive lookup failure (gh-absent, pr-not-found) gives no entry and no body read', async () => {
+  const root = mainCheckout();
+  addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  const gh = hollowGh({ views: { 11: view(hollowBody(HR)) } });
+  for (const answer of [{ number: 11, state: 'OPEN' }, 'gh-absent', 'pr-not-found']) {
+    assert.deepEqual(await detect(root, { gh, prs: { 11: answer } }), { entries: [], hollowRunDirs: [] }, JSON.stringify(answer));
+  }
+  assert.equal(gh.calls.length, 0);
+});
+
+test('AC7.1 + AC7.2 (detection): a view that parses but carries no string body gives hollow-check-failed, held, with no comment', async () => {
+  for (const parsed of [{}, { body: null }]) {
+    const root = mainCheckout();
+    const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+    const gh = hollowGh({ views: { 11: parsed } });
+    const r = await detect(root, { gh });
+    assert.deepEqual(r.entries, [{ runDir: dir, runId: HR, pr: 11, action: 'held', reason: 'hollow-check-failed', detail: 'gh pr view 11: no body in the response' }], JSON.stringify(parsed));
+    assert.deepEqual(r.hollowRunDirs, [dir]);
+    assert.equal(gh.comments().length, 0);
+  }
+});
+
+function branchRunFixture() {
+  const root = mainCheckout();
+  git(root, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--allow-empty', '-q', '-m', 'init');
+  git(root, 'branch', 'feat-6143');
+  const lifecycle = formatEntry({ status: 'AUTO', now: NOW, step: 'PR-early run lifecycle', text: 'PR-early run lifecycle: pushed feat-6143 to origin' });
+  const dir = addRun(root, HR, { pr: null, decisions: `${ONE_LINE_DECISION}${lifecycle}\n` });
+  return { root, dir };
+}
+
+test('hollow merge: a transient byBranch answer for a run with no pr field holds it as hollow-check-failed (pr null)', async () => {
+  const { root, dir } = branchRunFixture();
+  const gh = hollowGh();
+  const r = await detect(root, { gh, prStates: { byNumberAsync: async () => merged(), byBranchAsync: async () => 'network-failure' } });
+  assert.deepEqual(r.entries, [{ runDir: dir, runId: HR, pr: null, action: 'held', reason: 'hollow-check-failed', detail: 'branch feat-6143 PR lookup: network-failure' }]);
+  assert.deepEqual(r.hollowRunDirs, [dir]);
+  assert.equal(gh.calls.length, 0);
+});
+
+test('hollow merge: a definitive byBranch answer (no PR, gh-absent, pr-not-found) for a run with no pr field gives no entry', async () => {
+  const { root } = branchRunFixture();
+  for (const answer of [null, 'gh-absent', 'pr-not-found']) {
+    const gh = hollowGh();
+    const r = await detect(root, { gh, prStates: { byNumberAsync: async () => merged(), byBranchAsync: async () => answer } });
+    assert.deepEqual(r, { entries: [], hollowRunDirs: [] }, String(answer));
+    assert.equal(gh.calls.length, 0);
+  }
+});
+
+test('hollow merge: a byBranch object answer without a positive integer number ({ number: 0 }, {}) gives no entry and no lookup', async () => {
+  const { root } = branchRunFixture();
+  for (const answer of [{ number: 0 }, {}, { number: -3 }, { number: 4.5 }]) {
+    const gh = hollowGh();
+    const byNumberCalls = [];
+    const r = await detect(root, { gh, prStates: { byNumberAsync: async (n) => { byNumberCalls.push(n); return merged(); }, byBranchAsync: async () => answer } });
+    assert.deepEqual(r, { entries: [], hollowRunDirs: [] }, JSON.stringify(answer));
+    assert.equal(gh.calls.length, 0);
+    assert.deepEqual(byNumberCalls, [], 'no PR-state lookup for a non-PR answer');
+  }
+});
+
+test('hollow merge: a transient PR-state answer (network-failure) holds the run as hollow-check-failed with no gh call', async () => {
+  for (const answer of ['network-failure']) {
+    const root = mainCheckout();
+    const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+    const gh = hollowGh({ views: { 11: view(hollowBody(HR)) } });
+    const r = await detect(root, { gh, prs: { 11: answer } });
+    assert.deepEqual(r.entries, [{ runDir: dir, runId: HR, pr: 11, action: 'held', reason: 'hollow-check-failed', detail: `PR #11 state lookup: ${answer}` }], answer);
+    assert.deepEqual(r.hollowRunDirs, [dir]);
+    assert.equal(gh.calls.length, 0, answer);
+  }
+});
+
+test('hollow merge: a PR lookup that throws for one run holds that run (pr null before a number resolves) and still judges the other', async () => {
+  const root = mainCheckout();
+  const a = addRun(root, '2026-11-23T100000-record-1', { pr: null, decisions: ONE_LINE_DECISION });
+  fs.writeFileSync(path.join(a, 'run-state.json'), JSON.stringify({ status: 'in-progress', worktree: 42 }));
+  const b = addRun(root, '2026-11-23T110000-record-2', { pr: 12, decisions: ONE_LINE_DECISION });
+  const c = addRun(root, '2026-11-23T120000-record-3', { pr: 13, decisions: ONE_LINE_DECISION });
+  const prStates = {
+    byNumberAsync: async (n) => { if (n === 13) throw new Error('socket hang up'); return merged(); },
+    byBranchAsync: async () => { throw new Error('byBranch exploded'); },
+  };
+  const gh = hollowGh({ views: { 12: view(hollowBody(path.basename(b))) } });
+  const r = await detect(root, { gh, prStates });
+  const byRun = Object.fromEntries(r.entries.map((e) => [e.runDir, e]));
+  assert.equal(byRun[a].reason, 'hollow-check-failed', 'a corrupt worktree value throws in the branch route');
+  assert.equal(byRun[a].pr, null);
+  assert.equal(byRun[c].reason, 'hollow-check-failed');
+  assert.equal(byRun[c].pr, 13);
+  assert.match(byRun[c].detail, /socket hang up/);
+  assert.equal(byRun[b].reason, 'hollow-merge');
+  assert.deepEqual([...r.hollowRunDirs].sort(), [a, b, c].sort());
+});
+
+test('hollow merge: no mergedAt anywhere names an unknown time in the comment and the marker', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  const gh = hollowGh({ views: { 11: { body: hollowBody(HR), closingIssuesReferences: [ref(6143)] } } });
+  await detect(root, { gh, prs: { 11: { number: 11, state: 'MERGED' } } });
+  assert.match(gh.comments()[0].input, /was merged at an unknown time while/);
+  assert.ok(hollowMarkers(dir)[0].action.startsWith('hollow merge of PR #11 commented on #6143 (merged an unknown time, build unfinished)'));
+  assert.doesNotMatch(decisionsOf(dir), /undefined/);
+});
+
+test('hollow merge: a hollow run with no record to comment on is held with a detail saying so', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  const gh = hollowGh({ views: { 11: view(hollowBody(HR), []) } });
+  const r = await detect(root, { gh });
+  assert.deepEqual(r.entries, [{
+    runDir: dir, runId: HR, pr: 11, action: 'held', reason: 'hollow-merge', phase: 'build', records: [], commented: [], detail: 'no record to comment on',
+  }]);
+  assert.equal(gh.comments().length, 0);
+});
+
+test('hollow merge: a run with no pr field resolves its branch from the live worktree entry for state.worktree', async () => {
+  const root = mainCheckout();
+  git(root, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--allow-empty', '-q', '-m', 'init');
+  const wt = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'post-merge-wt-')));
+  tempRoots.push(wt);
+  fs.rmdirSync(wt);
+  git(root, 'worktree', 'add', '-q', '-b', 'wt-branch-6143', wt);
+  const dir = addRun(root, HR, { pr: null, decisions: ONE_LINE_DECISION });
+  fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ status: 'in-progress', worktree: wt }));
+  const branchCalls = [];
+  const prStates = {
+    byNumberAsync: async (n) => ({ 43: merged() }[n]),
+    byBranchAsync: async (b) => { branchCalls.push(b); return b === 'wt-branch-6143' ? { number: 43 } : null; },
+  };
+  const gh = hollowGh({ views: { 43: view(hollowBody(HR)) } });
+  const r = await detect(root, { gh, prStates });
+  assert.deepEqual(branchCalls, ['wt-branch-6143']);
+  assert.equal(r.entries.length, 1);
+  assert.equal(r.entries[0].pr, 43);
+  assert.equal(r.entries[0].reason, 'hollow-merge');
+});
+
+test('hollow merge: the by-branch lookup refuses a persisted "no PR" answer (freshNull, as release joins the branch) and holds the merged PR', async () => {
+  const { createPrStateResolver } = require('../../../plugin/bin/lib/reconcile/pr-state-cache');
+  const { writeCache } = require('../../../plugin/bin/lib/reconcile/cache');
+  const { root, dir } = branchRunFixture();
+  // A prior pass learned "no PR for feat-6143" a minute ago: inside the null's 5-minute TTL.
+  writeCache(root, { prStates: { 'b:feat-6143': { v: null, at: Date.now() - 60 * 1000 } } });
+  const live = { number: 42, state: 'MERGED', mergedAt: MERGED_AT };
+  const prStates = createPrStateResolver({
+    root,
+    deps: {
+      byBranch: () => live, byBranchAsync: async () => live, byNumberAsync: async () => live, fetchBatch: async () => null,
+    },
+  });
+  const gh = hollowGh({ views: { 42: view(hollowBody(HR)) } });
+  const r = await detect(root, { gh, prStates });
+  assert.equal(r.entries.length, 1);
+  assert.equal(r.entries[0].pr, 42);
+  assert.equal(r.entries[0].reason, 'hollow-merge');
+  assert.deepEqual(r.hollowRunDirs, [dir]);
+});
+
+test('hollow merge: the resolver is warmed with every run\'s PR number and each PR-less run\'s branch before the first lookup', async () => {
+  const { root } = branchRunFixture();
+  addRun(root, '2026-11-23T100000-record-1', { pr: 11, decisions: ONE_LINE_DECISION });
+  addRun(root, '2026-11-23T110000-record-2', { pr: 12, decisions: ONE_LINE_DECISION });
+  addRun(root, '2026-11-20T090000-record-3', { pr: 13, status: 'clean', decisions: ONE_LINE_DECISION });
+  const calls = [];
+  const prStates = {
+    prefetch: async (opts) => { calls.push(['prefetch', opts]); },
+    byNumberAsync: async (n) => { calls.push(['byNumber', n]); return { number: n, state: 'OPEN' }; },
+    byBranchAsync: async (b, opts) => { calls.push(['byBranch', b, opts]); return null; },
+  };
+  const r = await detect(root, { gh: hollowGh(), prStates });
+  assert.deepEqual(r, { entries: [], hollowRunDirs: [] });
+  assert.equal(calls[0][0], 'prefetch', 'the warm-up precedes every lookup');
+  const warmed = calls[0][1];
+  assert.deepEqual({ ...warmed, numbers: [...warmed.numbers].sort() }, { numbers: [11, 12], branches: ['feat-6143'], freshNull: true }, 'clean runs excluded');
+  assert.deepEqual(calls.slice(1).map((c) => c[0]).sort(), ['byBranch', 'byNumber', 'byNumber']);
+});
+
+test('hollow merge: the pass budget is checked between runs; an exhausted budget fails the check closed with no lookup', async () => {
+  const root = mainCheckout();
+  addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  const lookups = [];
+  const prStates = { byNumberAsync: async (n) => { lookups.push(n); return merged(); } };
+  const gh = hollowGh({ views: { 11: view(hollowBody(HR)) } });
+  const r = await detectHollowMerges({ cwd: root, prStates, deps: { gh }, budgetExceeded: () => true });
+  assert.deepEqual(r, { entries: [], hollowRunDirs: [], failure: 'budget-exhausted' });
+  assert.deepEqual(lookups, []);
+  assert.equal(gh.calls.length, 0);
+});
+
+test('hollow merge: a project on another work backend is still checked and held, with no record comment', async () => {
+  const root = mainCheckout({ claudeMd: '## Work records\n\nwork-backend: local-files\n' });
+  const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  const gh = hollowGh({ views: { 11: view(hollowBody(HR)) } });
+  const r = await detect(root, { gh });
+  assert.deepEqual(r, {
+    entries: [{
+      runDir: dir, runId: HR, pr: 11, action: 'held', reason: 'hollow-merge', phase: 'build', records: [], commented: [],
+      detail: 'work backend is not github-issues: no record comment',
+    }],
+    hollowRunDirs: [dir],
+  });
+  assert.equal(gh.comments().length, 0);
+  assert.equal(hollowMarkers(dir).length, 0);
+});
+
+test('hollowRunRefs: a held run\'s recorded worktree (real path), its live branch and its stamped pr.branch; an unreadable run-state gives nothing', () => {
+  const { hollowRunRefs } = require('../../../plugin/bin/lib/reconcile/post-merge');
+  const root = mainCheckout();
+  git(root, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--allow-empty', '-q', '-m', 'init');
+  const wt = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'post-merge-wt-')));
+  tempRoots.push(wt);
+  fs.rmdirSync(wt);
+  git(root, 'worktree', 'add', '-q', '-b', 'worktree-held-6143', wt);
+  const dir = addRun(root, HR, { pr: null });
+  fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ status: 'in-progress', worktree: wt, pr: { number: 11, branch: 'pushed-6143' } }));
+  const broken = addRun(root, '2026-11-23T100000-record-1');
+  fs.writeFileSync(path.join(broken, 'run-state.json'), '{not json');
+  const refs = hollowRunRefs(root, [dir, broken]);
+  assert.deepEqual(refs.worktrees, [wt]);
+  assert.deepEqual([...refs.branches].sort(), ['pushed-6143', 'worktree-held-6143']);
+  assert.deepEqual(hollowRunRefs(root, []), { worktrees: [], branches: [] });
+});
+
+test('hollow merge: a setup failure returns the failure with empty sets', async () => {
+  const root = mainCheckout({ origin: false });
+  addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  const r = await detect(root, { gh: hollowGh() });
+  assert.deepEqual(r, { entries: [], hollowRunDirs: [], failure: 'no-remote' });
+  const noResolver = await detectHollowMerges({ cwd: mainCheckout(), prStates: null, deps: { gh: hollowGh() } });
+  assert.deepEqual(noResolver, { entries: [], hollowRunDirs: [], failure: 'no-pr-states' });
+});
+
+test('hollow merge (real writers): run-state from hooks.js record-worktree + record-pr, body from composePrEarlyBody', async () => {
+  const root = mainCheckout();
+  const dir = path.join(root, '.claude-tweaks', 'pipelines', HR);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'decisions.md'), ONE_LINE_DECISION);
+  const env = { ...cleanGitEnv(), CLAUDE_CODE_SESSION_ID: 'S', PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1' };
+  for (const args of [['record-worktree', '--run', dir, '/tmp/wt-6143'], ['record-pr', '--run', dir, '11', 'https://github.com/acme/w/pull/11']]) {
+    const res = await runCli(HOOKS_JS, args, { cwd: root, env });
+    assert.equal(res.code, 0, res.stderr);
+  }
+  const state = JSON.parse(fs.readFileSync(path.join(dir, 'run-state.json'), 'utf8'));
+  assert.equal(state.pr.number, 11, 'record-pr stamped the PR number');
+  const gh = hollowGh({ views: { 11: view(hollowBody(HR)) } });
+  const r = await detect(root, { gh });
+  assert.equal(r.entries.length, 1);
+  assert.equal(r.entries[0].reason, 'hollow-merge');
+  assert.equal(r.entries[0].phase, 'build');
+  assert.deepEqual(r.hollowRunDirs, [dir]);
+});
+
+test('postMerge with hollowRunDirs: the run gets no Step 4.0/4.0b call, a hollow-merge entry, and is deferred', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, HR);
+  const other = addRun(root, '2026-10-30T090000-spec-1', { pr: 12 });
+  const links = fakeClosingLinks(ENVELOPE);
+  const close = fakeCloseParents();
+  const r = await postMerge({
+    cwd: root, prStates: fakePrStates({ 11: merged(), 12: merged() }), now,
+    hollowRunDirs: [dir], deps: { gh: fakeGh, closingLinks: links, closeParents: close },
+  });
+  assert.deepEqual(r.entries.find((e) => e.runDir === dir), { runDir: dir, pr: 11, action: 'skipped', reason: 'hollow-merge' });
+  assert.deepEqual(r.deferred, [dir]);
+  assert.equal(links.calls.length, 1, 'only the other run reached Step 4.0');
+  assert.equal(links.calls[0].opts.run, other);
+  assert.equal(close.calls.length, 1);
+  assert.equal(hasPostMergeMarker(decisionsOf(dir)), false);
 });

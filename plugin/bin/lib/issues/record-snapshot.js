@@ -14,7 +14,10 @@ const path = require('path');
 
 // The union field set every consumer needs, so one fetch covers all of them —
 // see record-queue-fetch.md's Deliverables for the field list this mirrors.
-const UNION_FIELDS = 'number,title,labels,body,state,stateReason,createdAt,closedAt,comments,updatedAt,milestone';
+// `author` carries gh's `is_bot`, which provenance.js's issueAuthorTrust reads
+// (#4577); the author's association is not a `--json` field, so
+// author-association.js fills it in afterwards.
+const UNION_FIELDS = 'number,title,labels,body,state,stateReason,createdAt,closedAt,comments,updatedAt,milestone,author';
 
 // A session id is required for the snapshot to mean anything — without one,
 // concurrent unrelated sessions would silently share (and race on) the same

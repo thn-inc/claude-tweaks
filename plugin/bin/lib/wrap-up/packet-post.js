@@ -217,4 +217,4 @@ function upsertLocalPacket(recordBody, packetMarkdown) {
   return `${head}${eol}${eol}${block}${head === recordBody ? '' : eol}`;
 }
 
-module.exports = { publishPacket, upsertLocalPacket };
+module.exports = { publishPacket, upsertLocalPacket, readComments, EDIT_COMMENT_QUERY };

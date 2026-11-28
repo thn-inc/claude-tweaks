@@ -257,7 +257,7 @@ test('real-input probe: a trimmed real dispatched-call transcript measures the h
 // config.yml is the shape /flow's Manifesto writes (this run's own, 2026-10-25); mode: null omits it.
 const configYml = (mode) => `mode: ${mode}\nscope-creep: add-to-plan\noverlap: companion\nmerge-authorization: ask\nspec: 4027\ncreated: 2026-10-25T162129\n`;
 
-function runFixture({ spec = 'worktree', specDirs = [], worktree = true, mode = 'auto' } = {}) {
+function runFixture({ spec = 'worktree', specDirs = [], worktree = true, mode = 'auto', dispatched = false } = {}) {
   const root = gitRepo();
   created.push(root);
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', RUN_ID);
@@ -266,7 +266,7 @@ function runFixture({ spec = 'worktree', specDirs = [], worktree = true, mode = 
   let wt = null;
   if (worktree) {
     wt = harnessWorktreeOf(root);
-    fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ worktree: wt, status: 'active' }));
+    fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ worktree: wt, status: 'active', ...(dispatched ? { dispatched: true } : {}) }));
   }
   if (spec === 'worktree' && wt) {
     fs.mkdirSync(path.join(wt, '.claude-tweaks', 'pipelines', RUN_ID, 'work'), { recursive: true });
@@ -325,7 +325,7 @@ test('CLI: 150000 tokens is under the cap — over: false and no handoff.json', 
 });
 
 test('CLI: --cap overrides CONTEXT_CAP_TOKENS', async () => {
-  const fx = runFixture();
+  const fx = runFixture({ dispatched: true });
   const t = transcriptAt(tmp('ct-gauge-cli-'), 150000);
   const c = cli(fx);
   assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--cap', '100000', '--next-steps', 'review,polish,wrap-up'], c.deps), 0);
@@ -419,7 +419,7 @@ const { HANDOFF_BOUND } = require('../../../plugin/bin/lib/timing/context-gauge'
 const readHandoff = (runDir) => JSON.parse(fs.readFileSync(path.join(runDir, 'handoff.json'), 'utf8'));
 
 test('CLI: handoffCount increments from the existing handoff.json', async () => {
-  const fx = runFixture();
+  const fx = runFixture({ dispatched: true });
   const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
   fs.writeFileSync(path.join(fx.runDir, 'handoff.json'), JSON.stringify({ nextSteps: ['test'], handoffCount: 2 }));
   const c = cli(fx);
@@ -443,7 +443,7 @@ test('CLI: a missing, garbage, or count-less handoff.json counts as 0 handoffs',
 
 test('CLI: at the bound (3 earlier handoffs) nothing is written — over: true, handoff: null, continue in place', async () => {
   assert.strictEqual(HANDOFF_BOUND, 3);
-  const fx = runFixture();
+  const fx = runFixture({ dispatched: true });
   const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
   const prior = `${JSON.stringify({ nextSteps: ['wrap-up'], handoffCount: 3 })}\n`;
   fs.writeFileSync(path.join(fx.runDir, 'handoff.json'), prior);
@@ -482,6 +482,61 @@ test('CLI: a fallback-identified transcript over the cap writes no handoff — o
   }
 });
 
+// #4664: --stories-owed refuses a handoff whose list would drop build's automatic stories step.
+test('CLI: --stories-owed over the cap refuses a list without stories, or with stories after test, and accepts stories first or without test', async () => {
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  for (const steps of ['test,review', 'test,review,stories']) {
+    const fx = runFixture();
+    const c = cli(fx);
+    assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--next-steps', steps, '--stories-owed'], c.deps), 0, c.err.join(''));
+    assert.strictEqual(c.json().over, true, steps);
+    assert.strictEqual(c.json().handoff, null, steps);
+    assert.match(c.json().reason, /--stories-owed/, steps);
+    assert.ok(!fs.readdirSync(fx.runDir).includes('handoff.json'), steps);
+  }
+  for (const steps of ['stories,test,review', 'stories,review']) {
+    const fx = runFixture();
+    const c = cli(fx);
+    assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--next-steps', steps, '--stories-owed'], c.deps), 0, c.err.join(''));
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(fx.runDir, 'handoff.json'), 'utf8')).nextSteps, steps.split(','));
+  }
+});
+
+// flow/context-handoff.md: a top-level run (run-state.json not dispatched: true) never hands off wrap-up.
+// The refusal is handoff: null with this reason, logged as a SKIP like every other reason.
+const TOP_LEVEL_WRAPUP_REASON = 'handoff.json not written: a top-level run (run-state.json not dispatched: true) never hands off wrap-up — flow/context-handoff.md: continue in place';
+
+test('CLI: a top-level run over the cap with wrap-up in --next-steps writes no handoff — over as measured, handoff: null, reason names the rule', async () => {
+  const fx = runFixture();
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const c = cli(fx);
+  assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--next-steps', 'review,polish,wrap-up'], c.deps), 0, c.err.join(''));
+  assert.deepStrictEqual(c.json(), { contextTokens: 250000, cap: 200000, over: true, transcript: t, handoff: null, reason: TOP_LEVEL_WRAPUP_REASON });
+  assert.ok(!fs.readdirSync(fx.runDir).includes('handoff.json'));
+  assert.ok(fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8').includes(TOP_LEVEL_WRAPUP_REASON), 'the refusal is logged to decisions.md');
+});
+
+test('CLI: a dispatched run over the cap with wrap-up in --next-steps still writes handoff.json', async () => {
+  const fx = runFixture({ dispatched: true });
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const c = cli(fx);
+  assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--next-steps', 'review,polish,wrap-up'], c.deps), 0, c.err.join(''));
+  assert.deepStrictEqual(c.json(), { contextTokens: 250000, cap: 200000, over: true, transcript: t, handoff: path.join(fx.runDir, 'handoff.json'), reason: null });
+  assert.deepStrictEqual(readHandoff(fx.runDir).nextSteps, ['review', 'polish', 'wrap-up']);
+  assert.strictEqual(readHandoff(fx.runDir).handoffCount, 1);
+});
+
+test('CLI: a top-level run with --record-steps naming wrap-up writes no handoff', async () => {
+  const fx = multiRun();
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const c = cli(fx);
+  assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--record-steps', '#12:none;#34:build,test,wrap-up'], c.deps), 0, c.err.join(''));
+  assert.strictEqual(c.json().over, true);
+  assert.strictEqual(c.json().handoff, null);
+  assert.strictEqual(c.json().reason, TOP_LEVEL_WRAPUP_REASON);
+  assert.ok(!fs.readdirSync(fx.runDir).includes('handoff.json'));
+});
+
 test('CLI: target records — the run dir\'s work/ when no worktree is recorded; spec-{N}/ dirs for a multi-spec run; none found is reported', async () => {
   const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
   const own = runFixture({ spec: 'run-dir', worktree: false });
@@ -515,7 +570,7 @@ test('CLI: resume carries the run\'s mode — auto/confirm/hybrid resume as auto
     ['auto', ' auto'], ['confirm', ' auto'], ['hybrid', ' auto'], ['interactive', ''], [null, ''],
   ];
   for (const [mode, token] of cases) {
-    const fx = runFixture({ mode });
+    const fx = runFixture({ mode, dispatched: true });
     const c = cli(fx);
     assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--next-steps', 'review,wrap-up'], c.deps), 0, c.err.join(''));
     const h = JSON.parse(fs.readFileSync(path.join(fx.runDir, 'handoff.json'), 'utf8'));
@@ -545,6 +600,108 @@ test('resolveTargetRecords: worktree copy first, then the run dir; spec-{N}/ win
   fs.mkdirSync(path.join(fx.runDir, 'spec-12'));
   fs.writeFileSync(path.join(fx.runDir, 'spec-13'), 'a file, not a spec dir');
   assert.deepStrictEqual(resolveTargetRecords({ runDir: fx.runDir, worktree: fx.wt, gitRoot: fx.root }), ['#12']);
+});
+
+// A header at `work/{n}-spec.md` under `base`, or under `base/spec-{n}/work` when `nested`.
+function putHeader(base, n, { nested = false } = {}) {
+  const dir = nested ? path.join(base, `spec-${n}`, 'work') : path.join(base, 'work');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${n}-spec.md`), '# spec\n');
+}
+const archivedOf = (runDir) => path.join(path.dirname(runDir), 'archive', path.basename(runDir));
+
+test('AC1.1 resolveTargetRecords: archived-only work/ header gives the live answer', () => {
+  const live = runFixture({ spec: 'none', worktree: false });
+  putHeader(live.runDir, 4027);
+  const expected = resolveTargetRecords({ runDir: live.runDir });
+  assert.deepStrictEqual(expected, ['#4027']);
+
+  const arch = runFixture({ spec: 'none', worktree: false });
+  putHeader(archivedOf(arch.runDir), 4027);
+  assert.deepStrictEqual(resolveTargetRecords({ runDir: arch.runDir }), expected);
+
+  const wtArch = runFixture({ spec: 'none' });
+  putHeader(archivedOf(path.join(wtArch.wt, '.claude-tweaks', 'pipelines', RUN_ID)), 4027);
+  assert.deepStrictEqual(resolveTargetRecords({ runDir: wtArch.runDir, worktree: wtArch.wt, gitRoot: wtArch.root }), expected);
+});
+
+test('AC2.1 resolveTargetRecords: archived-only spec-{N} dirs give the live answer', () => {
+  const live = runFixture({ spec: 'none', worktree: false });
+  putHeader(live.runDir, 945, { nested: true });
+  putHeader(live.runDir, 3817, { nested: true });
+  const expected = resolveTargetRecords({ runDir: live.runDir });
+  assert.deepStrictEqual(expected, ['#945', '#3817']);
+
+  const arch = runFixture({ spec: 'none', worktree: false });
+  putHeader(archivedOf(arch.runDir), 945, { nested: true });
+  putHeader(archivedOf(arch.runDir), 3817, { nested: true });
+  assert.deepStrictEqual(resolveTargetRecords({ runDir: arch.runDir }), expected);
+});
+
+test('AC7.1 resolveTargetRecords: a record live and archived is listed once', () => {
+  const fx = runFixture({ spec: 'none', worktree: false });
+  putHeader(fx.runDir, 7);
+  putHeader(archivedOf(fx.runDir), 7);
+  assert.deepStrictEqual(resolveTargetRecords({ runDir: fx.runDir }), ['#7']);
+});
+
+test('resolveTargetRecords: live work/8 and archived work/7 in one root merge; across roots the first non-empty root wins', () => {
+  const fx = runFixture({ spec: 'none', worktree: false });
+  putHeader(fx.runDir, 8);
+  putHeader(archivedOf(fx.runDir), 7);
+  assert.deepStrictEqual(resolveTargetRecords({ runDir: fx.runDir }), ['#7', '#8']);
+
+  const two = runFixture({ spec: 'none' });
+  putHeader(path.join(two.wt, '.claude-tweaks', 'pipelines', RUN_ID), 5);
+  putHeader(two.runDir, 6);
+  assert.deepStrictEqual(resolveTargetRecords({ runDir: two.runDir, worktree: two.wt, gitRoot: two.root }), ['#5']);
+});
+
+test('guard: resolveTargetRecords — an unreadable archived base is absent', () => {
+  const fx = runFixture({ spec: 'none', worktree: false });
+  const archivedBase = path.dirname(archivedOf(fx.runDir));
+  putHeader(archivedOf(fx.runDir), 9);
+  const fsImpl = { ...fs, readdirSync: (d, ...rest) => {
+    if (String(d).startsWith(archivedBase)) throw new Error('EACCES');
+    return fs.readdirSync(d, ...rest);
+  } };
+  assert.strictEqual(resolveTargetRecords({ runDir: fx.runDir, fsImpl }), null);
+});
+
+test('AC9.4 resolveTargetRecords: an unreadable archived run-dir listing hides its spec-{N} dirs, the readable archived work/ still resolves', () => {
+  const fx = runFixture({ spec: 'none', worktree: false });
+  const archived = archivedOf(fx.runDir);
+  putHeader(archived, 9, { nested: true });
+  putHeader(archived, 8);
+  const fsImpl = { ...fs, readdirSync: (d, ...rest) => {
+    if (String(d) === archived) throw new Error('EACCES');
+    return fs.readdirSync(d, ...rest);
+  } };
+  assert.deepStrictEqual(resolveTargetRecords({ runDir: fx.runDir, fsImpl }), ['#8']);
+});
+
+test('resolveTargetRecords: archived-only spec-{N} dirs follow a live manifest.yml\'s non-ascending order', () => {
+  const fx = runFixture({ spec: 'none', worktree: false });
+  fs.writeFileSync(path.join(fx.runDir, 'manifest.yml'), MANIFEST(RUN_ID, [3926, 3817, 945]));
+  for (const n of [945, 3817, 3926]) putHeader(archivedOf(fx.runDir), n, { nested: true });
+  assert.deepStrictEqual(resolveTargetRecords({ runDir: fx.runDir }), ['#3926', '#3817', '#945']);
+});
+
+test('resolveTargetRecords: an archived-only header in the worktree copy wins over a live header in the run dir (root by root)', () => {
+  const fx = runFixture({ spec: 'none' });
+  putHeader(archivedOf(path.join(fx.wt, '.claude-tweaks', 'pipelines', RUN_ID)), 5);
+  putHeader(fx.runDir, 6);
+  assert.deepStrictEqual(resolveTargetRecords({ runDir: fx.runDir, worktree: fx.wt, gitRoot: fx.root }), ['#5']);
+});
+
+test('AC8 context-gauge no-target message names no header path', async () => {
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const none = runFixture({ spec: 'none' });
+  const c = cli(none);
+  assert.strictEqual(await run(['--run', none.runDir, '--transcript', t, '--next-steps', 'test'], c.deps), 0);
+  const { reason } = c.json();
+  assert.match(reason, /no spec header for /);
+  assert.doesNotMatch(reason, /work\/\{?n\}?-spec\.md/);
 });
 
 test('CLI: malformed invocations exit 2 and write nothing', async () => {
@@ -768,7 +925,7 @@ test('CLI: a non-canonical --record-steps value resumes in canonical form', asyn
   assert.strictEqual(h.resume, `PIPELINE_RUN_DIR="${fx.runDir}" /claude-tweaks:flow "#12,#34" record-steps=#12:none;#34:build auto`);
 });
 
-test('CLI: malformed --record-steps, --keep-going and --no-stories invocations exit 2 and write nothing', async () => {
+test('CLI: malformed --record-steps, --keep-going, --no-stories and --stories-owed invocations exit 2 and write nothing', async () => {
   const fx = multiRun();
   const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
   const base = ['--run', fx.runDir, '--transcript', t];
@@ -785,6 +942,8 @@ test('CLI: malformed --record-steps, --keep-going and --no-stories invocations e
     [...base, '--no-stories'],
     [...base, '--no-stories', '--next-steps', 'test'],
     [...base, '--record-steps', '--no-stories'],
+    [...base, '--stories-owed'],
+    [...base, '--record-steps', RECORD_STEPS, '--stories-owed'],
   ];
   for (const argv of cases) {
     const c = cli(fx);
@@ -914,6 +1073,26 @@ test('gauge: per message.id the tail takes each usage field\'s max — a streami
   ]));
   assert.deepStrictEqual(await gauge({ transcript: p }), { contextTokens: 124002 });
   assert.deepStrictEqual(await gauge({ transcript: p, tailBytes: 1 }), { contextTokens: 124002 });
+});
+
+test('#5967: gauge: the tail keeps a larger earlier line over a smaller later one of the same message.id, and id-less lines stay their own turns', async () => {
+  const dir = tmp('ct-gauge-t-');
+  const p = path.join(dir, 'shrink.jsonl');
+  const line = (id, usage) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-25T17:01:00.000Z', message: { ...(id ? { id } : {}), role: 'assistant', content: [], usage } });
+  fs.writeFileSync(p, transcriptText([
+    userLine('x'),
+    line('m9', { input_tokens: 2, cache_read_input_tokens: 120000, cache_creation_input_tokens: 4000, output_tokens: 400 }),
+    line('m9', { input_tokens: 1, cache_read_input_tokens: 1000, cache_creation_input_tokens: 0, output_tokens: 8 }),
+  ]));
+  assert.deepStrictEqual(await gauge({ transcript: p }), { contextTokens: 124002 });
+  fs.writeFileSync(p, transcriptText([
+    userLine('x'),
+    line('m1', { input_tokens: 9, cache_read_input_tokens: 500, cache_creation_input_tokens: 0 }),
+    line(null, { input_tokens: 5, cache_read_input_tokens: 70000, cache_creation_input_tokens: 0 }),
+    line(null, { input_tokens: 1, cache_read_input_tokens: 10, cache_creation_input_tokens: 0 }),
+    line('m1', { input_tokens: 2, cache_read_input_tokens: 400, cache_creation_input_tokens: 0 }),
+  ]));
+  assert.deepStrictEqual(await gauge({ transcript: p }), { contextTokens: 11 }, 'the last first-line is the second id-less line; the m1 straggler does not become the last turn');
 });
 
 test('gauge: a tail window with no assistant message falls back to the whole file', async () => {

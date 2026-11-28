@@ -3,9 +3,11 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { isSquashMerged } = require('../../../plugin/bin/lib/reconcile/squash-provenance');
+const { initRepo } = require('../../helpers/git-fixtures');
 
 function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -16,10 +18,8 @@ function git(cwd, ...args) {
 // leaves on the base branch: one commit whose patch-id matches neither
 // branch commit, so `git cherry` cannot prove it (the #2252 gap).
 function makeSquashFixture() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'squash-provenance-'));
-  git(dir, 'init', '-b', 'main');
-  git(dir, 'config', 'user.email', 't@t');
-  git(dir, 'config', 'user.name', 't');
+  const dir = scratchDir('squash-provenance-');
+  initRepo(dir, { branch: 'main', name: 't', email: 't@t' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n');
   git(dir, 'add', 'a.txt');
   git(dir, 'commit', '-m', 'init');
@@ -83,10 +83,8 @@ test('isSquashMerged: git failure (unknown integration or branch ref) -> false, 
 // AFTER that merge. The third condition (tree equality via a recreated
 // merge) is what ties the proof to the branch's CURRENT tip.
 test('isSquashMerged: main moved (non-conflicting change) between fork and merge, then squash -> still true', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'squash-provenance-moved-'));
-  git(dir, 'init', '-b', 'main');
-  git(dir, 'config', 'user.email', 't@t');
-  git(dir, 'config', 'user.name', 't');
+  const dir = scratchDir('squash-provenance-moved-');
+  initRepo(dir, { branch: 'main', name: 't', email: 't@t' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n');
   git(dir, 'add', 'a.txt');
   git(dir, 'commit', '-m', 'init');

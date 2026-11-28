@@ -85,7 +85,8 @@ function extractDomainPaths(content) {
 // journey-health/scope.js — see the require at the top of this file.
 
 // ─── selectTarget ────────────────────────────────────────────────────────────
-// opts: { now?: number, signals?: { [id]: number }, dir?: string }
+// opts: { now?: number, signals?: { [id]: number }, dir?: string, env?: object }
+// (env: the child git's environment for the churn lookup; omitted = inherited)
 // Returns { kind: 'doc', id, path, why: 'stale' | 'hotspot' } or null.
 // Cursor key is namespaced "doc:<id>" throughout, matching harness-health's
 // "${kind}:${id}" convention (docs-health has a single kind, so the prefix
@@ -130,7 +131,7 @@ function selectTarget(root, cursors, opts = {}) {
         const relDocPath = toPosix(path.relative(root, candidate.path));
         const declaredPaths = parseFilesField(content);
         const domainPaths = declaredPaths.length > 0 ? declaredPaths : extractDomainPaths(content);
-        churn = domainChurn(root, [relDocPath, ...domainPaths], sinceMs);
+        churn = domainChurn(root, [relDocPath, ...domainPaths], sinceMs, { env: opts.env });
       }
       return churn > 0 ? churn : null;
     },

@@ -15,7 +15,7 @@
 // Lever names validate against the canonical Manifesto lever set (pinned
 // against manifesto.md's config.yml example block by
 // tests/bin-lib/set-config/write.test.js), plus RUN_PINS — run-scoped keys
-// (integration-model) validated the same way but never Manifesto levers.
+// (integration-model, spec) validated the same way but never Manifesto levers.
 // Values validate against POLICY_KEYS enums where a schema row exists;
 // `mode` and `ceremony-profile` are config.yml-only levers with no
 // POLICY_KEYS row (flow/manifesto.md computes them per run), so their enums
@@ -33,7 +33,7 @@ const path = require('path');
 const { POLICY_KEYS } = require('../policy-schema');
 
 // Ordered per manifesto.md's canonical lever numbering (1=Mode ... 13=Merge
-// authorization). spec:/created: are run bookkeeping, not levers — excluded.
+// authorization). created: is run bookkeeping; spec: is a run pin (RUN_PINS) — neither is a lever.
 const MANIFESTO_LEVERS = Object.freeze([
   'mode', 'scope-creep', 'overlap', 'design-intent', 'leftover-default',
   'auto-fix-threshold', 'review-auto-apply-ceiling', 'tidy-aggressiveness',
@@ -62,12 +62,22 @@ const LEVER_LABELS = Object.freeze({
 });
 
 // Run pins: config.yml keys a run records once at its start, validated like
-// levers (enum from POLICY_KEYS) but deliberately NOT Manifesto levers — no
-// Manifesto prompt asks for them and the FYI table does not show them. They
-// stay out of MANIFESTO_LEVERS because integration-model is run-scoped
+// levers (enum from POLICY_KEYS, or a value pattern below) but deliberately
+// NOT Manifesto levers — no Manifesto prompt asks for them and the FYI table
+// does not show them. integration-model is run-scoped
 // (_shared/integration-model.md's Run-scoped stability): the value is fixed
 // for the run's life, not a policy the operator tunes at the Manifesto gate.
-const RUN_PINS = Object.freeze(['integration-model']);
+// spec (#5347) is the record number a run is bound to — an express-lane run
+// records it here so merge mode's run binding and the wrap-up pack's config
+// rung can read it; created: stays bookkeeping this CLI refuses.
+const RUN_PINS = Object.freeze(['integration-model', 'spec']);
+
+// Pin value patterns, for pins whose value is a shape rather than an enum.
+// A positive integer with no leading zero — an unparseable record number must
+// fail at the write (exit 2), not read back as a silent miss later.
+const PIN_PATTERNS = Object.freeze({
+  spec: Object.freeze({ re: /^[1-9][0-9]*$/, allowed: 'a positive integer record number' }),
+});
 
 function isConfigKey(key) {
   return MANIFESTO_LEVERS.includes(key) || RUN_PINS.includes(key);
@@ -97,6 +107,10 @@ function leverValues(key) {
 // { ok:false, reason:'invalid-value', allowed }
 function validateLever(key, value) {
   if (!isConfigKey(key)) return { ok: false, reason: 'unknown-key' };
+  const pattern = PIN_PATTERNS[key];
+  if (pattern) {
+    return pattern.re.test(value) ? { ok: true } : { ok: false, reason: 'invalid-value', allowed: [pattern.allowed] };
+  }
   const allowed = leverValues(key);
   if (allowed === null) return { ok: true }; // a lever with no known enum: name-only validation
   if (!allowed.includes(value)) return { ok: false, reason: 'invalid-value', allowed };
@@ -113,7 +127,7 @@ function validateLever(key, value) {
 // the LAST occurrence's value, matching parseFlatLines semantics — not
 // necessarily the first line's. Every other line is preserved byte-for-byte.
 // Throws on fs errors — the CLI maps those to exit 3.
-function setConfigLever({ runDir, key, value }) {
+function setConfigLever({ runDir, key, value, stationDeps }) {
   const file = path.join(runDir, 'config.yml');
   let text = '';
   try { text = fs.readFileSync(file, 'utf8'); } catch { /* config.yml not yet created */ }
@@ -137,7 +151,26 @@ function setConfigLever({ runDir, key, value }) {
     }
   }
   fs.writeFileSync(file, lines.join('\n') + '\n');
+  // The run manifest (#5903) tracks the latest ceremony verdict. Best-effort: a failed fill never
+  // changes this write's outcome. Required lazily so the many callers that never touch it stay light.
+  if (key === 'ceremony-profile') {
+    try { require('../run-manifest/write').fillRunManifest(runDir, { ceremonyProfile: value }); } catch { /* never breaks the lever write */ }
+    replanFromProfile({ runDir, value, stationDeps });
+  }
   return { file, previous };
 }
 
-module.exports = { MANIFESTO_LEVERS, LEVER_LABELS, RUN_PINS, isConfigKey, leverValues, validateLever, setConfigLever };
+// A claimed record's stations may change with this profile write: replanRun writes one `replanned` per
+// such record. Needs a caller-supplied `stationDeps` with a `stationEvent` sink; without it (the
+// set-config.js CLI passes none), nothing is written. The profile is the `value` just written, never
+// re-read from the manifest, whose fill is best-effort. Never throws, never changes the lever write.
+function replanFromProfile({ runDir, value, stationDeps }) {
+  try {
+    if (stationDeps === null || typeof stationDeps !== 'object' || typeof stationDeps.stationEvent !== 'function') return;
+    let lane = null;
+    try { lane = JSON.parse(fs.readFileSync(path.join(runDir, 'manifest.json'), 'utf8')).lane ?? null; } catch { /* unreadable: lane unknown */ }
+    require('../station-events/replan').replanRun({ runDir, manifest: { lane, ceremonyProfile: value }, ref: 'ceremony-profile', deps: stationDeps });
+  } catch { /* emission never blocks the write */ }
+}
+
+module.exports = { MANIFESTO_LEVERS, LEVER_LABELS, RUN_PINS, PIN_PATTERNS, isConfigKey, leverValues, validateLever, setConfigLever };

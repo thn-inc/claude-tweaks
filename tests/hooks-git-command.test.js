@@ -282,6 +282,16 @@ test('an empty -C value leaves an UNKNOWN cwd unprovable, and a following relati
   assert.deepStrictEqual(gitTargets('git -C "" -C b commit -m "x"', '/repo'), [{ action: 'commit', dir: path.resolve('/repo', 'b') }]);
 });
 
+// bash 3.2, 5 and zsh run git for `x+=1 git commit` and `nohup git commit` (the Global Constraints'
+// verdict table); with no quoting passed, one is built from the tokens themselves.
+test('#4448: resolveGitCommand without quoting reads an appending assignment and a stripped prefix', () => {
+  // A known cwd passes through unresolved (as in the gitTargets '/repo' pins below).
+  assert.deepStrictEqual(resolveGitCommand(['x+=1', 'git', 'commit'], '/r'), { index: 2, dir: '/r' });
+  assert.deepStrictEqual(resolveGitCommand(['nohup', 'git', 'commit'], '/r'), { index: 2, dir: '/r' });
+  // A relative base is the one input `path.resolve` changes on every host, so this pins "as given" on POSIX CI too.
+  assert.deepStrictEqual(resolveGitCommand(['nohup', 'git', 'commit'], 'rel'), { index: 2, dir: 'rel' });
+});
+
 test('an empty value for a global VALUE_FLAG (-c) does not swallow the subcommand either', () => {
   assert.deepStrictEqual(gitTargets('git -c "" commit -m "msg"', '/repo'), [{ action: 'commit', dir: '/repo' }]);
 });
@@ -749,6 +759,37 @@ for (const [label, cmd, expected] of [
     assert.deepStrictEqual(gitTargets(cmd, '/wt'), expected);
   });
 }
+
+// #4245: a backslash-newline continuation is no word (#4281), so git after `&& \` or `-C /M \` is seen.
+// bash 3.2 and 5: `cd M && \<nl> pwd` and `git -C M \<nl> …` both run in M.
+test('#4245: gitTargets sees git after a backslash-newline continuation', () => {
+  assert.deepStrictEqual(gitTargets('cd /M && \\\n git commit -m x', '/r'), [{ action: 'commit', dir: path.resolve('/M') }]);
+  assert.deepStrictEqual(gitTargets('git -C /M \\\n  commit -m x', '/r'), [{ action: 'commit', dir: path.resolve('/M') }]);
+});
+
+// bash removes a backslash-newline before it reads operators: bash 3.2 and 5 run `cd M &\<nl>& pwd`
+// as `cd M && pwd` and print M.
+test('#4245: gitTargets sees git after an && split by a backslash-newline', () => {
+  assert.deepStrictEqual(gitTargets('cd /M &\\\n& git commit -m x', '/r'), [{ action: 'commit', dir: path.resolve('/M') }]);
+});
+
+// bash 3.2 and 5 run `false |\<nl>| cd M && pwd` (and `… cd M ; pwd`) as `false || cd M …` and
+// print M, so the commit after the `||` may run in /M or, when the cd is skipped, in /r.
+// gitTargets returns the cwd as given, so `/r` stays a literal: path.resolve adds a drive on win32 (#6239).
+test('#4245: gitTargets reads `|` backslash-newline `|` as `||`', () => {
+  const both = [{ action: 'commit', dir: path.resolve('/M') }, { action: 'commit', dir: '/r' }];
+  assert.deepStrictEqual(gitTargets('false |\\\n| cd /M && git commit -m x', '/r'), both);
+  assert.deepStrictEqual(gitTargets('false |\\\n| cd /M ; git commit -m x', '/r'), both);
+});
+
+// bash 3.2 and 5 join `echo a\<nl>#c` into the word `a#c` (it prints `a#c`), so `#` there starts no
+// comment and the cd and commit after it run in M. With a space before the backslash (`echo a \<nl>#c`)
+// or an even run of backslashes the `#` does start one, and bash prints only `a`.
+test('#4245: a `#` glued to a word by a backslash-newline is not a comment', () => {
+  assert.deepStrictEqual(gitTargets('echo a\\\n#c && cd /M && git commit -m x', '/r'), [{ action: 'commit', dir: path.resolve('/M') }]);
+  assert.deepStrictEqual(gitTargets('echo a \\\n#c && cd /M && git commit -m x', '/r'), []);
+  assert.deepStrictEqual(gitTargets('echo a\\\\\n#c && cd /M && git commit -m x', '/r'), []);
+});
 
 test('#4149: an absolute -C after a brace group is reported once', () => {
   assert.deepStrictEqual(gitTargets('{ cd /main; }; git -C /x commit -m x', '/wt'), [{ action: 'commit', dir: path.resolve('/x') }]);

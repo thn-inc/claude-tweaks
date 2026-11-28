@@ -142,7 +142,7 @@ test('reconcile/index.js registers console in ALL_CHECKS and the pr-first dispat
   // #561 near-miss: this used to pin the ALL_CHECKS array literal exactly
   // (byte-for-byte), which broke on red-tip's unrelated insertion even
   // though console's own membership/ordering claim was untouched — the same
-  // brittleness reconcile.test.js's own ALL_CHECKS-ordering tests already
+  // brittleness reconcile-dispatch.test.js's own ALL_CHECKS-ordering tests already
   // avoid by indexing into the real array rather than pinning full prose.
   // Parse the array literal's contents (still "pin against actual file
   // text", this file's own stated convention) and assert only the specific

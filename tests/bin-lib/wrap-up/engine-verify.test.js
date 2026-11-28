@@ -9,8 +9,10 @@ const { renderVerifyTable, runVerify, registerCheck, resolvePrNumber, resolveArc
 const { evaluateParentGate } = require('../../../plugin/bin/lib/issues/parent-gate');
 const { buildNativeSubIssuesQuery } = require('../../../plugin/bin/lib/issues/record');
 const { resolveRecords } = require('../../../plugin/bin/lib/wrap-up/pack');
-const { gitRepo, linkedWorktreeOf } = require('../../helpers/git-fixtures');
+const { gitRepo, linkedWorktreeOf, cleanGitEnv, committedRepo } = require('../../helpers/git-fixtures');
+const { _resetGhHostCache } = require('../../../plugin/bin/lib/repo-resolve');
 const { readText } = require('../../helpers/read-skill');
+const { captureGhTimeout } = require('../../helpers/gh-timeout-probe');
 
 // Every tmp root this file creates is registered here and removed once, after the
 // file's last test: the per-test try/finally removals cover only some call sites,
@@ -1353,7 +1355,7 @@ test('#3365: a closed multi-spec spec-{N}/ dir reads the parent worktreeAtClose 
 test('#3365: a parent run dir with only a manifest does not treat manifest ids as resolved records (Ruling R1)', () => {
   const { runDir, wtDir } = mirrorFixture({ record: null, state: (wt) => ({ status: 'active', worktree: wt }) });
   fs.writeFileSync(path.join(runDir, 'manifest.yml'), 'multispec:\n  parent: 3300\n  specs:\n    - id: 3337\n      status: not-run\n      subdir: spec-3337/\n');
-  writeExpectations(runDir, { version: 1, memory: [], upstream: [], issues: [900] });
+  writeExpectations(runDir, { version: 1, memory: [], upstream: [], issues: [41] });
   // Precondition: this fixture must actually reach the manifest rung of
   // resolveRecords — otherwise the assertion below would pass regardless of
   // whether resolvedIssueNumbers' closingRecords call is even present
@@ -1365,7 +1367,26 @@ test('#3365: a parent run dir with only a manifest does not treat manifest ids a
     wtDir,
   );
   assert.strictEqual(precondition.source, 'manifest', 'fixture does not reach the manifest rung — test would be non-discriminating');
-  assert.deepStrictEqual(resolvedIssueNumbers(runDir), [900]);
+  // #4108: the manifest rung's [] is a decision (close nothing), so the
+  // expectations file's issues are not consulted.
+  assert.deepStrictEqual(resolvedIssueNumbers(runDir), []);
+});
+
+const FS_RECORD_DEPS = { readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } }, readFile: (p) => fs.readFileSync(p, 'utf8') };
+
+test('#4108: an unavailable resolution (closingRecords null) falls through to verify-expectations.json issues', () => {
+  const runDir = makeTmpDir('verify-unavailable-fallthrough-');
+  writeExpectations(runDir, { version: 1, memory: [], upstream: [], issues: [41] });
+  assert.strictEqual(resolveRecords(FS_RECORD_DEPS, runDir, null).source, 'unavailable');
+  assert.deepStrictEqual(resolvedIssueNumbers(runDir), [41]);
+});
+
+test('#4108: a config-rung (express) run reads closingRecords\' [] as close-nothing, not as a fall-through to verify-expectations.json issues', () => {
+  const runDir = makeTmpDir('verify-config-rung-');
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'integration-model: pr-first\nspec: 41\n');
+  writeExpectations(runDir, { version: 1, memory: [], upstream: [], issues: [41] });
+  assert.strictEqual(resolveRecords(FS_RECORD_DEPS, runDir, null).source, 'config', 'fixture must reach the config rung');
+  assert.deepStrictEqual(resolvedIssueNumbers(runDir), []);
 });
 
 test('#3365: carrier-commit fails, not skips, for a mirror-resolved record with no closing keyword on branch or PR', () => {
@@ -1654,6 +1675,23 @@ test('reference-repairs check fails when Initiative-Fix commit diff touches a fi
   assert.strictEqual(row.detail, 'Initiative-Fix: commit touches unrelated file(s): docs/b.md');
 });
 
+test('reference-repairs check fails on the range path when an applied repair has no Initiative-Fix: commit in range', () => {
+  const runDir = makeTmpDir('verify-refrepair-nocommit-');
+  fs.writeFileSync(path.join(runDir, 'engine-state.json'), JSON.stringify({
+    version: 1,
+    results: { references: { findings: [{ action: 'applied', kind: 'broken-link', summary: 'fix', targetPath: 'docs/a.md' }] } },
+  }));
+  const calls = [];
+  const fakeGit = (args) => {
+    calls.push(args);
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } });
+  const row = result.rows.find((r) => r.check === 'reference-repairs');
+  assert.deepStrictEqual(row, { check: 'reference-repairs', result: 'fail', detail: 'no Initiative-Fix: commit found in range' });
+  assert.ok(!calls.some((a) => a[0] === 'diff-tree'), `no commit to inspect, so no diff-tree call: ${JSON.stringify(calls)}`);
+});
+
 // ---- reference-repairs: pr-first verification via the PR's own (pre-squash)
 // commit list (#2552 AC3/AC6) ----
 
@@ -1709,6 +1747,105 @@ test('reference-repairs check still fails under pr-first when a repair genuinely
   const row = result.rows.find((r) => r.check === 'reference-repairs');
   assert.strictEqual(row.result, 'fail');
   assert.match(row.detail, /no Initiative-Fix: commit found on PR #1201/);
+});
+
+// #5290 final review M5: a reference repair whose file a learned-skills capture took rides that PR's
+// commit, with no Initiative-Fix: trailer and nothing on the run branch, so it is not this check's.
+test('reference-repairs skips an applied repair that rode the learned-skills PR, calling neither git nor gh', () => {
+  const runDir = makeTmpDir('verify-refrepair-ls-pr-');
+  fs.writeFileSync(path.join(runDir, 'engine-state.json'), JSON.stringify({
+    version: 1,
+    results: { references: { findings: [{ action: 'applied', kind: 'broken-link', summary: 'fix', targetPath: '.claude/skills/x/SKILL.md', commit: 'abc1234', pr: 'https://github.com/o/r/pull/77' }] } },
+  }));
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ pr: { number: 1202 } }));
+  const calls = [];
+  const record = (tool) => (args) => { calls.push(`${tool} ${args.join(' ')}`); return ''; };
+  const result = runVerify({ runDir, base: 'main', deps: { git: record('git'), gh: record('gh') } });
+  const row = result.rows.find((r) => r.check === 'reference-repairs');
+  assert.deepStrictEqual(row, { check: 'reference-repairs', result: 'skip', detail: 'every applied reference repair rode the learned-skills PR, not the run branch' });
+  assert.ok(!calls.some((c) => c.includes('--json commits') || c.includes('Initiative-Fix')), calls.join('\n'));
+});
+
+test('reference-repairs still judges the run-branch repairs beside one that rode the learned-skills PR', () => {
+  const runDir = makeTmpDir('verify-refrepair-ls-mixed-');
+  fs.writeFileSync(path.join(runDir, 'engine-state.json'), JSON.stringify({
+    version: 1,
+    results: { references: { findings: [
+      { action: 'applied', kind: 'broken-link', summary: 'fix', targetPath: 'docs/a.md', commit: 'def5678' },
+      { action: 'applied', kind: 'broken-link', summary: 'fix', targetPath: '.claude/skills/x/SKILL.md', commit: 'abc1234', pr: 'https://github.com/o/r/pull/77' },
+    ] } },
+  }));
+  const fakeGit = (args) => {
+    if (args[0] === 'log' && args.includes('--grep=Initiative-Fix:')) return 'def5678\n';
+    if (args[0] === 'diff-tree') return 'docs/a.md\0';
+    return '';
+  };
+  const row = runVerify({ runDir, base: 'main', deps: { git: fakeGit, gh: () => '' } }).rows.find((r) => r.check === 'reference-repairs');
+  assert.strictEqual(row.result, 'pass', row.detail);
+});
+
+// ---- learned-skills-delivered (#5290 final review I2) ----
+// A captured Skills-row edit exists only as {run}/learned-skills/{id}.patch until land or stage runs.
+// The manifest goes where the writers put it (layout.js), so a moved layout cannot leave this check
+// green on a skip.
+const { manifestPath: learnedManifestPath } = require('../../../plugin/bin/lib/learned-skills/layout');
+function writeLearnedManifest(runDir, entries) {
+  fs.mkdirSync(path.dirname(learnedManifestPath(runDir)), { recursive: true });
+  fs.writeFileSync(learnedManifestPath(runDir), typeof entries === 'string' ? entries : JSON.stringify(entries));
+}
+const learnedRow = (runDir) => runVerify({ runDir, base: 'main', deps: { git: () => '', gh: () => '' } });
+
+test('learned-skills-delivered skips when the run captured nothing', () => {
+  const runDir = makeTmpDir('verify-learned-none-');
+  const row = learnedRow(runDir).rows.find((r) => r.check === 'learned-skills-delivered');
+  assert.deepStrictEqual(row, { check: 'learned-skills-delivered', result: 'skip', detail: 'no learned-skills captures this run' });
+});
+
+test('learned-skills-delivered passes when every entry was landed, staged or superseded', () => {
+  const runDir = makeTmpDir('verify-learned-done-');
+  writeLearnedManifest(runDir, [
+    { id: '1', status: 'landed', patch: '/gone/1.patch' }, { id: '2', status: 'staged', patch: '' }, { id: '3', status: 'superseded', patch: '/gone/3.patch' },
+  ]);
+  const row = learnedRow(runDir).rows.find((r) => r.check === 'learned-skills-delivered');
+  assert.strictEqual(row.result, 'pass', row.detail);
+});
+
+test('learned-skills-delivered fails on a captured entry and names each patch where it now lives', () => {
+  const runDir = makeTmpDir('verify-learned-captured-');
+  // Absolute paths from before the run dir was archived: the check names the copy beside the manifest.
+  writeLearnedManifest(runDir, [
+    { id: '1', status: 'captured', patch: '/original/run/learned-skills/1.patch' },
+    { id: '2', status: 'landed', patch: '/original/run/learned-skills/2.patch' },
+    { id: '3', status: 'captured', patch: '/original/run/learned-skills/3.patch' },
+  ]);
+  const result = learnedRow(runDir);
+  const row = result.rows.find((r) => r.check === 'learned-skills-delivered');
+  assert.strictEqual(row.result, 'fail');
+  assert.strictEqual(row.detail, `2 captured learned-skills patch(es) never delivered: ${path.join(runDir, 'learned-skills', '1.patch')}, ${path.join(runDir, 'learned-skills', '3.patch')} — run learned-skills-pr.js land (pr-first) or stage (local-merge) with --run ${runDir}`);
+  assert.strictEqual(result.exitCode, 3, 'a fail blocks the verdict');
+});
+
+// A null or unknown-status entry may be an undelivered edit: it fails, never reads as delivered.
+test('learned-skills-delivered fails on an entry no writer produces, naming it', () => {
+  for (const [bad, problem] of [
+    [null, 'is not an object'],
+    [{ id: '2', status: 'pending', patch: '/x/2.patch' }, 'has an unknown status ("pending")'],
+    [{ id: '2', status: 'captured' }, 'is captured but names no patch file'],
+  ]) {
+    const runDir = makeTmpDir('verify-learned-malformed-');
+    writeLearnedManifest(runDir, [{ id: '1', status: 'landed', patch: '/x/1.patch' }, bad]);
+    const row = learnedRow(runDir).rows.find((r) => r.check === 'learned-skills-delivered');
+    assert.strictEqual(row.result, 'fail', JSON.stringify(bad));
+    assert.strictEqual(row.detail, `learned-skills manifest entry 1 ${problem}: ${learnedManifestPath(runDir)}`);
+  }
+});
+
+test('learned-skills-delivered fails on an unreadable manifest', () => {
+  const runDir = makeTmpDir('verify-learned-bad-');
+  writeLearnedManifest(runDir, '{not json');
+  const row = learnedRow(runDir).rows.find((r) => r.check === 'learned-skills-delivered');
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /^learned-skills manifest unreadable: /);
 });
 
 test('acceptance-labeling check renders unknown (gh absent) when gh probe throws', () => {
@@ -1791,7 +1928,7 @@ test('AC3.1: engine-verify agrees on mixed labels', () => {
   for (const labels of [['demo:pending', 'demo:changes-requested'], ['accept:pending', 'demo:changes-requested'], ['demo:pending', 'accept:changes-requested']]) {
     const row = acceptanceLabelingRow(labels, 'verify-acceptance-outranked-');
     assert.strictEqual(row.result, 'fail', labels.join('+'));
-    assert.match(row.detail, /#900: pending label outranked by a verdict — run \/claude-tweaks:demo #900/, labels.join('+'));
+    assert.match(row.detail, /#900: pending label outranked by a verdict — run \/claude-tweaks:accept #900/, labels.join('+'));
     assert.doesNotMatch(row.detail, /missing demo:pending or accept:pending label/, labels.join('+'));
   }
 
@@ -2216,7 +2353,7 @@ test('#4805 a resolved parent still carrying a pending label fails as outranked,
       const label = `${parentLabels.join('+')} at ${risk}`;
       const { row } = parentGateRow({ records: [900], parentLabels, subIssues: closedSubs3508(risk) });
       assert.strictEqual(row.result, 'fail', `${label}: ${row.detail}`);
-      assert.match(row.detail, /#898: pending label outranked by a verdict — run \/claude-tweaks:demo #898/, label);
+      assert.match(row.detail, /#898: pending label outranked by a verdict — run \/claude-tweaks:accept #898/, label);
       assert.doesNotMatch(row.detail, /already dispositioned/, label);
       assert.doesNotMatch(row.detail, /below oversight floor/, label);
     }
@@ -3498,6 +3635,34 @@ test('upstream-feedback check passes via gh issue view when recorded url resolve
   assert.strictEqual(row.result, 'pass');
 });
 
+test('#4794: upstream-feedback makes no gh call under a GH_HOST naming another host, and keeps today\'s argv otherwise', () => {
+  // runVerify runs every check and another one also probes `gh --version`, so this check's own probe is
+  // isolated by differencing against a baseline run (same env, upstream empty: the check skips before any
+  // gh call); its issue view is the only call carrying issue number 42.
+  const run = (env, upstream = [{ url: 'https://github.com/org/repo/issues/42' }]) => {
+    const runDir = makeTmpDir('verify-upstream-gh-host-');
+    writeExpectations(runDir, { version: 1, memory: [], upstream });
+    const calls = [];
+    const fakeGh = (args) => { calls.push(args); return args[0] === '--version' ? 'gh version 2.0.0' : JSON.stringify({ number: 42 }); };
+    const result = runVerify({ runDir, base: 'main', deps: { git: () => '', gh: fakeGh, gateDeps: { env } } });
+    return { calls, row: result.rows.find((r) => r.check === 'upstream-feedback') };
+  };
+  for (const GH_HOST of ['mine.example', ' ACME.ghe.com ']) {
+    const { calls, row } = run({ GH_HOST });
+    const baseline = run({ GH_HOST }, []).calls;
+    assert.deepStrictEqual(calls.filter((a) => a.includes('42')), [], `no issue view under GH_HOST=${JSON.stringify(GH_HOST)}`);
+    assert.deepStrictEqual(calls, baseline, 'no gh call at all from this check: the probe included, the run matches its upstream-empty baseline');
+    assert.strictEqual(row.result, 'unknown');
+    assert.match(row.detail, /check not run/);
+    assert.doesNotMatch(row.detail, /export GH_HOST/);
+  }
+  for (const env of [{}, { GH_HOST: '' }, { GH_HOST: '  ' }, { GH_HOST: 'GitHub.com.' }]) {
+    const { calls, row } = run(env);
+    assert.deepStrictEqual(calls.filter((a) => a.includes('42')), [['issue', 'view', '42', '--repo', 'org/repo', '--json', 'number']], `today's argv for env ${JSON.stringify(env)}`);
+    assert.strictEqual(row.result, 'pass');
+  }
+});
+
 test('worktree-removed check skips when deferred set includes worktree', () => {
   const runDir = makeTmpDir('verify-deferred-worktree-');
   writeExpectations(runDir, { version: 1, memory: [], upstream: [], deferred: ['worktree'] });
@@ -3550,7 +3715,7 @@ test('runVerify short-circuits to an all-unknown row set when runDir is null, ne
   }
 });
 
-// #790/[IL-127]: wrap-up-engine.js's main() rejects any --run-dir that doesn't
+// #790/[IL-127]: wrap-up-engine.js's run() rejects any --run-dir that doesn't
 // resolve under the main checkout (bin/lib/hooks/worktree-detect.js's
 // isAnchoredUnderRoot) for EVERY verb, including this new `verify` one — a
 // bare os.tmpdir() path like /tmp/anything never anchors, so this test uses a
@@ -3586,7 +3751,7 @@ test('wrap-up-engine.js verify prints a check table for a real, anchored run dir
 // child_process.execFileSync (a fresh require.cache entry so the spy is
 // captured by the module's own top-level destructure) to inspect the real
 // options object each function passes, rather than asserting on source text.
-test('#1230: defaultGit\'s execFileSync call carries a timeout matching defaultGh\'s', () => {
+test('#1230: defaultGit and defaultGh both carry a timeout; git\'s is its own 5000 bound', () => {
   const cp = require('node:child_process');
   const originalExecFileSync = cp.execFileSync;
   const calls = [];
@@ -3595,24 +3760,47 @@ test('#1230: defaultGit\'s execFileSync call carries a timeout matching defaultG
     return '';
   };
   const modPath = require.resolve('../../../plugin/bin/lib/wrap-up/engine-verify');
+  const primitivesPath = require.resolve('../../../plugin/bin/lib/shared-primitives');
+  const ENV_KEY = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
+  const hadEnv = Object.prototype.hasOwnProperty.call(process.env, ENV_KEY);
+  const origEnv = process.env[ENV_KEY];
   delete require.cache[modPath];
+  delete require.cache[primitivesPath];
   let fresh;
   try {
+    process.env[ENV_KEY] = '12000';
     // eslint-disable-next-line global-require
     fresh = require('../../../plugin/bin/lib/wrap-up/engine-verify');
     fresh.defaultGit(['status'], '/tmp/does-not-matter');
     fresh.defaultGh(['--version'], '/tmp/does-not-matter');
   } finally {
     cp.execFileSync = originalExecFileSync;
+    if (hadEnv) process.env[ENV_KEY] = origEnv; else delete process.env[ENV_KEY];
     delete require.cache[modPath];
+    delete require.cache[primitivesPath];
   }
   assert.strictEqual(calls.length, 2);
   const [gitCall, ghCall] = calls;
   assert.strictEqual(gitCall[0], 'git');
   assert.strictEqual(ghCall[0], 'gh');
   assert.notStrictEqual(gitCall[2].timeout, undefined, 'defaultGit must set a timeout option');
-  assert.strictEqual(gitCall[2].timeout, ghCall[2].timeout, "defaultGit's timeout must match defaultGh's");
-  assert.strictEqual(gitCall[2].timeout, 5000);
+  assert.notStrictEqual(ghCall[2].timeout, undefined, 'defaultGh must set a timeout option');
+  assert.strictEqual(gitCall[2].timeout, 5000, 'git keeps its own local bound regardless of GH_TIMEOUT_MS');
+  assert.strictEqual(ghCall[2].timeout, 12000, 'gh follows CLAUDE_TWEAKS_GH_TIMEOUT_MS');
+});
+
+test('#4856: defaultGh passes timeout 12000 under CLAUDE_TWEAKS_GH_TIMEOUT_MS=12000', () => {
+  const modulePaths = [require.resolve('../../../plugin/bin/lib/wrap-up/engine-verify')];
+  const seen = captureGhTimeout({
+    envValue: '12000',
+    modulePaths,
+    exercise: (setEnv) => {
+      setEnv();
+      // eslint-disable-next-line global-require
+      require('../../../plugin/bin/lib/wrap-up/engine-verify').defaultGh(['--version'], process.cwd());
+    },
+  });
+  assert.strictEqual(seen, 12000);
 });
 
 // ---- #1477: the eleven remaining process.cwd() sites now thread the injected
@@ -3833,4 +4021,64 @@ test('#3595 AC3.1: carrier-commit matches Fixes/Closes and rejects Refs through 
   const source = readText(path.join(__dirname, '../../../plugin/bin/lib/wrap-up/engine-verify.js'));
   assert.match(source, /\{[^}]*\bCLOSING_KEYWORD_ALTERNATION\b[^}]*\}\s*=\s*require\('\.\.\/issue-branch-tracking'\)/);
   assert.doesNotMatch(source, /CLOSING_KEYWORDS_PATTERN/);
+});
+
+// #5379: an injected process context reaches the git and gh children (the in-process CLI entry hands
+// the engine its own `env`); absent, both inherit the real one. Two repos, A and B, tell them apart:
+// only B holds `GIT_DIR`'s HEAD, so a child that reads B's HEAD got the injected env.
+function commitRepo(prefix, file) {
+  const repo = committedRepo({ prefix, file });
+  trackTmp(repo.dir);
+  return repo;
+}
+
+test('defaultGit: the git child gets ctx.env (#5379)', () => {
+  const { defaultGit } = require('../../../plugin/bin/lib/wrap-up/engine-verify');
+  const a = commitRepo('env-a-', 'a.txt');
+  const b = commitRepo('env-b-', 'b.txt');
+  assert.notStrictEqual(a.head, b.head);
+  const env = { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git') };
+  assert.strictEqual(defaultGit(['rev-parse', 'HEAD'], a.dir, { env }).trim(), b.head);
+  assert.strictEqual(defaultGit(['rev-parse', 'HEAD'], a.dir).trim(), a.head, 'no ctx: the inherited environment, as before');
+});
+
+test('defaultGh: the gh child gets ctx.env (#5379)', { skip: process.platform === 'win32' && 'sh stub' }, () => {
+  const { defaultGh } = require('../../../plugin/bin/lib/wrap-up/engine-verify');
+  const a = commitRepo('env-gh-a-', 'a.txt');
+  const stubDir = makeTmpDir('env-gh-stub-');
+  fs.writeFileSync(path.join(stubDir, 'gh'), '#!/bin/sh\necho stubbed\n', { mode: 0o755 });
+  // GH_HOST set makes ghOptions hand the options back untouched.
+  const env = { ...cleanGitEnv(), PATH: stubDir + path.delimiter + process.env.PATH, GH_HOST: 'github.com' };
+  assert.match(defaultGh(['--version'], a.dir, { env }), /stubbed/);
+});
+
+// With GH_HOST unset, ghOptions resolves the host from the origin remote: it must read it under the
+// injected env (B's origin through GIT_DIR, while cwd is A, which has none) and look hosts.yml up in the
+// injected env's gh config dir. A `gh` stub that prints $GH_HOST shows what the child was handed.
+function hostEcho({ originUrl, hostsYml }) {
+  const a = commitRepo('env-host-a-', 'a.txt');
+  const b = commitRepo('env-host-b-', 'b.txt');
+  b.git('remote', 'add', 'origin', originUrl);
+  const stubDir = makeTmpDir('env-host-stub-');
+  fs.writeFileSync(path.join(stubDir, 'gh'), '#!/bin/sh\necho "$GH_HOST"\n', { mode: 0o755 });
+  const ghConfig = makeTmpDir('env-host-cfg-');
+  if (hostsYml) fs.writeFileSync(path.join(ghConfig, 'hosts.yml'), hostsYml);
+  const env = { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git'), GH_CONFIG_DIR: ghConfig, PATH: stubDir + path.delimiter + process.env.PATH };
+  delete env.GH_HOST;
+  delete env.GH_REPO;
+  _resetGhHostCache();
+  try {
+    return require('../../../plugin/bin/lib/wrap-up/engine-verify').defaultGh(['--version'], a.dir, { env, stderr: () => {} }).trim();
+  } finally {
+    _resetGhHostCache();
+  }
+}
+
+test('defaultGh: GH_HOST resolves from the origin read under ctx.env (#5379)', { skip: process.platform === 'win32' && 'sh stub' }, () => {
+  assert.strictEqual(hostEcho({ originUrl: 'https://acme.ghe.com/o/r.git' }), 'acme.ghe.com');
+});
+
+test('defaultGh: the host lookup reads hosts.yml under the injected gh config dir (#5379)', { skip: process.platform === 'win32' && 'sh stub' }, () => {
+  assert.strictEqual(hostEcho({ originUrl: 'https://git.corp.example/o/r.git', hostsYml: 'git.corp.example:\n' }), 'git.corp.example');
+  assert.strictEqual(hostEcho({ originUrl: 'https://git.corp.example/o/r.git' }), '', 'a host no hosts.yml lists stays unset');
 });

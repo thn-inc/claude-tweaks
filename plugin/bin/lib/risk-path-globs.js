@@ -51,7 +51,10 @@ function quoteClose(text, i) {
 }
 
 // One line with a trailing `# comment` cut: a `#` inside a quote is text, and
-// a bare `#` starts a comment only after whitespace.
+// a bare `#` starts a comment only after whitespace. This differs from the
+// flat-key/`model-profiles` rule (model-profiles/policy-fragment.js's
+// stripComment: a `#` anywhere ends the line) on purpose, because a glob may
+// hold `#`.
 function stripComment(line) {
   for (let i = 0; i < line.length; i += 1) {
     const close = quoteClose(line, i);

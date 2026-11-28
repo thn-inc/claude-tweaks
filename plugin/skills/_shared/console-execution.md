@@ -50,6 +50,7 @@ unticked item at Resolve time is declined — log it to `decisions.md` exactly a
 decline does today ("declined, no reason given" when the comment carries no free-text rationale,
 since a checkbox has none to read). Every executed or declined item appends its own
 `_shared/auto-decision-log.md` line. An unticked `staged/reflect-{n}.md` Skill-updates row declines first, through `bin/reflect-apply.js --run {item-run-dir} --item '{name}' --decline 'declined at Review Console, no reason given'`, so the decline is recorded, not only logged; the ticked ones then apply through "On approval" step 2's reflect clause with `--only '{name},…'` naming exactly the ticked rows — never a plain run, which would apply the unticked ones too, and skipped when no reflect row is ticked (`--only` naming no item exits 2).
+A ticked `followup-recheck-*` `Q#` row records its approval through `node "${CLAUDE_PLUGIN_ROOT}/bin/recheck-followups.js" approve --run "{item-run-dir}" --id '{name}' --item {q-id}` (`{q-id}`: the row's Item id, so the approval lands on that row and `hooks.js resolve-console` reads it executed, not declined) per "On approval" step 7's branch, never `gh issue create`; unticked, it is declined like any `Q#`. The approval executes only at the post-merge steps (`wrap-up/followup-recheck.md`), so one recorded after the merge already ran stays residue that `console-residue.js --run` lists with its `execute` command.
 
 **Except an `sdd-ruling-*` item** (staged file `staged/sdd-ruling-{N}.md`, or
 `spec-{N}/staged/sdd-ruling-{N}.md` on a multi-spec bundle, #3401): unticked at
@@ -197,13 +198,18 @@ later — it exists solely to close the specific correctness gap #1294 found; do
 into a broader test or pre-implement #347's predicate here (Related, not merged scope, same as
 `_shared/console-on-pr.md`'s own note on #347).
 
-**A finding row is floor-clearing and is ticked whatever its pre-tick** (#3949): at `unattended`
-every can't-tell item files, its recommendation notwithstanding (`_shared/autonomy-ceiling.md`'s
-`consoleAutoResolve` row), so this wiring never drops one — it files it per Execution routing above.
+**A finding row is floor-clearing and is ticked whatever its pre-tick** (#3949, #4679): at `unattended`
+a `drop`-recommended can't-tell item is digested (`tiebreak-cant-tell`, deduplicated by its
+`console-finding` marker) and every other one files as a `needs-verification` task
+(`_shared/autonomy-ceiling.md`'s `consoleAutoResolve` row). The wiring runs `console-filings.js`
+with no `--only` for the run's finding rows, ticks the rows that come back under `file`/`deduped`,
+and passes the rows under `digest`/`digestDeduped` to `resolve-console --digested`, once their
+digested lines are logged. A CLI entry's `item` is a console item id: the row passed is the one
+whose `findingItem` equals it, named by that row's own `id`. The steps this leaves out — the digest-comments fetch and `--digest-comments`, posting `digestFile`, the per-entry digested log line — are `wrap-up/review-console.md`'s "Can't-tell filings" paragraph, run per console dir.
 
 **Second narrower exception (#1802):** the same `isMergeRow: true` item is also **not**
-floor-clearing when a live re-fetch shows any group member currently lacking both `auto:merge`
-and a matured `auto:merge-pending` — unlike `mergeCheckVerdict` above, this fact needs no
+floor-clearing when a live re-fetch shows any group member currently lacking a live `auto:build`,
+or lacking both `auto:merge` and a matured `auto:merge-pending` — unlike `mergeCheckVerdict` above, this fact needs no
 persisted snapshot, since it is directly observable current label state rather than an LLM
 judgment computed once at render time. **Deriving group membership in a foreign session:** the
 executing session did not necessarily render this console, so it cannot rely on the original
@@ -251,7 +257,7 @@ comment-edit history a human's own ticks would leave, flagged in the reply comme
 `decisions.md` as `AUTO`, never presented as if a human ticked it. The Resolve box is ticked only
 when every item in the console is floor-clearing; a console with a genuinely non-floor item —
 today, exactly the `isMergeRow: true` item under either exception above (a persisted `needs-human`
-verdict, or a live-refetched member lacking `auto:merge`) and a ruling row named in
+verdict, or a live-refetched member lacking `auto:build` or a merge grant) and a ruling row named in
 `rulingGateGaps` — gets its floor items ticked and executed, but each such item and Resolve stay
 unticked and the console stays pending for a human. Log one `AUTO {time} — Console execution: auto-resolved {item}
 on PR #{n}. Reversibility: {…}.` line per item actually resolved, per
@@ -259,7 +265,7 @@ on PR #{n}. Reversibility: {…}.` line per item actually resolved, per
 further line naming which exception fired: `AUTO {time} — Console execution: withheld branch-finish/merge on PR #{n} — persisted
 mergeCheckVerdict: needs-human. Reversibility: n/a (declined to act).` for the first exception, or
 `AUTO {time} — Console execution: withheld branch-finish/merge on PR #{n} — member #{m} lacks
-auto:merge. Reversibility: n/a (declined to act).` for the second (#1802) — naming the specific
+auto:build or a merge grant. Reversibility: n/a (declined to act).` for the second (#1802) — naming the specific
 member `{m}` whose live labels lacked the grant. For a gap whose `member` is null
 (`grant-context-missing`, `members-unresolved`) the line takes the null-member form instead:
 `AUTO {time} — Console execution: withheld branch-finish/merge on PR #{n} — {reason}. Reversibility: n/a (declined to act).`

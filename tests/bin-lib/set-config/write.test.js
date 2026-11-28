@@ -1,7 +1,8 @@
 'use strict';
-const { test } = require('node:test');
+const { test, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { readText } = require('../../helpers/read-skill');
@@ -9,10 +10,12 @@ const {
   MANIFESTO_LEVERS, RUN_PINS, leverValues, validateLever, setConfigLever,
 } = require('../../../plugin/bin/lib/set-config/write');
 
+const runManifest = require('../../../plugin/bin/lib/run-manifest/write');
+
 const REPO_ROOT = path.join(__dirname, '..', '..', '..');
 
 function fixtureRunDir() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'setcfg-'));
+  const root = scratchDir('setcfg-');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-08-20T090000-spec-12');
   fs.mkdirSync(runDir, { recursive: true });
   return runDir;
@@ -40,9 +43,10 @@ test('validateLever: every canonical Manifesto lever is accepted with a known-go
   }
 });
 
-test('RUN_PINS: integration-model is a run pin, not a Manifesto lever', () => {
-  assert.deepEqual([...RUN_PINS], ['integration-model']);
+test('RUN_PINS: integration-model and spec are run pins, not Manifesto levers', () => {
+  assert.deepEqual([...RUN_PINS], ['integration-model', 'spec']);
   assert.equal(MANIFESTO_LEVERS.includes('integration-model'), false);
+  assert.equal(MANIFESTO_LEVERS.includes('spec'), false);
   assert.deepEqual(leverValues('integration-model'), ['pr-first', 'local-merge']);
 });
 
@@ -53,8 +57,18 @@ test('validateLever: integration-model accepts pr-first/local-merge and rejects 
   });
 });
 
+test('AC1.1: validateLever accepts spec as a positive-integer run pin', () => {
+  assert.deepEqual(validateLever('spec', '5347'), { ok: true });
+  assert.deepEqual(validateLever('spec', '7'), { ok: true });
+  for (const bad of ['0', '-1', 'abc', '12x', '07', '']) {
+    assert.deepEqual(validateLever('spec', bad), {
+      ok: false, reason: 'invalid-value', allowed: ['a positive integer record number'],
+    }, `spec=${JSON.stringify(bad)} should be refused`);
+  }
+});
+
 test('validateLever: a key outside the lever enum is refused (unknown-key) — including config.yml bookkeeping fields', () => {
-  for (const key of ['spec', 'created', 'worktree-always', 'not-a-lever']) {
+  for (const key of ['created', 'worktree-always', 'not-a-lever']) {
     assert.deepEqual(validateLever(key, 'x'), { ok: false, reason: 'unknown-key' });
   }
 });
@@ -180,4 +194,107 @@ test('setConfigLever: prefix-anchored — setting `mode` does not touch `model-s
   setConfigLever({ runDir, key: 'mode', value: 'interactive' });
   const body = fs.readFileSync(file, 'utf8');
   assert.equal(body, ['mode: interactive', 'model-stance: default', ''].join('\n'));
+});
+
+// --- run manifest fill (#5903): ceremony-profile writes ride into manifest.json ---------------
+
+const FACTS = { pluginVersion: '6.200.0', policyHash: 'abc123', baseCommit: 'deadbeef', modelProfile: 'standard' };
+const seedManifest = (runDir) => runManifest.initRunManifest(runDir, { cwd: runDir }, { gatherFacts: () => ({ ...FACTS }), stderr: () => {} });
+const readManifest = (runDir) => JSON.parse(fs.readFileSync(path.join(runDir, runManifest.MANIFEST_FILE), 'utf8'));
+
+test('setConfigLever: setting ceremony-profile fills the manifest ceremonyProfile', () => {
+  const runDir = fixtureRunDir();
+  seedManifest(runDir);
+  assert.equal(readManifest(runDir).ceremonyProfile, null);
+  setConfigLever({ runDir, key: 'ceremony-profile', value: 'fast-lane' });
+  assert.equal(readManifest(runDir).ceremonyProfile, 'fast-lane');
+});
+
+test('setConfigLever: a later ceremony-profile change overwrites ceremonyProfile and changes no other manifest field', () => {
+  const runDir = fixtureRunDir();
+  seedManifest(runDir);
+  setConfigLever({ runDir, key: 'ceremony-profile', value: 'fast-lane' });
+  const first = readManifest(runDir);
+  setConfigLever({ runDir, key: 'ceremony-profile', value: 'standard' });
+  const second = readManifest(runDir);
+  assert.equal(second.ceremonyProfile, 'standard');
+  assert.deepEqual({ ...second, ceremonyProfile: null }, { ...first, ceremonyProfile: null });
+});
+
+const { STARTING_LISTS } = require('../../../plugin/bin/lib/station-events/plan');
+const { STATION, KIND } = require('../../../plugin/bin/lib/station-events/stations');
+
+// The scratch root above fixtureRunDir()'s run dir doubles as the main root; its log holds a standard-claim `planned` line.
+function replanFixture() {
+  const runDir = fixtureRunDir();
+  seedManifest(runDir);
+  const mainRoot = path.resolve(runDir, '..', '..', '..');
+  fs.mkdirSync(path.join(mainRoot, '.git')); // resolvable by mainCheckoutRoot, so a default-sink regression would append here
+  const logFile = path.join(mainRoot, '.claude-tweaks', 'station-events.jsonl');
+  fs.writeFileSync(logFile, JSON.stringify({
+    v: 1, repoName: 'acme/w', recordNumber: 7, kind: KIND.PLANNED, station: STATION.BUILD, lane: 'unknown',
+    runId: path.basename(runDir), payload: { stations: STARTING_LISTS.standard },
+  }) + '\n');
+  return { runDir, mainRoot, logFile };
+}
+
+test('downgrading the ceremony profile on a claimed record writes one replanned with reason ceremony-downgrade', () => {
+  const { runDir, mainRoot } = replanFixture();
+  const events = [];
+  setConfigLever({ runDir, key: 'ceremony-profile', value: 'fast-lane', stationDeps: { stationEvent: (e) => events.push(e), mainRoot } });
+  assert.equal(events.length, 1);
+  assert.equal(events[0].kind, KIND.REPLANNED);
+  assert.equal(events[0].payload.reasonCode, 'ceremony-downgrade');
+  assert.equal(events[0].payload.cause.kind, 'config');
+  assert.equal(events[0].payload.stations.includes('polish'), false);
+});
+
+test('fixing the profile to standard after a standard claim writes nothing via setConfigLever', () => {
+  const { runDir, mainRoot } = replanFixture();
+  const events = [];
+  setConfigLever({ runDir, key: 'ceremony-profile', value: 'standard', stationDeps: { stationEvent: (e) => events.push(e), mainRoot } });
+  assert.deepEqual(events, []);
+});
+
+test('setConfigLever without stationDeps writes no event', () => {
+  const { runDir, logFile } = replanFixture();
+  const before = fs.readFileSync(logFile, 'utf8');
+  setConfigLever({ runDir, key: 'ceremony-profile', value: 'fast-lane' });
+  assert.equal(fs.readFileSync(logFile, 'utf8'), before);
+  assert.equal(before.split('\n').filter(Boolean).length, 1);
+});
+
+test('setConfigLever with a failed manifest fill still replans from the written value', () => {
+  const { runDir, mainRoot } = replanFixture();
+  fs.rmSync(path.join(runDir, runManifest.MANIFEST_FILE));
+  fs.mkdirSync(path.join(runDir, runManifest.MANIFEST_FILE));
+  const events = [];
+  setConfigLever({ runDir, key: 'ceremony-profile', value: 'fast-lane', stationDeps: { stationEvent: (e) => events.push(e), mainRoot } });
+  assert.equal(events.length, 1);
+  assert.deepEqual(events[0].payload.stations, STARTING_LISTS['fast-lane']);
+});
+
+test('setConfigLever: setting another key leaves manifest.json untouched, and does not create one', () => {
+  const runDir = fixtureRunDir();
+  setConfigLever({ runDir, key: 'mode', value: 'auto' });
+  assert.equal(fs.existsSync(path.join(runDir, runManifest.MANIFEST_FILE)), false);
+  seedManifest(runDir);
+  const before = fs.readFileSync(path.join(runDir, runManifest.MANIFEST_FILE), 'utf8');
+  setConfigLever({ runDir, key: 'mode', value: 'interactive' });
+  setConfigLever({ runDir, key: 'spec', value: '5903' });
+  assert.equal(fs.readFileSync(path.join(runDir, runManifest.MANIFEST_FILE), 'utf8'), before);
+});
+
+test('setConfigLever: a fill failure does not change the set-config result or the config.yml write', () => {
+  const runDir = fixtureRunDir();
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'ceremony-profile: fast-lane\n');
+  const fill = mock.method(runManifest, 'fillRunManifest', () => { throw new Error('manifest writer exploded'); });
+  try {
+    const res = setConfigLever({ runDir, key: 'ceremony-profile', value: 'standard' });
+    assert.equal(fill.mock.callCount(), 1);
+    assert.deepEqual(res, { file: path.join(runDir, 'config.yml'), previous: 'fast-lane' });
+    assert.equal(fs.readFileSync(path.join(runDir, 'config.yml'), 'utf8'), 'ceremony-profile: standard\n');
+  } finally {
+    fill.mock.restore();
+  }
 });

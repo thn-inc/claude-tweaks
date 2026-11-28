@@ -60,3 +60,27 @@ test('the QA-skip path still passes the #3013 PR-check gate before TEST_PASSED',
 test('qa-reporting.md Phase 5 writes the QA pass stamp after report.json in pipeline context', () => {
   pinned(REPORTING, PRE_PHASE5, /\*\*QA pass stamp \(pipeline runs, #3003\)\.\*\*[\s\S]{0,300}bin\/qa-stamp\.js" --write --report "\{RUN_DIR\}\/report\.json"/, 'Phase 5 must run qa-stamp.js --write');
 });
+
+// #5643: the bookkeeping-delta skip. Frozen control = the QA-stamp sentence as it read before #5643.
+const PRE_BOOKKEEPING = "Before dispatching a selected set (scoped or full), run `node \"${CLAUDE_PLUGIN_ROOT}/bin/qa-stamp.js\" --check --stories <id=file,...> [--stories-dir <dir>]` with the selected stories' ids and source files (relative to `STORIES_DIR`). `skip: true` → do not dispatch: report `QA: skipped — stories already passed at {short-sha}`, set `TEST_PASSED=true`, log `AUTO {time} — QA skipped: {k} selected stories already passed at {short-sha} (QA pass stamp). Reversibility: high.`, and note the Design CLI gate (Step 1.5) still runs on this skip path too. `skip: false` → run the selection unchanged; the `reason` (`no-stamp`, `sha-mismatch`, `dirty-tree`, `story-changed: {id}`, …) needs no log line.";
+const PRE_REPORTING_STAMP = 'A later `/claude-tweaks:test` call at the same HEAD (a dispatched group\'s second call) reads the stamp before dispatching stories (`SKILL.md`\'s pipeline story selection).';
+
+test('pipeline story selection passes --scope to qa-stamp.js --check when a declaration exists', () => {
+  pinned(SKILL, PRE_BOOKKEEPING, /--scope \.claude-tweaks\/verify-scope\.json/, 'the check call must name the --scope declaration');
+});
+
+test('the bookkeeping-delta skip has its own report and log line', () => {
+  const report = 'QA: skipped — stories already passed at {short-sha}; only bookkeeping commits since';
+  const log = 'AUTO {time} — QA skipped: {k} selected stories already passed at {short-sha}, bookkeeping-only delta since (QA pass stamp). Reversibility: high.';
+  assert.ok(SKILL.includes(report), 'report line missing');
+  assert.ok(SKILL.includes(log), 'log line missing');
+  assert.ok(!PRE_BOOKKEEPING.includes(report) && !PRE_BOOKKEEPING.includes(log), 'must be absent pre-change');
+});
+
+test('qa-reporting.md names the bookkeeping-delta skip and the declaration it trusts', () => {
+  const at = REPORTING.indexOf('**QA pass stamp (pipeline runs, #3003).**');
+  assert.ok(at >= 0);
+  const para = REPORTING.slice(at, REPORTING.indexOf('\n', at));
+  pinned(para, PRE_REPORTING_STAMP, /covered-bookkeeping-delta/, 'paragraph must name the reason');
+  assert.match(para, /suites: \[\]/);
+});

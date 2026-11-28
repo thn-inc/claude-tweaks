@@ -28,25 +28,15 @@
 // exclusive invocation forms — pass one or the other, never both.
 'use strict';
 const fs = require('fs');
+const path = require('path');
+const { execFileSync } = require('child_process');
 const {
   evaluate,
   readDesignIntegrationFlagFromFile,
   MODE_LAYERS,
 } = require('./lib/design-detect');
 const { analyzeDiff } = require('./lib/design-detect/surface-lines');
-
-function fail(msg) {
-  process.stderr.write(`design-detect: ${msg}\n`);
-  process.exitCode = 1;
-}
-
-function readStdin() {
-  try {
-    return fs.readFileSync(0, 'utf8');
-  } catch {
-    return '';
-  }
-}
+const { DEFAULT_IO, resolveAgainst } = require('./lib/health-core/io');
 
 function parseArgs(argv) {
   const out = { mode: null, surface: null, files: [], signalsPath: null, designIntegration: null, claudeMdPath: null, platform: null, surfaceLinesPath: null };
@@ -62,28 +52,45 @@ function parseArgs(argv) {
       case '--claude-md': out.claudeMdPath = next(); break;
       case '--platform': out.platform = next(); break;
       case '--surface-lines': out.surfaceLinesPath = next(); break;
-      default: fail(`unknown argument "${a}"`); return out;
+      default: return { ok: false, message: `unknown argument "${a}"` };
     }
   }
-  return out;
+  return { ok: true, args: out };
 }
 
-function repoRoot() {
+// An operand carrying a root never reads the cwd: a deleted working directory makes
+// process.cwd() throw, and the unconverted CLI never called it for an absolute path.
+// A relative operand whose cwd cannot be read is handed to fs as written, as the
+// unconverted CLI did, so the read fails with fs's own message naming the caller's spelling.
+function resolveOperand(deps, p) {
+  if (path.parse(p).root) return p;
   try {
-    return require('child_process')
-      .execFileSync('git', ['rev-parse', '--show-toplevel'], { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8' })
-      .trim();
+    return resolveAgainst(deps.cwd(), p);
   } catch {
-    return process.cwd();
+    return p;
   }
 }
 
-function resolvePlatform(args) {
+function repoRoot(deps) {
+  try {
+    return execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      cwd: deps.cwd(),
+      env: deps.env,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      encoding: 'utf8',
+      windowsHide: true,
+    }).trim();
+  } catch {
+    return deps.cwd();
+  }
+}
+
+function resolvePlatform(args, deps) {
   if (args.platform) return args.platform;
   if (!args.signalsPath) return null;
   let raw;
   try {
-    raw = args.signalsPath === '-' ? readStdin() : fs.readFileSync(args.signalsPath, 'utf8');
+    raw = args.signalsPath === '-' ? deps.stdin() : fs.readFileSync(resolveOperand(deps, args.signalsPath), 'utf8');
     const signals = JSON.parse(raw);
     return (signals && signals.setup && signals.setup.platform) || null;
   } catch {
@@ -91,55 +98,76 @@ function resolvePlatform(args) {
   }
 }
 
-function resolveDesignIntegration(args) {
+function resolveDesignIntegration(args, deps) {
   if (args.designIntegration) return args.designIntegration;
   if (args.claudeMdPath) {
     try {
       const { readDesignIntegrationFlag } = require('./lib/design-detect');
-      return readDesignIntegrationFlag(fs.readFileSync(args.claudeMdPath, 'utf8'));
+      return readDesignIntegrationFlag(fs.readFileSync(resolveOperand(deps, args.claudeMdPath), 'utf8'));
     } catch {
       return null;
     }
   }
-  return readDesignIntegrationFlagFromFile(repoRoot());
+  return readDesignIntegrationFlagFromFile(repoRoot(deps));
 }
 
-function main(argv) {
-  const args = parseArgs(argv.slice(2));
-  if (process.exitCode) return;
+// run(argv, deps) -> exit code. argv is already sliced past the node/script pair.
+function run(argv, deps = realDeps) {
+  const fail = (msg) => {
+    deps.stderr(`design-detect: ${msg}\n`);
+    return 1;
+  };
+  const parsed = parseArgs(argv);
+  if (!parsed.ok) return fail(parsed.message);
+  const args = parsed.args;
 
   if (args.surfaceLinesPath) {
-    if (args.mode) { fail('--surface-lines and --mode are mutually exclusive'); return; }
+    if (args.mode) return fail('--surface-lines and --mode are mutually exclusive');
     let diffText;
+    let resolved = null;
     try {
-      diffText = args.surfaceLinesPath === '-' ? readStdin() : fs.readFileSync(args.surfaceLinesPath, 'utf8');
+      resolved = args.surfaceLinesPath === '-' ? null : resolveOperand(deps, args.surfaceLinesPath);
+      diffText = resolved === null ? deps.stdin() : fs.readFileSync(resolved, 'utf8');
     } catch (err) {
-      fail(`could not read diff at "${args.surfaceLinesPath}": ${err.message}`);
-      return;
+      // Node's message names the opened path; print the caller's own spelling instead of the joined one.
+      // On win32 the message carries the path normalized (`sub/x` joined as `C:\cwd\sub/x` is
+      // reported as `C:\cwd\sub\x`), so a rooted join that is absent verbatim is matched normalized.
+      let message = err.message;
+      if (resolved !== null) {
+        const from = message.includes(resolved) || !path.parse(resolved).root ? resolved : path.normalize(resolved);
+        message = message.split(from).join(args.surfaceLinesPath);
+      }
+      return fail(`could not read diff at "${args.surfaceLinesPath}": ${message}`);
     }
     const files = analyzeDiff(diffText);
     const surface = files.some((f) => f.surface);
-    process.stdout.write(JSON.stringify({ surface, files }) + '\n');
-    return;
+    deps.stdout(JSON.stringify({ surface, files }) + '\n');
+    return 0;
   }
 
-  if (!args.mode) { fail('--mode is required'); return; }
+  if (!args.mode) return fail('--mode is required');
   if (!Object.prototype.hasOwnProperty.call(MODE_LAYERS, args.mode)) {
-    fail(`unknown mode "${args.mode}" — must be one of: ${Object.keys(MODE_LAYERS).join(', ')}`);
-    return;
+    return fail(`unknown mode "${args.mode}" — must be one of: ${Object.keys(MODE_LAYERS).join(', ')}`);
   }
 
   const result = evaluate({
     mode: args.mode,
-    designIntegrationValue: resolveDesignIntegration(args),
+    designIntegrationValue: resolveDesignIntegration(args, deps),
     surface: args.surface,
-    platform: resolvePlatform(args),
+    platform: resolvePlatform(args, deps),
     files: args.files,
   });
 
-  process.stdout.write(JSON.stringify(result) + '\n');
+  deps.stdout(JSON.stringify(result) + '\n');
+  return 0;
 }
 
-if (require.main === module) main(process.argv);
+const realDeps = {
+  ...DEFAULT_IO,
+  env: process.env,
+  stdin: () => { try { return fs.readFileSync(0, 'utf8'); } catch { return ''; } },
+};
 
-module.exports = { main };
+module.exports = { run, realDeps };
+
+if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

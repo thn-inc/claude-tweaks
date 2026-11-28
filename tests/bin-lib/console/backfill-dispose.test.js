@@ -14,7 +14,7 @@ const {
 } = require('../../../plugin/bin/lib/console/backfill-dispose');
 const { consoleWorkItems } = require('../../../plugin/bin/lib/console/backfill');
 const { BACKFILL_OUTCOMES, BACKFILL_SOURCES } = require('../../../plugin/bin/lib/console/backfill-apply');
-const { findingFingerprint } = require('../../../plugin/bin/lib/console/finding-filing');
+const { findingFingerprint, consoleFindingMarker } = require('../../../plugin/bin/lib/console/finding-filing');
 const { extractFingerprint } = require('../../../plugin/bin/lib/issues/record');
 const { fingerprintFromBasis } = require('../../../plugin/bin/lib/health-core/fingerprint');
 const { materialityFingerprint, parseMaterialityFingerprints, planCarryOver } = require('../../../plugin/bin/lib/health-core/materiality-digest');
@@ -61,7 +61,8 @@ const stagedItem = (staged, over = {}) => ({
 const EVIDENCE = { path: 'plugin/skills/review/SKILL.md', line: 12, quote: 'guard(x); read(x);' };
 const confirmed = (severity = 'medium') => ({ outcome: 'confirmed', severity, evidence: EVIDENCE, reason: 'confirmed by tiebreak', recommendation: null });
 const dropV = { outcome: 'drop', severity: 'medium', evidence: EVIDENCE, reason: 'refuted by tiebreak', recommendation: null };
-const consoleV = { outcome: 'console', severity: 'medium', evidence: null, reason: 'verdict:cant-tell', recommendation: 'drop' };
+const consoleV = { outcome: 'console', severity: 'medium', evidence: null, reason: 'verdict:cant-tell', recommendation: 'file' };
+const consoleDropV = { ...consoleV, recommendation: 'drop' };
 const digestV = { outcome: 'digest', severity: 'low', evidence: null, reason: 'verdict:cant-tell', recommendation: null };
 
 // The fingerprint a fingerprint-less filing is minted (a crash between filing and apply re-runs into a dedup hit).
@@ -126,8 +127,35 @@ test('disposition: finding the tiebreak left to the console files a can\'t-tell 
   assert.deepStrictEqual([d.action, d.outcome, d.source], ['file', 'filed', 'tiebreak']);
   assert.ok(d.proposal.title.startsWith("Review finding (can't-tell): "), d.proposal.title);
   assert.match(d.proposal.text, /can't-tell \(verdict:cant-tell\)/);
-  assert.match(d.proposal.text, /Recommendation: drop/);
+  assert.match(d.proposal.text, /Recommendation: file/);
   assert.strictEqual(extractFingerprint(d.proposal.text), d.proposal.fingerprint);
+});
+
+test('a console verdict recommending file files the verification-task shape (#4679)', () => {
+  const d = dispose(findingItem(), consoleV);
+  assert.strictEqual(d.action, 'file');
+  assert.match(d.proposal.text, /Defer-reason: needs-verification/);
+  assert.doesNotMatch(d.proposal.text, /^Labels:/m);
+  assert.doesNotMatch(d.proposal.text, /## Open Question/);
+  assert.match(d.proposal.text, /## Acceptance Criteria/);
+});
+
+test('a confirmed filing keeps its shape: no verification task (#4679)', () => {
+  const d = dispose(findingItem(), confirmed());
+  assert.match(d.proposal.text, /Labels: needs:definition/);
+  assert.doesNotMatch(d.proposal.text, /needs-verification/);
+});
+
+test('a console verdict recommending drop digests as tiebreak-cant-tell, never files (#4679)', () => {
+  const d = dispose(findingItem(), consoleDropV);
+  assert.deepStrictEqual([d.action, d.outcome, d.source], ['digest', 'digested', 'tiebreak']);
+  assert.strictEqual(d.proposal, undefined);
+  assert.strictEqual(d.digest.entry.deferReason, DIGEST_REASONS.CANT_TELL);
+  const fp = findingFingerprint({ lens: '3a', path: 'plugin/skills/review/SKILL.md', claim: 'The guard runs after the read' });
+  const marker = consoleFindingMarker(fp);
+  const at = d.digest.line.indexOf(marker);
+  assert.ok(at > d.digest.line.indexOf('<!-- materiality'), d.digest.line);
+  assert.ok(d.digest.line.indexOf('<!-- consolebackfill-item:') > at, d.digest.line);
 });
 
 test('disposition: finding the tiebreak digested uses the can\'t-tell digest reason', () => {
@@ -614,7 +642,7 @@ test('I1: a finding digested under one claim is a digest duplicate, not a second
   const line = plan({ workList: workList([before]), verdicts: { [before.itemId]: digestV } }).digest.lines[0];
   assert.ok(line.includes(`<!-- consolebackfill-item: ${backfillFingerprint(before.itemId)} -->`), line);
   assert.deepStrictEqual(parseMaterialityFingerprints(line).length, 1, 'still one materiality marker on the line');
-  assert.match(line, / — [^ ]+ <!-- materiality-fingerprint: \S+ --> <!-- consolebackfill-item: \S+ -->$/, '{provenance} stays the bare run id; the item marker trails the materiality marker');
+  assert.match(line, / — [^ ]+ <!-- materiality-fingerprint: \S+ --> <!-- console-finding: \S+ --> <!-- consolebackfill-item: \S+ -->$/, '{provenance} stays the bare run id; the console-finding then the item marker trail the materiality marker');
   const digestComments = [{ body: line, authorAssociation: 'OWNER', url: 'https://x/issues/1426#issuecomment-1' }];
   for (const verdicts of [{ [after.itemId]: digestV }, {}]) {
     const out = plan({ workList: workList([after]), verdicts, digestComments });
@@ -626,6 +654,86 @@ test('I1: a finding digested under one claim is a digest duplicate, not a second
   const other = { ...after, itemId: 'bf:00000000000000e2' };
   assert.deepStrictEqual(plan({ workList: workList([other]), verdicts: { [other.itemId]: digestV }, digestComments }).digest.duplicates, []);
   assert.deepStrictEqual(plan({ workList: workList([after]), verdicts: {}, digestComments: [{ ...digestComments[0], authorAssociation: 'NONE' }] }).awaitingVerdict, [after.itemId]);
+});
+
+// #4162: a same-claim pair files once. A twin (`sameAs`) has no record of its own, so its item marker rides on the
+// record that is filed for the item it repeats; the next pass then finds the twin by its own marker after a claim change.
+test('#4162: a same-claim twin is reused, not re-filed, after a crash and a claim change', () => {
+  const a = findingItem({ itemId: 'bf:00000000000000f1', itemHash: 'hf1', claimText: 'The guard runs after the read' });
+  const b = findingItem({ itemId: 'bf:00000000000000f2', itemHash: 'hf2', claimText: 'The guard runs after the read' });
+  const pass1 = plan({ workList: workList([a, b]), verdicts: { [a.itemId]: confirmed(), [b.itemId]: confirmed() } });
+  assert.deepStrictEqual(pass1.file.map((f) => f.itemId), [a.itemId]);
+  assert.deepStrictEqual(pass1.reuse, [{ itemId: b.itemId, number: null, sameAs: a.itemId }]);
+  // The crash lands after A's record is created and before apply settles B; a plugin upgrade then moves B's claim.
+  const crashed = pass1.file[0];
+  assert.ok(crashed.text.includes(`work-fingerprint: ${backfillFingerprint(b.itemId)}`), 'the record carries the twin\'s item marker');
+  const existingIssues = [{ number: 4170, title: crashed.title, body: crashed.text }];
+  const bAfter = { ...b, claimText: 'the guard runs after the read (as a later cleaner leaves it)' };
+  assert.notStrictEqual(findingFingerprint({ lens: '3a', path: bAfter.finding.path, claim: bAfter.claimText }), crashed.fingerprint, 'precondition: B\'s claim fingerprint moved');
+  for (const verdicts of [{ [bAfter.itemId]: confirmed() }, {}]) {
+    const out = plan({ workList: workList([a, bAfter]), verdicts: { [a.itemId]: confirmed(), ...verdicts }, existingIssues });
+    assert.deepStrictEqual(out.file, [], JSON.stringify(verdicts));
+    assert.deepStrictEqual(out.reuse.map((r) => [r.itemId, r.number]), [[a.itemId, 4170], [bAfter.itemId, 4170]]);
+  }
+});
+
+test('#4162: a twin of a filing that matched an existing record by its item marker reuses that record', () => {
+  const a = findingItem({ itemId: 'bf:00000000000000f3', itemHash: 'hf3', claimText: 'The guard runs after the read, as a later cleaner leaves it' });
+  const b = { ...a, itemId: 'bf:00000000000000f4', itemHash: 'hf4' };
+  // The record was filed under an older claim: only A's item marker matches it now, not the claim fingerprint A and B share.
+  const existingIssues = [{ number: 4180, body: `Some record.\n<!-- work-fingerprint: ${backfillFingerprint(a.itemId)} -->` }];
+  const out = plan({ workList: workList([a, b]), verdicts: { [a.itemId]: confirmed(), [b.itemId]: confirmed() }, existingIssues });
+  assert.deepStrictEqual(out.file, [], 'B is not a new filing');
+  assert.deepStrictEqual(out.reuse, [{ itemId: a.itemId, number: 4180 }, { itemId: b.itemId, number: 4180 }]);
+  assert.deepStrictEqual(out.entries.map((e) => [e.itemId, e.ref]), [[a.itemId, '#4180'], [b.itemId, '#4180']]);
+});
+
+test('#4162: a digest twin is found by its own item marker after a crash and a claim change', () => {
+  const a = findingItem({ itemId: 'bf:00000000000000g1', itemHash: 'hg1', claimText: 'The guard runs after the read' });
+  const b = findingItem({ itemId: 'bf:00000000000000g2', itemHash: 'hg2', claimText: 'The guard runs after the read' });
+  const pass1 = plan({ workList: workList([a, b]), verdicts: { [a.itemId]: digestV, [b.itemId]: digestV } });
+  assert.strictEqual(pass1.digest.lines.length, 1, 'one line for the pair');
+  assert.deepStrictEqual(pass1.digest.sameAs, [{ itemId: b.itemId, sameAs: a.itemId }]);
+  // The crash lands before B's line is posted; B's claim then moves.
+  const bAfter = { ...b, claimText: 'the guard runs after the read (as a later cleaner leaves it)' };
+  const digestComments = [{ body: pass1.digest.lines[0], authorAssociation: 'OWNER', url: 'https://x/issues/1426#issuecomment-1' }];
+  const out = plan({ workList: workList([bAfter]), verdicts: { [bAfter.itemId]: digestV }, digestComments });
+  assert.deepStrictEqual(out.digest.lines, [], 'no second digest line for B');
+  assert.deepStrictEqual(out.digest.duplicates, [bAfter.itemId]);
+});
+
+test('#4162: a digest line carrying a twin\'s marker still maps back to the item that owns it', () => {
+  const a = findingItem({ itemId: 'bf:00000000000000g3', itemHash: 'hg3', claimText: 'The guard runs after the read' });
+  const b = findingItem({ itemId: 'bf:00000000000000g4', itemHash: 'hg4', claimText: 'The guard runs after the read' });
+  const out = plan({ workList: workList([a, b]), verdicts: { [a.itemId]: digestV, [b.itemId]: digestV } });
+  // tidy/console-backfill.md's digest-chunk step keys each planned line to its owner by the disposition's `digest.line`.
+  const dup = new Set(out.digest.duplicates);
+  const byLine = new Map(out.dispositions.filter((d) => d.action === 'digest' && !dup.has(d.itemId)).map((d) => [d.digest.line, d.itemId]));
+  assert.ok(out.digest.lines[0].includes(`consolebackfill-item: ${backfillFingerprint(b.itemId)}`), 'precondition: the line carries the twin\'s marker');
+  assert.deepStrictEqual(out.digest.lines.map((line) => byLine.get(line)), [a.itemId]);
+});
+
+// A twin settled against a record or comment an earlier item of the pass matched by its own item marker.
+test('#4162: a twin of an unverdicted item matched by its item marker reuses that record', () => {
+  const a = findingItem({ itemId: 'bf:00000000000000p1', itemHash: 'hp1', claimText: 'The guard runs after the read, as a later cleaner leaves it' });
+  const b = { ...a, itemId: 'bf:00000000000000p2', itemHash: 'hp2' };
+  const existingIssues = [{ number: 4190, title: 'x', body: `Some record.\n<!-- work-fingerprint: ${backfillFingerprint(a.itemId)} -->` }];
+  const out = plan({ workList: workList([a, b]), verdicts: { [b.itemId]: confirmed() }, existingIssues });
+  assert.deepStrictEqual(out.reuse.find((r) => r.itemId === a.itemId).number, 4190);
+  assert.deepStrictEqual(out.file, [], 'B must not be filed as a new record');
+});
+
+test('#4162: a twin of a digest item held by its item marker is a duplicate, not a second line', () => {
+  const a = findingItem({ itemId: 'bf:00000000000000q1', itemHash: 'hq1', claimText: 'The guard runs after the read' });
+  const pass1 = plan({ workList: workList([a]), verdicts: { [a.itemId]: digestV } });
+  assert.strictEqual(pass1.digest.lines.length, 1);
+  const digestComments = [{ body: pass1.digest.lines[0], authorAssociation: 'OWNER', url: 'https://x/issues/1426#issuecomment-1' }];
+  const newClaim = 'the guard runs after the read (as a later cleaner leaves it)';
+  const aAfter = { ...a, claimText: newClaim };
+  const bAfter = findingItem({ itemId: 'bf:00000000000000q2', itemHash: 'hq2', claimText: newClaim });
+  const out = plan({ workList: workList([aAfter, bAfter]), verdicts: { [aAfter.itemId]: digestV, [bAfter.itemId]: digestV }, digestComments });
+  assert.ok(out.digest.duplicates.includes(aAfter.itemId), 'precondition: A is held by its item marker');
+  assert.deepStrictEqual(out.digest.lines, [], 'no second digest line for B');
 });
 
 test('AC8.1 (held half): a tombstone keeps a promoted console-backfill finding held against the new container', () => {
@@ -745,6 +853,17 @@ test('planBatch dedups a fingerprint-less filing against a record carrying its m
   assert.deepStrictEqual(again.entries.map((e) => e.ref), ['#500', '#501']);
 });
 
+test('a staged Queue-writes proposal whose second marker already maps to an existing record reuses that record', () => {
+  const text = 'Title: Bundle\nType: task\n\nbody\n\n<!-- work-fingerprint: m1 -->\nwork-fingerprint: m1\n<!-- work-fingerprint: m2 -->\nwork-fingerprint: m2\n';
+  const out = plan({
+    workList: workList([stagedItem({ name: 'bundle-1.md', section: 'Queue writes' }, { itemId: 'bf:00000000000000c1' })]),
+    existingIssues: [{ number: 42, title: 'Other', body: '<!-- work-fingerprint: m2 -->' }],
+    readStaged: files({ 'bundle-1.md': text }),
+  });
+  assert.deepStrictEqual(out.file, []);
+  assert.deepStrictEqual(out.reuse, [{ itemId: 'bf:00000000000000c1', number: 42 }]);
+});
+
 // R15: a proposal filed before the backfill existed carries no marker, so its minted fingerprint matches
 // nothing; the exact title of the record it became is the only join.
 const QUEUE_TITLE = 'Reconcile archives a live run when an earlier PR… merged';
@@ -795,6 +914,24 @@ test('R15 control: a finding filing is never title-matched, only fingerprint-mat
   const out = plan({ workList: workList([item]), verdicts: { 'bf:00000000000000c1': consoleV }, existingIssues: [{ number: 9, title, body: 'a different record <!-- work-fingerprint: consolefinding-00000000 -->' }] });
   assert.deepStrictEqual(out.reuse, []);
   assert.deepStrictEqual(out.file.map((f) => f.itemId), ['bf:00000000000000c1']);
+});
+
+test('planBatch: a drop item whose consolefinding marker a trusted comment holds settles as a digest duplicate (#4679)', () => {
+  const item = findingItem({ itemId: 'bf:00000000000000d1' });
+  const fp = findingFingerprint({ lens: '3a', path: 'plugin/skills/review/SKILL.md', claim: item.claimText });
+  const url = 'https://x/issues/1426#issuecomment-9';
+  const held = [{ body: `- some other line ${consoleFindingMarker(fp)}`, authorAssociation: 'OWNER', url }];
+  for (const verdicts of [{ [item.itemId]: consoleDropV }, {}]) {
+    const out = plan({ workList: workList([item]), verdicts, digestComments: held });
+    assert.deepStrictEqual(out.file, [], JSON.stringify(verdicts));
+    assert.deepStrictEqual(out.digest.lines, []);
+    assert.deepStrictEqual(out.digest.duplicates, [item.itemId]);
+    assert.deepStrictEqual(out.awaitingVerdict, []);
+    assert.strictEqual(out.entries[0].outcome, 'digested');
+    assert.strictEqual(out.entries[0].ref, url);
+  }
+  const stranger = plan({ workList: workList([item]), verdicts: { [item.itemId]: consoleDropV }, digestComments: [{ ...held[0], authorAssociation: 'NONE' }] });
+  assert.strictEqual(stranger.digest.lines.length, 1, 'an untrusted comment holds nothing');
 });
 
 test('a staged name that climbs out of the staged directory is never read', () => {

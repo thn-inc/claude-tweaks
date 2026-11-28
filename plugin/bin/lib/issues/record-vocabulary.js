@@ -10,7 +10,7 @@
 
 const { sharedFacetDefaults } = require('./facet-shape');
 
-const ORIGINS = ['code-health', 'harness-health', 'journey-health', 'docs-health', 'capture', 'dispatch'];
+const ORIGINS = ['code-health', 'harness-health', 'journey-health', 'docs-health', 'capture', 'dispatch', 'ci-health'];
 const TYPES = ['bug', 'feature', 'task'];
 const TIERS = ['low', 'medium', 'high'];
 const PRIORITIES = ['high', 'medium', 'low'];
@@ -43,6 +43,7 @@ const LABELS = {
   ACCEPT_CHANGES_REQUESTED: 'accept:changes-requested',
   PARENT_ISSUE: 'parent-issue',
   SHAPED_HEADLESS: 'shaped:headless',
+  RELEASE_BLOCK: 'release-block',
 };
 
 // F8 from the program promise register — type:* label descriptions home

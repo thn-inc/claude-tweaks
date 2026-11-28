@@ -7,7 +7,11 @@
 // risk, size, ceremony, solutionUnjustified, breaking, priority, stage, grants{build,merge}, bot{inProgress,
 // blocked}, acceptance, isParentIssue — plus type, parent, blockedBy, unsynced, closed,
 // closedAt, shipped, which are local-files-only); the github driver's callers get
-// type/parent/blockedBy from the issue JSON itself, not from labels. No network calls.
+// type/parent/blockedBy from the issue JSON itself, not from labels. `Risk-flags:` is a
+// body line carried in `body`, never a `facets` key, because record-risk-flags.js's
+// parseRiskFlags reads it from the body for both backends (so is the tripwire's
+// `Risk-flags-added-by-tripwire:` line, read by parseTripwireFlags); so is `Acceptance-target:`
+// (record-acceptance-target.js's parseAcceptanceTarget); so is `Plan:` (plan-line.js's parsePlanLine). No network calls.
 'use strict';
 
 const fs = require('fs');

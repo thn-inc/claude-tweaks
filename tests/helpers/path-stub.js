@@ -17,6 +17,10 @@
 // installStub(name, script) is the shared way such a test installs its stub,
 // and its restore() removes the stub dir and only its own PATH entry, so
 // stubs can be restored in any order (an unset PATH is unset again).
+// stubSkipFor(platform) is the same skip value for an arbitrary platform string.
+// writeStubDir(name, script) writes the stub without touching process.env.PATH
+// and returns { dir, envPath, remove }, for a test that hands the stub to the
+// code under test through an injected `env.PATH`.
 //
 // pathWithOnly(names, { exclude }) serves the other shape: a test that needs
 // a PATH holding a real binary (e.g. `git`) but not another (e.g. `gh`). The
@@ -31,14 +35,18 @@
 // check tests every PATHEXT extension instead: an excluded `gh.CMD` still
 // means gh might resolve through a shell, so that check stays conservative.
 const fs = require('node:fs');
+const { scratchDir } = require('./tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 
 const STUB_SKIP_REASON = 'win32: execFile resolves only .exe/.com on PATH, so a script stub is never spawned';
-const STUB_SKIP = process.platform === 'win32' && STUB_SKIP_REASON;
+function stubSkipFor(platform) {
+  return platform === 'win32' && STUB_SKIP_REASON;
+}
+const STUB_SKIP = stubSkipFor(process.platform);
 
-function installStub(name, script) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-stub-'));
+function writeStubDir(name, script) {
+  const dir = scratchDir('ct-stub-');
   const file = path.join(dir, name);
   try {
     fs.writeFileSync(file, script);
@@ -47,8 +55,14 @@ function installStub(name, script) {
     fs.rmSync(dir, { recursive: true, force: true });
     throw err;
   }
+  const envPath = process.env.PATH !== undefined ? dir + path.delimiter + process.env.PATH : dir;
+  return { dir, envPath, remove: () => fs.rmSync(dir, { recursive: true, force: true }) };
+}
+
+function installStub(name, script) {
+  const { dir, envPath, remove } = writeStubDir(name, script);
   const hadPath = process.env.PATH !== undefined;
-  process.env.PATH = hadPath ? dir + path.delimiter + process.env.PATH : dir;
+  process.env.PATH = envPath;
   let restored = false;
   return function restore() {
     if (restored) return;
@@ -58,7 +72,7 @@ function installStub(name, script) {
     if (at !== -1) rest.splice(at, 1);
     if (!hadPath && rest.length === 0) delete process.env.PATH;
     else process.env.PATH = rest.join(path.delimiter);
-    fs.rmSync(dir, { recursive: true, force: true });
+    remove();
   };
 }
 
@@ -68,6 +82,20 @@ function isFile(p) {
   } catch {
     return false;
   }
+}
+
+// findOnPath(name) returns the first `name` (or `name.exe` on win32) file on
+// this process's PATH, or null. Used by the hooks.sh launcher suites to pick
+// the shells and awks they run (#5392).
+function findOnPath(name) {
+  const names = process.platform === 'win32' ? [name, name + '.exe'] : [name];
+  for (const dir of (process.env.PATH || process.env.Path || '').split(path.delimiter).filter(Boolean)) {
+    for (const n of names) {
+      const f = path.join(dir, n);
+      if (isFile(f)) return f;
+    }
+  }
+  return null;
 }
 
 // findEntry(dir, candidates, isWin) returns the first candidate file in dir.
@@ -110,7 +138,7 @@ function pathWithOnly(names, { exclude = [], env = process.env, platform = proce
     if (!found) throw new Error(`pathWithOnly: ${name} not found on PATH (searched ${dirs.length} dirs: ${dirs.join(', ') || 'none'})`);
     let dir = path.dirname(found);
     if (excluded(dir)) {
-      if (!linkDir) linkDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-path-only-'));
+      if (!linkDir) linkDir = scratchDir('ct-path-only-');
       fs.symlinkSync(found, path.join(linkDir, path.basename(found)));
       dir = linkDir;
     }
@@ -138,7 +166,10 @@ function findColonPathJoins(text) {
 module.exports = {
   STUB_SKIP_REASON,
   STUB_SKIP,
+  stubSkipFor,
   installStub,
+  writeStubDir,
   pathWithOnly,
+  findOnPath,
   findColonPathJoins,
 };

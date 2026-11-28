@@ -9,6 +9,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { readText } = require('../../helpers/read-skill');
+const { captureGhTimeout } = require('../../helpers/gh-timeout-probe');
 const { run, realDeps } = require('../../../plugin/bin/dispatch-resume');
 const { claimPayload, releasePayload } = require('../../../plugin/bin/lib/issues/claims');
 const { findConflictingSession, findSessionOnWorktree } = require('../../../plugin/bin/lib/hooks/sibling-sessions');
@@ -92,7 +93,7 @@ function makeEnv(over = {}) {
     cfg.dirs[WT] = ['x'];
   }
   const calls = {
-    gh: [], git: [], fs: [], findSibling: [], findSiblingOnWorktree: [], readClaim: [], native: [], out: [], err: [],
+    gh: [], ghBatch: [], git: [], fs: [], findSibling: [], findSiblingOnWorktree: [], readClaim: [], native: [], out: [], err: [],
   };
   const deps = {
     stdout: (s) => calls.out.push(s),
@@ -103,7 +104,11 @@ function makeEnv(over = {}) {
     now: () => NOW,
     gh: (args) => {
       calls.gh.push(args);
-      if (args[0] === 'repo') return `${SLUG}\n`;
+      if (args[0] === 'repo') return `${cfg.slug || SLUG}\n`;
+      if (args[0] === 'api' && args[1] === 'graphql' && args.some((a) => /^query=[\s\S]*c0: repository\(/.test(a))) {
+        if (cfg.foreignThrows) throw new Error('foreign boom');
+        return JSON.stringify({ data: cfg.foreignData || {} });
+      }
       if (args[0] === 'api' && args[1] === 'graphql') {
         if (cfg.prListThrows) throw new Error('boom pr read');
         if (typeof cfg.prs === 'string') return cfg.prs;
@@ -122,6 +127,10 @@ function makeEnv(over = {}) {
         return JSON.stringify({ state: st });
       }
       throw new Error(`unexpected gh ${args.join(' ')}`);
+    },
+    ghBatch: (args) => {
+      calls.ghBatch.push(args);
+      return deps.gh(args);
     },
     git: (args) => {
       calls.git.push(args);
@@ -654,6 +663,112 @@ test('bot:parked label -> exit 3 unlisted-label', () => {
   assert.equal(exec(env).json.reason, 'unlisted-label');
 });
 
+// #5584: resume takes a typed command as the build grant, through the build-authority rule.
+// An attended cli session whose every condition holds, so the transcript check decides.
+const TYPED_ENV = {
+  CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: 'sess-5584', CLAUDE_CODE_ENTRYPOINT: 'cli', CLAUDE_CODE_SESSION_ATTENDED: '1', TMPDIR: '/t/tmp',
+};
+function typedEnv(labels, answer = { answer: 'typed', promptId: 'p-1' }) {
+  const env = makeEnv();
+  env.cfg.issue.labels = labels.map((name) => ({ name }));
+  env.calls.typed = [];
+  env.deps.env = { ...TYPED_ENV };
+  env.deps.readTypedCommand = (opts) => { env.calls.typed.push(opts); return answer; };
+  return env;
+}
+
+test('#5584 AC10: an ungranted ready record resumes on an accepted typed command', () => {
+  const env = typedEnv(['ready']);
+  const r = exec(env);
+  assert.equal(r.code, 0, r.lines.join('\n'));
+  assert.equal(r.json.eligible, true);
+  assert.equal(env.calls.typed.length, 1);
+  const [opts] = env.calls.typed;
+  assert.equal(opts.number, N);
+  assert.strictEqual(opts.env, env.deps.env);
+  assert.ok(opts.now instanceof Date);
+  assert.equal(opts.now.getTime(), NOW);
+  assert.equal(opts.tmpdir, '/t/tmp');
+});
+
+test('AC5.1: --queue refuses a record without auto:build even when the typed command would answer typed', () => {
+  const env = typedEnv(['ready']);
+  const r = exec(env, ['--issue', String(N), '--queue']);
+  assert.equal(r.code, 3, r.lines.join('\n'));
+  assert.equal(r.json.reason, 'not-granted');
+  assert.equal(r.json.line, `#${N} lacks auto:build — grant it with /claude-tweaks:backlog refine #${N}, then run /claude-tweaks:dispatch resume #${N}`);
+  assert.equal(env.calls.typed.length, 0, 'readTypedCommand never called');
+});
+
+test('--queue with --bound-run exits 2 before any dep is touched', () => {
+  for (const argv of [['--issue', String(N), '--queue', '--bound-run', '/x'], ['--issue', String(N), '--bound-run', '/x', '--queue']]) {
+    const env = typedEnv(['ready', 'auto:build']);
+    const r = exec(env, argv);
+    assert.equal(r.code, 2, argv.join(' '));
+    assert.match(r.err, /--queue has no effect with --bound-run/);
+    assert.deepStrictEqual(env.calls.gh, []);
+  }
+});
+
+test('AC5.2: without --queue the typed behaviour is unchanged', () => {
+  const argv = ['--issue', String(N)];
+  const env = typedEnv(['ready']);
+  const r = exec(env, argv);
+  assert.equal(r.code, 0, r.lines.join('\n'));
+  assert.equal(r.json.eligible, true);
+  assert.equal(env.calls.typed.length, 1);
+});
+
+test('--queue with a granted record is eligible', () => {
+  const env = typedEnv(['ready', 'auto:build']);
+  const r = exec(env, ['--issue', String(N), '--queue']);
+  assert.equal(r.code, 0, r.lines.join('\n'));
+  assert.equal(r.json.eligible, true);
+  assert.equal(env.calls.typed.length, 0);
+});
+
+test('--queue takes no value: --queue x exits 2', () => {
+  const env = typedEnv(['ready', 'auto:build']);
+  const r = exec(env, ['--issue', String(N), '--queue', 'x']);
+  assert.equal(r.code, 2);
+  assert.match(r.err, /unknown argument: x/);
+});
+
+test('#5584 AC10: an ungranted record whose typed command is refused -> not-granted naming the reason', () => {
+  const env = typedEnv(['ready'], { answer: 'none', reason: 'expired' });
+  const r = exec(env);
+  assert.equal(r.code, 3);
+  assert.equal(r.json.reason, 'not-granted');
+  assert.equal(r.json.line, `#${N} lacks auto:build (typed command not accepted: expired) — grant it with /claude-tweaks:backlog refine #${N}, or type the command again, then run /claude-tweaks:dispatch resume #${N}`);
+});
+
+test('#5584 AC10: a granted record never reads the typed command', () => {
+  const env = typedEnv(['ready', 'auto:build']);
+  assert.equal(exec(env).code, 0);
+  assert.equal(env.calls.typed.length, 0);
+});
+
+test('#5584 AC15: bot:blocked, bot:parked and parked refuse with an accepted typed command', () => {
+  for (const held of ['bot:blocked', 'bot:parked', 'parked']) {
+    const env = typedEnv(['ready', held]);
+    const r = exec(env);
+    assert.equal(r.code, 3, held);
+    assert.equal(r.json.reason, 'not-granted', held);
+    const line = held === 'bot:blocked'
+      ? `#${N} carries bot:blocked — re-grant it with /claude-tweaks:backlog refine #${N}, then run /claude-tweaks:dispatch resume #${N}`
+      : `#${N} lacks auto:build (typed command not accepted: held) — clear bot:blocked, bot:parked or parked on #${N} once its trigger has fired, then type the command again, then run /claude-tweaks:dispatch resume #${N}`;
+    assert.equal(r.json.line, line, held);
+    assert.equal(env.calls.typed.length, 0, held);
+  }
+});
+
+test('#5584 AC15: a record without ready is refused with an accepted typed command', () => {
+  const env = typedEnv(['type:task']);
+  const r = exec(env);
+  assert.equal(r.json.reason, 'not-granted');
+  assert.equal(r.json.line, `#${N} lacks auto:build (typed command not accepted: not-ready) — run /claude-tweaks:specify #${N}, then run /claude-tweaks:dispatch resume #${N}`);
+});
+
 test('the issue read is one gh issue view with the labels,state,body field list', () => {
   const env = makeEnv();
   exec(env);
@@ -757,6 +872,120 @@ test('openBlockers reaching the verdict are deduplicated and ascending (body and
   assert.match(r.json.line, /open #4300, #4500, #4700 —/);
 });
 
+test('a foreign open native blocker is named by its repository, never as this repository\'s #N', () => {
+  const env = makeEnv();
+  env.cfg.workLinks = 'native';
+  env.cfg.issue.body = 'Blocked by #5\n';
+  env.cfg.depStates[5] = 'OPEN';
+  env.cfg.native = new Map([[N, { blockedBy: [5, 5], openBlocker: true, openBlockerIds: [5, 5], crossRepoBlockers: [{ number: 5, repository: 'other/repo', state: 'OPEN' }] }]]);
+  const r = exec(env);
+  assert.equal(r.json.reason, 'blocked-by');
+  assert.match(r.json.line, /open #5, other\/repo#5 —/);
+});
+
+test('a foreign-only open native blocker is never read as this repository\'s #N (no body-declared blocker)', () => {
+  const env = makeEnv();
+  env.cfg.workLinks = 'native';
+  env.cfg.native = new Map([[N, { blockedBy: [5], openBlocker: true, openBlockerIds: [5], crossRepoBlockers: [{ number: 5, repository: 'other/repo', state: 'OPEN' }] }]]);
+  const r = exec(env);
+  assert.equal(r.json.reason, 'blocked-by');
+  assert.match(r.json.line, /open other\/repo#5 —/);
+  assert.doesNotMatch(r.json.line, /#5,/);
+});
+
+test('a CLOSED foreign native blocker does not block resume', () => {
+  const env = makeEnv();
+  env.cfg.workLinks = 'native';
+  env.cfg.native = new Map([[N, { blockedBy: [5], openBlocker: false, openBlockerIds: [], crossRepoBlockers: [{ number: 5, repository: 'other/repo', state: 'CLOSED' }] }]]);
+  assert.equal(exec(env).code, 0);
+});
+
+test('Q5: a foreign native blocker with no readable state refuses resume, naming it as state unreadable', () => {
+  const env = makeEnv();
+  env.cfg.workLinks = 'native';
+  env.cfg.native = new Map([[N, { blockedBy: [5], openBlocker: false, openBlockerIds: [], crossRepoBlockers: [{ number: 5, repository: 'other/repo', state: null }] }]]);
+  const r = exec(env);
+  assert.equal(r.json.reason, 'blocked-by');
+  assert.match(r.json.line, /open other\/repo#5 \(state unreadable\) —/);
+});
+
+// #4793: a body-declared `Blocked by owner/name#N` line names a blocker in another repository.
+const foreignCalls = (env) => env.calls.ghBatch.filter((a) => a.some((x) => /^query=[\s\S]*c0: repository\(/.test(x)));
+
+test('a body-declared OPEN foreign blocker refuses resume, named owner/name#N', () => {
+  const env = makeEnv();
+  env.cfg.issue.body = 'Blocked by other/repo#5\n';
+  env.cfg.foreignData = { c0: { issue: { state: 'OPEN' } } };
+  const r = exec(env);
+  assert.equal(r.code, 3);
+  assert.equal(r.json.reason, 'blocked-by');
+  assert.match(r.json.line, /open other\/repo#5 —/);
+  assert.equal(foreignCalls(env).length, 1);
+});
+
+test('a body-declared CLOSED foreign blocker does not block resume', () => {
+  const env = makeEnv();
+  env.cfg.issue.body = 'Blocked by other/repo#5\n';
+  env.cfg.foreignData = { c0: { issue: { state: 'CLOSED' } } };
+  assert.equal(exec(env).code, 0);
+});
+
+test('a failed foreign state lookup refuses resume, naming it state unreadable, with one diagnosable stderr line', () => {
+  const env = makeEnv();
+  env.cfg.issue.body = 'Blocked by other/repo#5\n';
+  env.cfg.foreignThrows = true;
+  const r = exec(env);
+  assert.equal(r.code, 3);
+  assert.equal(r.json.reason, 'blocked-by');
+  assert.match(r.json.line, /other\/repo#5 \(state unreadable\) —/);
+  const lines = r.err.split('\n').filter((l) => l.includes('dispatch-resume: foreign blocker state lookup failed'));
+  assert.deepStrictEqual(lines, ['dispatch-resume: foreign blocker state lookup failed (foreign boom) — other/repo#5 read as state unreadable (fail closed)']);
+});
+
+test('a foreign blocker both linked natively and declared in the body is named once, with no state query', () => {
+  const env = makeEnv();
+  env.cfg.workLinks = 'native';
+  env.cfg.issue.body = 'Blocked by other/repo#5\n';
+  env.cfg.native = new Map([[N, { blockedBy: [5], openBlocker: true, openBlockerIds: [5], crossRepoBlockers: [{ number: 5, repository: 'other/repo', state: 'OPEN' }] }]]);
+  const r = exec(env);
+  assert.equal(r.json.reason, 'blocked-by');
+  assert.equal(r.json.line.split('other/repo#5').length - 1, 1);
+  assert.deepStrictEqual(foreignCalls(env), []);
+});
+
+test('the foreign state lookup runs on the batch-bound runner, not the single-call one', () => {
+  const env = makeEnv();
+  env.cfg.issue.body = 'Blocked by other/repo#5\n';
+  env.cfg.foreignData = { c0: { issue: { state: 'OPEN' } } };
+  exec(env);
+  assert.equal(foreignCalls(env).length, 1);
+  assert.equal(env.calls.ghBatch.length, 1);
+});
+
+test('a three-segment slug passes --hostname <host> to the foreign lookup; a two-segment slug passes none', () => {
+  const ghes = makeEnv();
+  ghes.cfg.slug = 'ghe.example.com/o/r';
+  ghes.cfg.issue.body = 'Blocked by other/repo#5\n';
+  ghes.cfg.foreignData = { c0: { issue: { state: 'OPEN' } } };
+  exec(ghes);
+  const [call] = foreignCalls(ghes);
+  assert.ok(call, 'foreign lookup ran');
+  assert.deepStrictEqual(call.slice(-2), ['--hostname', 'ghe.example.com']);
+  const plain = makeEnv();
+  plain.cfg.issue.body = 'Blocked by other/repo#5\n';
+  plain.cfg.foreignData = { c0: { issue: { state: 'OPEN' } } };
+  exec(plain);
+  assert.ok(!foreignCalls(plain)[0].includes('--hostname'));
+});
+
+test('a body without a qualified blocker makes no foreign state query', () => {
+  const env = makeEnv();
+  env.cfg.issue.body = 'Blocked by #5\n';
+  env.cfg.depStates[5] = 'CLOSED';
+  assert.equal(exec(env).code, 0);
+  assert.deepStrictEqual(foreignCalls(env), []);
+});
+
 test('workLinks resolution throwing -> exit 4', () => {
   const env = makeEnv();
   env.deps.workLinks = () => { throw new Error('policy unreadable'); };
@@ -793,7 +1022,7 @@ test('a stale claim with no bot:in-progress label is eligible; a live-claim -> e
 
 // ---- prior run directory ----
 
-test('archive-first: archive/{runId} plus a work/-only root dir reads archived (Review Focus 6)', () => {
+test('archive-first: archive/{runId} plus a work/-only root dir reads archived', () => {
   const env = makeEnv();
   env.cfg.dirs[RUNDIR] = ['work'];
   const r = exec(env);
@@ -963,7 +1192,7 @@ test('run-state.json with no owner block -> dead-owner (archive, close when non-
   assert.equal(r.json.priorRunPath, RUNDIR);
 });
 
-test('non-terminal run whose owner pid is gone -> dead-owner; the same with a fresh heartbeat and a held worktree lock (Review Focus 8)', () => {
+test('non-terminal run whose owner pid is gone -> dead-owner; the same with a fresh heartbeat and a held worktree lock', () => {
   const env = makeEnv();
   setRunState(env, { status: 'active', owner: OWNER, heartbeatAt: new Date(NOW).toISOString(), worktree: WT });
   env.cfg.alive = () => false;
@@ -1331,7 +1560,7 @@ test('a throwing sibling check -> exit 4', () => {
   assert.equal(exec(env).code, 4);
 });
 
-test('own kept lock (Review Focus 18): the archived prior run holds this session id, worktree null, worktreeAtClose = the stalled path -> eligible', () => {
+test('own kept lock: the archived prior run holds this session id, worktree null, worktreeAtClose = the stalled path -> eligible', () => {
   const env = makeEnv();
   env.cfg.files[ARCH_STATE] = JSON.stringify({
     status: 'clean', sessionId: SESSION, worktree: null, worktreeAtClose: WT,
@@ -1742,6 +1971,8 @@ test('realDeps carries the production seams the CLI needs', () => {
     'listRunDirsWithState', 'probes', 'workLinks', 'fetchNative', 'resolveTarget', 'now', 'stdout', 'stderr']) {
     assert.ok(realDeps[key] !== undefined, key);
   }
+  assert.strictEqual(realDeps.env, process.env);
+  assert.strictEqual(realDeps.readTypedCommand, require('../../../plugin/bin/lib/issues/typed-command').readTypedCommand);
   assert.strictEqual(realDeps.findSibling, findConflictingSession);
   assert.strictEqual(realDeps.findSiblingOnWorktree, findSessionOnWorktree);
   assert.equal(typeof realDeps.probes.pidAlive, 'function');
@@ -1827,4 +2058,26 @@ test('--bound-run: the real sibling-session check on an unlistable pipelines dir
 
 test('the real workLinks dep resolves to a string', () => {
   assert.equal(typeof realDeps.workLinks(), 'string');
+});
+
+function nativeGhTimeoutFor(envValue) {
+  const resumePath = require.resolve('../../../plugin/bin/dispatch-resume');
+  return captureGhTimeout({
+    envValue,
+    modulePaths: [resumePath],
+    exercise: (setEnv) => {
+      // dispatch-resume reads the getter at require time, so the env var comes before the require.
+      setEnv();
+      const fresh = require(resumePath);
+      try { fresh.realDeps.fetchNative({ numbers: [1], owner: 'o', repo: 'r' }); } catch { /* the '{}' reply fails to parse; only the captured timeout matters */ }
+    },
+  });
+}
+
+test("#4815 AC1.1: realDeps.fetchNative's gh runner passes GH_BATCH_TIMEOUT_MS", () => {
+  assert.equal(nativeGhTimeoutFor('45000'), 45000);
+});
+
+test('#4815 AC1.1: a gh-timeout-ms below the floor leaves the native-dependency runner at 30000', () => {
+  assert.equal(nativeGhTimeoutFor('10000'), 30000);
 });

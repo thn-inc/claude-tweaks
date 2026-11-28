@@ -20,10 +20,10 @@ const {
 
 const HOOKS_DIR = path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks');
 
-test('harness-refusal: the derived regex is the widened #3819 source exactly', () => {
+test('harness-refusal: the derived regex is the #4523-anchored source exactly', () => {
   assert.strictEqual(
     HARNESS_ISOLATION_REFUSAL_RE.source,
-    String.raw`(This session|This agent) is isolated in the worktree [\s\S]*?(Refusing to run it|Refusing to run there)`,
+    String.raw`^(This session|This agent) is isolated in the worktree [\s\S]*?(Refusing to run it|Refusing to run there)`,
   );
   assert.strictEqual(HARNESS_ISOLATION_REFUSAL_RE.flags, '');
 });
@@ -64,8 +64,20 @@ test('matcher: HARNESS_ISOLATION_REFUSAL_RE matches every refusal template on it
   }
 });
 
+function quoteMidText(text) {
+  return `Exit code 1\nnot ok 3 - classifies the refusal\n  expected: '${text}'`;
+}
+
+test('AC1.1: classifyRefusal returns null for an error that quotes a refusal mid-text', () => {
+  for (const [name, text] of FIXTURES) {
+    assert.strictEqual(classifyRefusal(quoteMidText(text)), null, name);
+    assert.strictEqual(classifyRefusal('foo: ' + text), null, `${name} (single-line prefix)`);
+  }
+});
+
+const editToolText = `This agent is isolated in the worktree ${WT}, so its writes are limited to that folder. This path is in a different worktree (/w). Edit the copy of this file under ${WT} instead.`;
+
 test('classifyRefusal: non-refusals return null', () => {
-  const editToolText = `This agent is isolated in the worktree ${WT}, so its writes are limited to that folder. This path is in a different worktree (/w). Edit the copy of this file under ${WT} instead.`;
   for (const text of ['Exit code 1\nfatal: not a git repository', undefined, 42, editToolText]) {
     assert.strictEqual(classifyRefusal(text), null);
   }
@@ -75,6 +87,7 @@ function ptufCtx(wt, error, cwd = wt) {
   return {
     input: { hook_event_name: 'PostToolUseFailure', tool_name: 'Bash', tool_input: { command: 'd=.; sed -n 1,2p $d/README.md' }, error, session_id: 'sess-refusal-1', cwd, is_interrupt: false },
     cwd,
+    env: process.env,
     ownedRun: {},
   };
 }
@@ -95,6 +108,15 @@ for (const [name, text, expected] of FIXTURES) {
     assert.strictEqual(refusals[0].reason, 'harness-worktree-isolation', name);
     assert.strictEqual(refusals[0].actor, expected.actor, name);
     assert.strictEqual(refusals[0].variant, expected.variant, name);
+  });
+}
+
+for (const [name, text] of FIXTURES) {
+  test(`AC1.1: post-tool-use-failure logs no wd-guard-refusal for ${name} quoted mid-text`, () => {
+    const main = gitRepo();
+    const wt = harnessWorktreeOf(main);
+    failure.run(ptufCtx(wt, quoteMidText(text.split(WT).join(wt))));
+    assert.deepStrictEqual(adhocDirs(main), [], name);
   });
 }
 
@@ -128,6 +150,14 @@ test('bash-prefilter earlyGate passes every refusal template to the handler', ()
   const escaped = JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'x' }, error: GONE_FIXED }).replace('Refusing', '\\u0052efusing');
   assert.ok(escaped.includes('\\u0052efusing'));
   assert.strictEqual(earlyGate('post-tool-use-failure', () => escaped).skip, false);
+});
+
+test('AC1.1: bash-prefilter earlyGate skips a failure whose error quotes a refusal mid-text', () => {
+  const gate = (text) => earlyGate('post-tool-use-failure', () => JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'x' }, error: text }));
+  for (const [name, text] of FIXTURES) {
+    assert.strictEqual(gate(quoteMidText(text)).skip, true, name);
+  }
+  assert.strictEqual(gate(editToolText).skip, true, 'editToolText');
 });
 
 test('harness-refusal: post-tool-use-failure re-exports the same RegExp object', () => {

@@ -71,12 +71,13 @@ After ALL agents in a tier complete (not during execution — to avoid file writ
 
 25. Write report artifacts to disk.
 
-**`{RUN_DIR}/report.json`** — machine-readable, written by `bin/qa-report.js` (#3328), never by hand. Write the Phase 4 per-story results for every selected story — SKIPPED ones included (dependency, vault, target-environment, and origin skips from pre-flight and Phase 3), so `summary.skipped` counts them — plus run metadata (`run_dir`, `stories_dir`, `filters`, and `wall_clock_seconds` from step 24) to `{RUN_DIR}/story-results.json` with the Write tool, then run `node "${CLAUDE_PLUGIN_ROOT}/bin/qa-report.js" --results "{RUN_DIR}/story-results.json" --out "{RUN_DIR}/report.json"`. The writer derives `summary`, `findings`, `caveats`, `recovered_locators`, `page_inventories`, and `timing` from the stories array, so none of them is a payload field. The payload:
+**`{RUN_DIR}/report.json`** — machine-readable, written by `bin/qa-report.js` (#3328), never by hand. Write the Phase 4 per-story results for every selected story — SKIPPED ones included (dependency, vault, target-environment, and origin skips from pre-flight and Phase 3), so `summary.skipped` counts them — plus run metadata (`run_dir`, `stories_dir`, `base_url` (the `APP_URL` the stories ran against), `filters`, and `wall_clock_seconds` from step 24) to `{RUN_DIR}/story-results.json` with the Write tool, then run `node "${CLAUDE_PLUGIN_ROOT}/bin/qa-report.js" --results "{RUN_DIR}/story-results.json" --out "{RUN_DIR}/report.json"`. The writer derives `summary`, `findings`, `caveats`, `recovered_locators`, `page_inventories`, and `timing` from the stories array, so none of them is a payload field. The payload:
 
 ```json
 {
   "run_dir": "{RUN_DIR}",
   "stories_dir": "{STORIES_DIR}",
+  "base_url": "{APP_URL}",
   "timestamp": "ISO-8601 (optional — defaults to now)",
   "filters": { "tag": null, "priority": null, "retry": null, "journey": null },
   "wall_clock_seconds": N,
@@ -112,6 +113,7 @@ The schema below is the shape the writer produces.
   "run_dir": "{RUN_DIR}",
   "timestamp": "ISO-8601",
   "stories_dir": "{STORIES_DIR}",
+  "base_url": "{APP_URL}",
   "filters": {
     "tag": "{TAG_FILTER or null}",
     "priority": "{PRIORITY_FILTER or null}",
@@ -188,7 +190,7 @@ The `summary.passed` count includes both PASS and PASS_WITH_CAVEATS stories (sin
 
 **`{RUN_DIR}/report.md`** — human-readable (same format as the report below).
 
-**QA pass stamp (pipeline runs, #3003).** Inside a `/claude-tweaks:flow` pipeline, immediately after `report.json` is written, run `node "${CLAUDE_PLUGIN_ROOT}/bin/qa-stamp.js" --write --report "{RUN_DIR}/report.json" [--stories-dir <dir>]` (pass `--stories-dir` when `STORIES_DIR` is not the default). The CLI writes the stamp only for a clean tree (its own `.claude-tweaks/artifacts/`-excluding check, not report.json's `dirty`) where every story is PASS or PASS_WITH_CAVEATS. Otherwise it prints `{written: false, reason[, invalidated: true | invalidateFailed: <code>]}` and writes nothing; a `reason` is not itself an error, but a never-firing stamp is invisible unless surfaced — add one line to the QA report's output: `QA pass stamp: not written ({reason})` (append `, invalidated prior stamp` when `invalidated` is `true`, or `, could not remove stale prior stamp ({code}) — the next same-HEAD check may skip wrongly` when `invalidateFailed` is present). A later `/claude-tweaks:test` call at the same HEAD (a dispatched group's second call) reads the stamp before dispatching stories (`SKILL.md`'s pipeline story selection).
+**QA pass stamp (pipeline runs, #3003).** Inside a `/claude-tweaks:flow` pipeline, immediately after `report.json` is written, run `node "${CLAUDE_PLUGIN_ROOT}/bin/qa-stamp.js" --write --report "{RUN_DIR}/report.json" [--stories-dir <dir>]` (pass `--stories-dir` when `STORIES_DIR` is not the default). The CLI writes the stamp only for a clean tree (its own `.claude-tweaks/artifacts/`-excluding check, not report.json's `dirty`) where every story is PASS or PASS_WITH_CAVEATS. Otherwise it prints `{written: false, reason[, invalidated: true | invalidateFailed: <code>]}` and writes nothing; a `reason` is not itself an error, but a never-firing stamp is invisible unless surfaced — add one line to the QA report's output: `QA pass stamp: not written ({reason})` (append `, invalidated prior stamp` when `invalidated` is `true`, or `, could not remove stale prior stamp ({code}) — the next same-HEAD check may skip wrongly` when `invalidateFailed` is present). A later `/claude-tweaks:test` call at the same HEAD (a dispatched group's second call) reads the stamp before dispatching stories (`SKILL.md`'s pipeline story selection). `--check --scope` also skips (`covered-bookkeeping-delta`) when every commit since the stamp is bookkeeping by the project's declaration; it never rewrites the stamp, and a project whose rendered content lives under a path mapped to `suites: []` with no static check must map it to a suite or static check to keep QA re-running on it.
 
 26. Present the aggregated results:
 

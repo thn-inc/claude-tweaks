@@ -49,12 +49,13 @@ function archivedRun(root, runId = RUN_ID) {
 const fakePrStates = (table) => ({ byNumberAsync: async (n) => table[n] });
 const mergedState = { number: 11, state: 'MERGED', mergedAt: MERGED_AT };
 
+// A closing-links fake standing in for the exported core: it returns `{ code, envelope }`, the envelope
+// object only on exit 0 (the real core's contract).
 function fakeClosingLinks(envelope, code = 0) {
   const calls = [];
-  const fn = (argv, d) => {
-    calls.push({ argv, deps: d });
-    if (envelope) d.stdout(`${JSON.stringify(envelope)}\n`);
-    return code;
+  const fn = (opts, d) => {
+    calls.push({ opts, deps: d });
+    return { code, envelope: code === 0 ? envelope : null };
   };
   fn.calls = calls;
   return fn;
@@ -133,7 +134,7 @@ test('AC4.1 AC4.2 AC4.3 AC4.4: an archived run is processed and nothing is minte
   const links = fakeClosingLinks(NOTHING_CLOSED);
   const r = await runCli(['--run', dir], root, {
     prStates: fakePrStates({ 11: mergedState }),
-    postMergeDeps: { gh: () => '', closingLinksRun: links, closeParents: () => ({ closed: [], skipped: [] }) },
+    postMergeDeps: { gh: () => '', closingLinks: links, closeParents: () => ({ closed: [], skipped: [] }) },
   });
   assert.equal(r.code, 0, r.err);
   const entry = JSON.parse(r.out);
@@ -141,7 +142,7 @@ test('AC4.1 AC4.2 AC4.3 AC4.4: an archived run is processed and nothing is minte
   assert.equal(entry.runDir, dir);
   assert.equal(entry.pr, 11);
   assert.equal(links.calls.length, 1);
-  assert.equal(links.calls[0].argv[1], dir, "closing-links' --run is the archived dir");
+  assert.equal(links.calls[0].opts.run, dir, "closing-links' run is the archived dir");
   assert.ok(hasPostMergeMarker(fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8')));
   assert.deepEqual(fs.readdirSync(path.join(root, '.claude-tweaks', 'pipelines')), ['archive']);
 });
@@ -152,7 +153,7 @@ test('a non-clean Step 4.0 prints closingLinks and the record lists', async () =
   const envelope = { ...NOTHING_CLOSED, action: 'reopen-failed', failed: [{ issue: 105, error: 'x' }] };
   const r = await runCli(['--run', dir], root, {
     prStates: fakePrStates({ 11: mergedState }),
-    postMergeDeps: { gh: () => '', closingLinksRun: fakeClosingLinks(envelope), closeParents: () => ({ closed: [], skipped: [] }) },
+    postMergeDeps: { gh: () => '', closingLinks: fakeClosingLinks(envelope), closeParents: () => ({ closed: [], skipped: [] }) },
   });
   assert.equal(r.code, 0, r.err);
   const entry = JSON.parse(r.out);
@@ -227,14 +228,14 @@ test('a relative --run resolves to the absolute real path', async () => {
     const links = fakeClosingLinks(NOTHING_CLOSED);
     const r = await runCli(['--run', relative], root, {
       prStates: fakePrStates({ 11: mergedState }),
-      postMergeDeps: { gh: () => '', closingLinksRun: links, closeParents: () => ({ closed: [], skipped: [] }) },
+      postMergeDeps: { gh: () => '', closingLinks: links, closeParents: () => ({ closed: [], skipped: [] }) },
     });
     assert.equal(r.code, 0, r.err);
     const entry = JSON.parse(r.out);
     assert.equal(entry.runDir, dir);
     assert.ok(path.isAbsolute(entry.runDir));
     assert.equal(entry.action, 'ran');
-    assert.equal(links.calls[0].argv[1], dir);
+    assert.equal(links.calls[0].opts.run, dir);
   } finally {
     process.chdir(before);
   }

@@ -2,12 +2,13 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const rb = require('../../../plugin/bin/lib/init/release-bootstrap');
 const { chmodDenialSkip } = require('../../helpers/root');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'release-bootstrap-')); }
+function tmp() { return scratchDir('release-bootstrap-'); }
 function write(root, rel, content) {
   const full = path.join(root, rel);
   fs.mkdirSync(path.dirname(full), { recursive: true });
@@ -279,11 +280,10 @@ test('renderers: workflow, config, manifest, policy rows', () => {
 });
 
 const { execFileSync } = require('child_process');
+const { initRepo } = require('../../helpers/git-fixtures');
 function git(cwd, ...args) { return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim(); }
 function gitRepo(root) {
-  git(root, 'init', '-b', 'main');
-  git(root, 'config', 'user.email', 't@t');
-  git(root, 'config', 'user.name', 't');
+  initRepo(root, { name: 't', email: 't@t', branch: 'main', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   write(root, 'README.md', 'x\n');
   git(root, 'add', 'README.md');
   git(root, 'commit', '-m', 'init');

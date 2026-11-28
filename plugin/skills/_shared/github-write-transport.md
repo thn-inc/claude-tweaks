@@ -23,6 +23,7 @@ probe, not an environment classification — it holds regardless of *why* `gh` i
 | Create an issue | `gh issue create --title ... --body ...` | `issue_write` (create mode) |
 | Edit labels / body | `gh issue edit {n} --add-label/--remove-label/--body-file` | `issue_write` (update mode) |
 | Comment | `gh issue comment {n} --body-file` | `add_issue_comment` — a body that starts with a `<!-- … -->` marker follows **Marker comments on the MCP path** below |
+| Edit an existing comment | `gh api graphql` `updateIssueComment` by the comment's node ID (`specify/shaping-mode-stamping.md`'s live-comment mechanics) | `update_issue_comment` (github-mcp-server v1.12.2+, default `issues` toolset) — `comment_id` is the comment's numeric `id` from `issue_read` (get_comments mode), which carries no node ID; `body` is the whole new body, composed from that read (it strips only invisible characters, so the marker survives the prepend). A session whose tool list has no `update_issue_comment` treats the edit as unmapped (**A write sequence with an unmapped step** below). Source: github-mcp-server @9a72d8d, `pkg/github/issues.go:1593` (the tool) and `pkg/github/minimal_types.go:671` (the comment shape), probed for #6101 — re-probe there if the tool or its sanitizer changes |
 | Close | `gh issue close {n} --reason ...` | `issue_write` (update mode, `state: closed` plus `state_reason` — `completed` for `--reason completed`, `not_planned` for `--reason "not planned"`; never pass `labels`, per **Full-replace hazard** below) |
 | Get a single issue by number | `gh issue view {n} --json state,...` | `issue_read` (get mode); its `state_reason`, `labels`, `title`, `body` and `closed_by_pull_requests` (`references[].number`, up to 5) fields stand in for `gh`'s `stateReason`, `labels`, `title`, `body` and `closedByPullRequestsReferences`; MCP spells state values lowercase |
 | List an issue's comments | `gh api repos/{owner}/{repo}/issues/{n}/comments?per_page=100` | `issue_read` (get_comments mode) — `perPage: 100`, then `page` 2, 3, … until a page returns fewer than 100 (the `gh` form is the single-page read the call sites run) |
@@ -43,7 +44,7 @@ were not copied from a sanitized read: each holds exactly one `&lt;` and one `&g
 marker, with raw quotes everywhere else, and #1350's escaped claim mirror carries a fresh
 `claimPayload` runId and timestamp no earlier read could have supplied. So the escaping happens on
 the MCP write leg, intermittently, between local composition and storage — the cause (tool-call
-serialization or the server) is not yet identified and needs a `gh`-absent reproduction.
+serialization or the server) is not yet identified and needs a `gh`-absent reproduction. The "Edit an existing comment" row is the one exception: an edit must start from the comment's existing body, which exists only on the server. The write-leg escaping hazard still applies to it, so an edited marker may render as visible text; an escaped `needs-decision` marker on a just-resolved comment only drops it from find-by-marker lookups, which resolved comments already fall out of.
 
 **Read back after posting, and repair once.** Read the new comment through `issue_read`
 (`get_comments`). A body that comes back beginning `&lt;!--` was stored escaped (a raw marker never
@@ -81,6 +82,8 @@ that includes a `labels` parameter, regardless of how many labels are changing.
 Never assume a `labels` array read earlier in the same call chain is still fresh — a genuine
 read-immediately-before-write is required, since a concurrent label change between the earlier
 read and this write would otherwise be silently reverted by the stale array.
+
+**A write sequence with an unmapped step refuses before its first write.** When an ordered sequence of writes (a plan, then a body, then a comment edit, then a label) includes any operation this file maps to no MCP call, or one whose mapped tool the session lacks, a `gh`-absent run checks before the sequence's first write and, when the step's tool is missing, refuses before writing anything, never part-way: a sequence that wrote its mapped steps and then stopped at the unmapped one leaves the record half-changed. `specify/planning-answer.md`'s Inputs check is the standing example: its Write step edits the hold comment, so a session with neither `gh` nor `update_issue_comment` refuses before storing the plan (#6059, #6101).
 
 **Pull requests are not covered by this mapping.** Every row above is an issue operation — there
 is no `list_pull_requests`/`pr_read`/`pr_write` row, and none is planned here: PR review-thread

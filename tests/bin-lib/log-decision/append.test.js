@@ -2,15 +2,19 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const {
   formatEntry, resolveTarget, appendEntry, appendEntries, STATUSES, normalizeSection,
 } = require('../../../plugin/bin/lib/log-decision/append');
+const { runCliSync, spawnCli } = require('../../helpers/run-cli');
 
 // The schema line _shared/auto-decision-log.md documents — a test-side parser, so
 // every entry the module emits is proven readable by the documented shape.
 const SCHEMA = /^- (AUTO|STAGED|KEPT-PROMPT|SCANNED|SKIP) (\d{2}:\d{2}:\d{2}) — (.+?): (.+)\. Reversibility: (high|med|low|n\/a)(?:[^\[]*)?( \[lever: .+\])?$/;
+
+const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'log-decision.js');
 
 const NOW = new Date(2026, 7, 16, 14, 32, 14).getTime(); // local 14:32:14
 
@@ -48,7 +52,7 @@ test('formatEntry: SKIP line matches the documented degrade-trace grammar', () =
 });
 
 test('resolveTarget: run dir under mainRoot ok; under either linked-worktree domain not-anchored; no .git above fails closed; missing dir', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ld-'));
+  const root = scratchDir('ld-');
   const main = path.join(root, 'main');
   const wt = path.join(main, '.claude', 'worktrees', 'wt');
   const wt2 = path.join(main, '.worktrees', 'wt2');
@@ -76,11 +80,72 @@ test('resolveTarget: run dir under mainRoot ok; under either linked-worktree dom
   assert.equal(bad2.reason, 'not-anchored');
   // A run dir with no .git anywhere above it fails closed even when mainRoot
   // is injected as its own parent — unknown must refuse, not default-accept.
-  const orphanRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ld-orphan-'));
+  const orphanRoot = scratchDir('ld-orphan-');
   const orphanRun = path.join(orphanRoot, 'run-a');
   fs.mkdirSync(orphanRun, { recursive: true });
   assert.deepEqual(resolveTarget({ runDir: orphanRun, mainRoot: orphanRoot }), { ok: false, reason: 'not-anchored' });
   assert.deepEqual(resolveTarget({ runDir: path.join(main, 'nope'), mainRoot: main }), { ok: false, reason: 'missing' });
+});
+
+// #5830: anchoring to the main checkout is not enough — the run dir must also sit
+// strictly inside <main>/.claude-tweaks/pipelines/ (archived and nested multi-spec
+// run dirs included), or a `--run main/plugin` would turn a config.yml planted
+// there into a run config.
+function pipelinesFixture(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ld-notrun-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const main = path.join(root, 'main');
+  fs.mkdirSync(path.join(main, '.git'), { recursive: true });
+  return { root, main, pipelines: path.join(main, '.claude-tweaks', 'pipelines') };
+}
+
+test('resolveTarget: a run dir outside .claude-tweaks/pipelines/ is not-a-run-dir', (t) => {
+  const { main, pipelines } = pipelinesFixture(t);
+  const outsideDirs = [
+    path.join(main, 'plugin'),
+    path.join(main, 'docs'),
+    path.join(main, 'x.claude-tweaks', 'pipelines-copy', 'run-a'),
+    // a sibling whose name only string-prefix-matches `pipelines`
+    path.join(main, '.claude-tweaks', 'pipelines-copy', 'run-a'),
+  ];
+  for (const dir of [...outsideDirs, path.join(pipelines, 'run-a')]) fs.mkdirSync(dir, { recursive: true });
+  const refused = [
+    ...outsideDirs,
+    pipelines,
+    // a `..` spelling that lands on main/docs from inside pipelines/run-a
+    path.join(pipelines, 'run-a') + path.sep + ['..', '..', '..', 'docs'].join(path.sep),
+  ];
+  for (const runDir of refused) {
+    assert.deepEqual(resolveTarget({ runDir, mainRoot: main }), { ok: false, reason: 'not-a-run-dir' }, runDir);
+  }
+  const accepted = [
+    path.join(pipelines, 'run-a'),
+    path.join(pipelines, 'archive', 'run-a'),
+    path.join(pipelines, 'run-p', 'spec-1'),
+  ];
+  for (const dir of accepted) fs.mkdirSync(dir, { recursive: true });
+  for (const runDir of accepted) {
+    assert.equal(resolveTarget({ runDir, mainRoot: main }).ok, true, runDir);
+  }
+});
+
+test('resolveTarget: a run dir that is a symlink out of pipelines/ is not-a-run-dir', { skip: process.platform === 'win32' && 'win32: creating a directory symlink needs elevated rights' }, (t) => {
+  const { main, pipelines } = pipelinesFixture(t);
+  fs.mkdirSync(path.join(main, 'docs'), { recursive: true });
+  fs.mkdirSync(pipelines, { recursive: true });
+  fs.symlinkSync(path.join(main, 'docs'), path.join(pipelines, 'link'), 'dir');
+  assert.deepEqual(
+    resolveTarget({ runDir: path.join(pipelines, 'link'), mainRoot: main }),
+    { ok: false, reason: 'not-a-run-dir' },
+  );
+});
+
+test('resolveTarget: a pipelines/ that is itself a symlink to a directory inside the checkout still accepts its run dirs', { skip: process.platform === 'win32' && 'win32: creating a directory symlink needs elevated rights' }, (t) => {
+  const { main, pipelines } = pipelinesFixture(t);
+  fs.mkdirSync(path.join(main, 'var', 'runs', 'run-a'), { recursive: true });
+  fs.mkdirSync(path.dirname(pipelines), { recursive: true });
+  fs.symlinkSync(path.join(main, 'var', 'runs'), pipelines, 'dir');
+  assert.equal(resolveTarget({ runDir: path.join(pipelines, 'run-a'), mainRoot: main }).ok, true);
 });
 
 // With `mainRoot: null` passed *explicitly* (not `undefined`), `resolveTarget`'s
@@ -91,21 +156,21 @@ test('resolveTarget: run dir under mainRoot ok; under either linked-worktree dom
 // always injects a real `mainRoot`) stays green — see the discrimination proof in
 // final-fix-report.md.
 test('resolveTarget: with mainRoot explicitly null, the .git-is-a-FILE check alone gates a linked worktree', () => {
-  const wtRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ld-nullroot-wt-'));
+  const wtRoot = scratchDir('ld-nullroot-wt-');
   const wt = path.join(wtRoot, '.claude', 'worktrees', 'wt');
   const wtRun = path.join(wt, '.claude-tweaks', 'pipelines', 'run-a');
   fs.mkdirSync(wtRun, { recursive: true });
   fs.writeFileSync(path.join(wt, '.git'), 'gitdir: ../../../.git/worktrees/wt\n');
   assert.deepEqual(resolveTarget({ runDir: wtRun, mainRoot: null }), { ok: false, reason: 'not-anchored' });
 
-  const mainRoot2 = fs.mkdtempSync(path.join(os.tmpdir(), 'ld-nullroot-main-'));
+  const mainRoot2 = scratchDir('ld-nullroot-main-');
   const main2 = path.join(mainRoot2, 'main');
   const mainRun = path.join(main2, '.claude-tweaks', 'pipelines', 'run-b');
   fs.mkdirSync(mainRun, { recursive: true });
   fs.mkdirSync(path.join(main2, '.git'));
   assert.equal(resolveTarget({ runDir: mainRun, mainRoot: null }).ok, true);
 
-  const orphanRoot2 = fs.mkdtempSync(path.join(os.tmpdir(), 'ld-nullroot-orphan-'));
+  const orphanRoot2 = scratchDir('ld-nullroot-orphan-');
   const orphanRun2 = path.join(orphanRoot2, 'run-c');
   fs.mkdirSync(orphanRun2, { recursive: true });
   assert.deepEqual(resolveTarget({ runDir: orphanRun2, mainRoot: null }), { ok: false, reason: 'not-anchored' });
@@ -120,12 +185,12 @@ test('resolveTarget: with mainRoot explicitly null, the .git-is-a-FILE check alo
 // class bypass distinct from the deliberate `mainRoot: null` opt-out covered
 // by the test above.
 test('resolveTarget: mainRoot undefined + cwd where mainCheckoutRoot cannot be determined fails closed, not open', () => {
-  const foreignRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ld-foreign-'));
+  const foreignRoot = scratchDir('ld-foreign-');
   const foreignRun = path.join(foreignRoot, '.claude-tweaks', 'pipelines', 'run-a');
   fs.mkdirSync(foreignRun, { recursive: true });
   fs.mkdirSync(path.join(foreignRoot, '.git')); // a real, but unrelated, checkout
 
-  const cwdNoGit = fs.mkdtempSync(path.join(os.tmpdir(), 'ld-nogit-cwd-'));
+  const cwdNoGit = scratchDir('ld-nogit-cwd-');
   // mainRoot omitted entirely -> undefined, the production default.
   assert.deepEqual(resolveTarget({ runDir: foreignRun, cwd: cwdNoGit }), { ok: false, reason: 'not-anchored' });
 });
@@ -154,21 +219,21 @@ test('normalizeSection: falsy input passes through unchanged', () => {
 });
 
 test('appendEntry: an MSYS-mangled section value writes the normalized `## /reflect` heading', () => {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ld-run-'));
+  const runDir = scratchDir('ld-run-');
   appendEntry({ runDir, section: 'C:/Program Files/Git/reflect', entry: '- AUTO 10:00:00 — a: b. Reversibility: high.' });
   const text = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
   assert.equal(text, '## /reflect\n- AUTO 10:00:00 — a: b. Reversibility: high.\n');
 });
 
 test('appendEntry: a slash-free section value writes the same `## /reflect` heading as its slash-prefixed form', () => {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ld-run-'));
+  const runDir = scratchDir('ld-run-');
   appendEntry({ runDir, section: 'reflect', entry: '- AUTO 10:00:00 — a: b. Reversibility: high.' });
   const text = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
   assert.equal(text, '## /reflect\n- AUTO 10:00:00 — a: b. Reversibility: high.\n');
 });
 
 test('appendEntry: creates the file, then inserts under the named section before the next heading', () => {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ld-run-'));
+  const runDir = scratchDir('ld-run-');
   const r1 = appendEntry({ runDir, section: '/build', entry: '- AUTO 10:00:00 — a: b. Reversibility: high.' });
   assert.equal(r1.created, true);
   appendEntry({ runDir, section: '/review', entry: '- AUTO 10:00:01 — c: d. Reversibility: high.' });
@@ -191,8 +256,8 @@ test('appendEntries places a batch under mixed sections in order and matches seq
     { entry: '- STAGED 10:00:01 — g: h. Reversibility: n/a.' },
     { section: 'review', entry: '- AUTO 10:00:02 — i: j. Reversibility: low.' },
   ];
-  const batchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ld-batch-'));
-  const seqDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ld-seq-'));
+  const batchDir = scratchDir('ld-batch-');
+  const seqDir = scratchDir('ld-seq-');
   fs.writeFileSync(path.join(batchDir, 'decisions.md'), seed);
   fs.writeFileSync(path.join(seqDir, 'decisions.md'), seed);
   const r = appendEntries({ runDir: batchDir, items });
@@ -212,7 +277,7 @@ test('appendEntries places a batch under mixed sections in order and matches seq
 });
 
 test('appendEntries: creates the file on a fresh run dir; an empty batch writes nothing', () => {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ld-batch-'));
+  const runDir = scratchDir('ld-batch-');
   assert.deepEqual(appendEntries({ runDir, items: [] }), { file: path.join(runDir, 'decisions.md'), created: false });
   assert.equal(fs.existsSync(path.join(runDir, 'decisions.md')), false);
   const r = appendEntries({ runDir, items: [{ section: '/build', entry: '- AUTO 10:00:00 — a: b. Reversibility: high.' }, { section: '/build', entry: '- AUTO 10:00:01 — c: d. Reversibility: high.' }] });
@@ -227,25 +292,28 @@ test('appendEntries: creates the file on a fresh run dir; an empty batch writes 
 // cross-process technique bin/lib/file-lock.test.js's own concurrency test uses.
 test('appendEntry: concurrent `node bin/log-decision.js` processes against the same run dir never drop an entry', async () => {
   const { spawn } = require('child_process');
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ld-concurrent-'));
+  const root = scratchDir('ld-concurrent-');
   fs.mkdirSync(path.join(root, '.git')); // a real checkout root: mainCheckoutRoot(cwd) anchors here
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', 'run-concurrent');
   fs.mkdirSync(runDir, { recursive: true });
 
-  const cliPath = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'log-decision.js');
   const WORKERS = 8;
+  // real processes: proves the cross-process lock never drops an entry (#816)
   const spawnOne = (i) => new Promise((resolve, reject) => {
     const p = spawn(process.execPath, [
-      cliPath, '--run', runDir, '--status', 'AUTO', '--text', `worker ${i}`,
+      CLI, '--run', runDir, '--status', 'AUTO', '--text', `worker ${i}`,
     ], { cwd: root, env: { ...process.env, CLAUDE_TWEAKS_LOCK_WAIT_MS: '60000' } });
     let stderr = '';
+    let stdout = '';
+    p.stdout.on('data', (d) => { stdout += d; });
     p.stderr.on('data', (d) => { stderr += d; });
     // 'close', not 'exit': only 'close' guarantees stdio has flushed, so a failing worker's stderr is complete.
-    p.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`worker ${i} exited ${code}: ${stderr}`))));
+    p.on('close', (code) => (code === 0 ? resolve(stdout) : reject(new Error(`worker ${i} exited ${code}: ${stderr}`))));
     p.on('error', reject);
   });
 
-  await Promise.all(Array.from({ length: WORKERS }, (_, i) => spawnOne(i)));
+  const outs = await Promise.all(Array.from({ length: WORKERS }, (_, i) => spawnOne(i)));
+  outs.forEach((out, i) => assert.match(out, new RegExp(`^- AUTO \\d{2}:\\d{2}:\\d{2} \u2014 log-decision: worker ${i}\\. Reversibility: n/a\\.\\n$`), `worker ${i} echoes its entry line`));
 
   const text = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
   for (let i = 0; i < WORKERS; i++) {
@@ -253,4 +321,24 @@ test('appendEntry: concurrent `node bin/log-decision.js` processes against the s
   }
   const lines = text.trim().split('\n').filter(Boolean);
   assert.equal(lines.length, WORKERS, 'every worker\'s line must survive, none clobbered');
+});
+
+test('AC6.1: an in-process append anchors the run dir under the injected cwd', (t) => {
+  const root = scratchDir('ld-inproc-');
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, '.git')); // a checkout root outside the real checkout: anchors only under the injected cwd
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', 'run-inproc');
+  fs.mkdirSync(runDir, { recursive: true });
+  assert.notEqual(path.resolve(root), path.resolve(process.cwd()));
+  const res = runCliSync(CLI, ['--run', runDir, '--status', 'AUTO', '--text', 'in-process'], { cwd: root, env: {} });
+  assert.equal(res.code, 0, res.stderr);
+  assert.match(res.stdout, /— log-decision: in-process\. Reversibility: n\/a\.\n$/);
+  assert.match(fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'), /— log-decision: in-process\. Reversibility: n\/a\.\n$/);
+});
+
+test('refusal: a missing --run exits 2 and names the problem', () => {
+  // real process: proves the script entry turns run's return value into the exit code
+  const res = spawnCli(CLI, ['--status', 'AUTO', '--text', 'x']);
+  assert.equal(res.code, 2);
+  assert.match(res.stderr, /--run <run-dir> is required/);
 });

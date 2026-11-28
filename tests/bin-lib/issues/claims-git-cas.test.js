@@ -60,53 +60,28 @@ test('readClaimBlobGit: a non-timeout runner error reports transport-failure wit
   assert.equal('timedOut' in result, false);
 });
 
-const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-
-// Every git call below pipes stderr — the house convention for a bare-repo
-// fixture (tests/bin-lib/reconcile/prune-remote.test.js's `git` helper).
-// Without it execFileSync echoes the child's stderr to this process's
-// stderr *as well as* capturing it, so the failure paths these tests
-// exercise on purpose (`git show` on an absent claim, the rejected
-// stale-lease push, the empty-clone warning) print `fatal:` / `! [rejected]`
-// lines into the TAP stream as `#` diagnostics — output that reads like a
-// broken suite while every assertion passes. stdin stays 'pipe' because
-// realRunner feeds `hash-object --stdin` through `opts.input`.
-const PIPE_ALL = ['pipe', 'pipe', 'pipe'];
-
-function realRunner(args, opts = {}) {
-  return execFileSync('git', args, {
-    encoding: 'utf8', stdio: PIPE_ALL, cwd: opts.cwd, input: opts.input, env: opts.env,
-  });
-}
-
-function setupGit(args) {
-  return execFileSync('git', args, { encoding: 'utf8', stdio: PIPE_ALL });
-}
 
 const fixtureRoots = [];
 after(() => {
   for (const d of fixtureRoots) fs.rmSync(d, { recursive: true, force: true });
 });
 
-function makeBareOriginAndClone() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'claims-git-cas-'));
-  fixtureRoots.push(root);
-  const originDir = path.join(root, 'origin.git');
-  const cloneDir = path.join(root, 'clone');
-  setupGit(['init', '--bare', '-q', '-b', 'main', originDir]);
-  setupGit(['clone', '-q', originDir, cloneDir]);
-  setupGit(['-C', cloneDir, 'config', 'user.email', 'test@example.com']);
-  setupGit(['-C', cloneDir, 'config', 'user.name', 'Test']);
-  fs.writeFileSync(path.join(cloneDir, 'README.md'), 'seed\n');
-  setupGit(['-C', cloneDir, 'add', 'README.md']);
-  setupGit(['-C', cloneDir, 'commit', '-q', '-m', 'seed']);
-  setupGit(['-C', cloneDir, 'push', '-q', 'origin', 'main']);
-  setupGit(['-C', cloneDir, 'push', '-q', 'origin', `main:${CLAIMS_BRANCH}`]);
-  return { root, cloneDir };
+// The fixtures are built once per process and copied per call (#5769); each wrapper
+// registers the copy's root for cleanup.
+const fixtures = require('./claims-git-cas-fixtures');
+const { realRunner, setupGit } = fixtures;
+function registered(make) {
+  return () => {
+    const fixture = make();
+    fixtureRoots.push(fixture.root);
+    return fixture;
+  };
 }
+const makeBareOriginAndClone = registered(fixtures.makeBareOriginAndClone);
+const makeBranchlessOriginAndClone = registered(fixtures.makeBranchlessOriginAndClone);
+const makeDecoyOriginAndClone = registered(fixtures.makeDecoyOriginAndClone);
+const makeRegistryWithClaims = registered(fixtures.makeRegistryWithClaims);
 
 test('readClaimBlobGit: absent path on a fresh registry branch', () => {
   const { cloneDir } = makeBareOriginAndClone();
@@ -215,16 +190,9 @@ test('writeClaimBlobGit: a second write on a stale expectedTipSha is contested',
 // right after this call's own fetch) and pins that the read still resolves
 // this call's own target, never the decoy.
 test('readClaimBlobGit: a concurrent unrelated fetch in the same checkout does not corrupt the read', () => {
-  const { root, cloneDir } = makeBareOriginAndClone();
-  const originDir = path.join(root, 'origin.git');
-  // A second branch, unrelated to claims-registry, whose tip an interleaved
-  // fetch will plant into the shared FETCH_HEAD pseudo-ref.
-  setupGit(['-C', cloneDir, 'checkout', '-q', '-b', 'decoy']);
-  fs.writeFileSync(path.join(cloneDir, 'decoy.txt'), 'decoy\n');
-  setupGit(['-C', cloneDir, 'add', 'decoy.txt']);
-  setupGit(['-C', cloneDir, 'commit', '-q', '-m', 'decoy']);
-  setupGit(['-C', cloneDir, 'push', '-q', 'origin', 'decoy']);
-  setupGit(['-C', cloneDir, 'checkout', '-q', 'main']);
+  // The fixture carries a second branch, unrelated to claims-registry, whose tip an
+  // interleaved fetch will plant into the shared FETCH_HEAD pseudo-ref.
+  const { originDir, cloneDir } = makeDecoyOriginAndClone();
 
   let fetchCount = 0;
   const runner = (args, opts) => {
@@ -281,12 +249,10 @@ function writeBlob(cloneDir, runner, issueNumber, content) {
 }
 
 test('readClaimBlobsGitBatch: returns identical per-blob classification to N sequential readClaimBlobGit calls, including an absent number', () => {
-  const { cloneDir } = makeBareOriginAndClone();
+  const { cloneDir, tipAfter, writes } = makeRegistryWithClaims();
   const runner = (args, opts) => realRunner(args, { ...opts, cwd: cloneDir });
-  let tip;
-  tip = writeBlob(cloneDir, runner, 10, '{"runId":"r10"}');
-  tip = writeBlob(cloneDir, runner, 11, '{"runId":"r11"}');
-  tip = writeBlob(cloneDir, runner, 12, '{"runId":"r12"}');
+  for (const n of [10, 11, 12]) assert.equal(writes.get(n).ok, true, `fixture setup: claim #${n} must write cleanly`);
+  const tip = tipAfter.get(12);
   // 13 is left absent on purpose.
 
   const batch = readClaimBlobsGitBatch({ issueNumbers: [10, 11, 12, 13], tip, runner });
@@ -299,11 +265,10 @@ test('readClaimBlobsGitBatch: returns identical per-blob classification to N seq
 });
 
 test('readClaimBlobsGitBatch: with issueNumbers omitted, discovers the full claims/ keyspace from the same ls-tree call (the Primary listing use case)', () => {
-  const { cloneDir } = makeBareOriginAndClone();
+  const { cloneDir, tipAfter, writes } = makeRegistryWithClaims();
   const runner = (args, opts) => realRunner(args, { ...opts, cwd: cloneDir });
-  let tip;
-  tip = writeBlob(cloneDir, runner, 20, '{"runId":"r20"}');
-  tip = writeBlob(cloneDir, runner, 21, '{"runId":"r21"}');
+  for (const n of [20, 21]) assert.equal(writes.get(n).ok, true, `fixture setup: claim #${n} must write cleanly`);
+  const tip = tipAfter.get(21);
 
   const batch = readClaimBlobsGitBatch({ tip, runner });
   assert.equal(batch.failure, null);
@@ -313,24 +278,24 @@ test('readClaimBlobsGitBatch: with issueNumbers omitted, discovers the full clai
 });
 
 test('readClaimBlobsGitBatch: a claim blob with embedded newlines (pretty-printed JSON, the real production shape) survives batching intact', () => {
-  const { cloneDir } = makeBareOriginAndClone();
+  const { cloneDir, tipAfter, writes } = makeRegistryWithClaims();
   const runner = (args, opts) => realRunner(args, { ...opts, cwd: cloneDir });
   const prettyContent = JSON.stringify({ runId: 'r1', claimedAt: '2026-01-01T00:00:00.000Z', ttlHours: 72 }, null, 2);
   assert.ok(prettyContent.includes('\n'), 'fixture must actually exercise the embedded-newline case');
-  const tip = writeBlob(cloneDir, runner, 30, prettyContent);
+  assert.equal(writes.get(30).ok, true, 'fixture setup: claim #30 must write cleanly');
+  const tip = tipAfter.get(30);
 
   const batch = readClaimBlobsGitBatch({ issueNumbers: [30], tip, runner });
   assert.equal(batch.results[30].content, prettyContent);
 });
 
 test('readClaimBlobsGitBatch: issues exactly 2 subprocess invocations regardless of blob count', () => {
-  const { cloneDir } = makeBareOriginAndClone();
-  const setupRunner = (args, opts) => realRunner(args, { ...opts, cwd: cloneDir });
-  let tip;
+  const { cloneDir, tipAfter, writes } = makeRegistryWithClaims();
   const numbers = [40, 41, 42, 43, 44];
   for (const n of numbers) {
-    tip = writeBlob(cloneDir, setupRunner, n, `{"runId":"r${n}"}`);
+    assert.equal(writes.get(n).ok, true, `fixture setup: claim #${n} must write cleanly`);
   }
+  const tip = tipAfter.get(44);
 
   const calls = [];
   const countingRunner = (args, opts) => {
@@ -516,22 +481,6 @@ test('bootstrapClaimsBranchGit: a timeout-shaped error is transport-failure AND 
 // branch but never had a claims-registry. Pins git's own "couldn't find remote
 // ref" wording against `classifyGitError`'s regex and the bootstrap against a
 // real remote, which the fake-runner tests above cannot.
-function makeBranchlessOriginAndClone() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'claims-git-cas-branchless-'));
-  fixtureRoots.push(root);
-  const originDir = path.join(root, 'origin.git');
-  const cloneDir = path.join(root, 'clone');
-  setupGit(['init', '--bare', '-q', '-b', 'main', originDir]);
-  setupGit(['clone', '-q', originDir, cloneDir]);
-  setupGit(['-C', cloneDir, 'config', 'user.email', 'test@example.com']);
-  setupGit(['-C', cloneDir, 'config', 'user.name', 'Test']);
-  fs.writeFileSync(path.join(cloneDir, 'README.md'), 'seed\n');
-  setupGit(['-C', cloneDir, 'add', 'README.md']);
-  setupGit(['-C', cloneDir, 'commit', '-q', '-m', 'seed']);
-  setupGit(['-C', cloneDir, 'push', '-q', 'origin', 'main']);
-  return { originDir, cloneDir };
-}
-
 test('real git: a remote that never had claims-registry reads as branchMissing, then bootstraps from the default branch tip and reads as a plain absent claim', () => {
   const { originDir, cloneDir } = makeBranchlessOriginAndClone();
   const runner = (args, opts) => realRunner(args, { ...opts, cwd: cloneDir });
@@ -552,3 +501,20 @@ test('real git: a remote that never had claims-registry reads as branchMissing, 
   assert.equal('branchMissing' in after, false);
   assert.equal(after.tipSha, claimsTip);
 });
+
+// #5846: the four fixtures are templates (#5769) — a warm-up call may build, a further call starts no
+// git process. They live here because this file's own tests already build all four.
+const { pinnedGit: git } = require('../../helpers/pinned-git');
+const { warmCallStartsNoGit } = require('../../helpers/git-trace');
+for (const builder of [
+  'makeBareOriginAndClone', 'makeBranchlessOriginAndClone', 'makeDecoyOriginAndClone', 'makeRegistryWithClaims',
+]) {
+  test(`AC4.1: claims-git-cas ${builder}: a second call starts no git process`, () => {
+    const make = () => fixtures[builder]();
+    const { warm: first, traced: second } = warmCallStartsNoGit(make, { track: (r) => fixtureRoots.push(r.root) });
+    if (builder === 'makeRegistryWithClaims') {
+      assert.strictEqual(git(first.cloneDir, ['rev-parse', 'origin/claims-registry']), first.tipAfter.get(44));
+      assert.strictEqual(git(second.cloneDir, ['rev-parse', 'origin/claims-registry']), first.tipAfter.get(44));
+    }
+  });
+}

@@ -423,6 +423,10 @@ function categoriseReproduction(agentAFindings, agentBFindings) {
   return { confirmed, unconfirmed };
 }
 
+// #4747: each pair also carries substanceScore and substanceMatch so review
+// Step 3.5 sends only same-defect pairs to debate. A pair with missing text
+// scores null and never matches (as corroborateCrossLens). An exact or
+// prefix/suffix text match scores 1 (substanceSimilarity), so it always matches.
 function detectCrossLensOverlap(findingsByLens) {
   const lenses = Object.keys(findingsByLens);
   const overlaps = [];
@@ -436,7 +440,11 @@ function detectCrossLensOverlap(findingsByLens) {
           const fa = normalizeFinding(rawFa);
           const fb = normalizeFinding(rawFb);
           if (sameLocation(fa, fb, LINE_TOLERANCE_DEBATE)) {
-            overlaps.push({ lensA, lensB, findingA: fa, findingB: fb });
+            const substanceScore = substanceSimilarity(fa, fb);
+            overlaps.push({
+              lensA, lensB, findingA: fa, findingB: fb, substanceScore,
+              substanceMatch: substanceScore !== null && substanceScore >= SUBSTANCE_SIMILARITY_MIN,
+            });
           }
         }
       }
@@ -556,23 +564,6 @@ function resolveDebate(verdictA, verdictB) {
   return 'contested';
 }
 
-// Sibling to resolveDebate, not an overload of it — the input/output shape
-// differs on purpose. resolveDebate reconciles two judges into one of three
-// buckets (confirmed/unconfirmed/contested); resolveRefutation takes a
-// single verdict from one falsification agent and only ever moves a finding
-// one direction: a `confirmed` finding that survives refutation stays
-// `confirmed`, one that gets refuted downgrades to `unconfirmed`. There is
-// no "contested" outcome here — a single agent's verdict has no second
-// judge to disagree with. Ambiguity fails toward more scrutiny, not less —
-// matching resolveDebate's own conservative default: only the exact literal
-// 'not-refuted' keeps a finding confirmed. 'refuted', a missing/empty
-// verdict, or any other malformed string (e.g. from a failed or BLOCKED
-// dispatch) all downgrade to 'unconfirmed' — a failed refutation attempt
-// must never be indistinguishable from a genuine "stands as confirmed."
-function resolveRefutation(verdict) {
-  return verdict === 'not-refuted' ? 'confirmed' : 'unconfirmed';
-}
-
 function buildReproductionDispatch(taskScope, profile = 'Standard') {
   const prompt = `${taskScope}\n\n[Use: ${profile}] (contract § Model Selection — reproduction agent, independent run)`;
   return {
@@ -635,7 +626,6 @@ module.exports = {
   detectCrossLensOverlap,
   corroborateCrossLens,
   resolveDebate,
-  resolveRefutation,
   // Dispatch shape builders (pure data — no actual Task() calls)
   buildReproductionDispatch,
   buildDebateDispatch,

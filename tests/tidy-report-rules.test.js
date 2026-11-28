@@ -38,7 +38,7 @@ test('step-6-auto.md: report template renders every section\'s rows inside ```te
 
 test('step-6-auto.md: Yours grouping section states the group key, the fixed order, and the batch-vs-paste-block rule', () => {
   const grp = section(STEP6, '#### Yours grouping (by the command the human runs)', '### Report rules');
-  assert.match(grp, /`specify`, `demo`, `git`, `capture`, `backlog refine`, then every remaining key alphabetically/);
+  assert.match(grp, /`specify`, `accept`, `git`, `capture`, `backlog refine`, then every remaining key alphabetically/);
   assert.match(grp, /argument-hint/);
   assert.match(grp, /\/claude-tweaks:flow/);
   assert.match(grp, /\/claude-tweaks:dispatch/);
@@ -54,8 +54,8 @@ test('step-6-auto.md: Bucket mapping Clean row is per-scan count lines, not a co
   assert.match(bucket, /\{scan\}\s+\{count\} checked/);
 });
 
-// Mechanical: the grouping rule names flow, dispatch, specify, and demo as
-// today's batchable targets (#695 added specify + demo to that set). Check
+// Mechanical: the grouping rule names flow, dispatch, specify, and accept as
+// today's batchable targets (#695 added specify + demo, renamed accept by #4613). Check
 // that against the live argument-hints the rule is keyed on, so the "today"
 // clause cannot go stale silently.
 test('grouping rule\'s batchable-today claim matches the live argument-hints', () => {
@@ -68,7 +68,7 @@ test('grouping rule\'s batchable-today claim matches the live argument-hints', (
   assert.match(hint('flow'), multi);
   assert.match(hint('dispatch'), multi);
   assert.match(hint('specify'), multi);
-  assert.match(hint('demo'), multi);
+  assert.match(hint('accept'), multi);
 });
 
 // --- Task 2: Report rules width discipline, condense, conformance scan ---

@@ -1,0 +1,63 @@
+=== needs-fixes-important (2026-11-15T070442-spec-5381, abfc2a20b8d343338) ===
+### Issues
+#### Critical (Must Fix)
+None.
+
+#### Important (Should Fix)
+- **Fragile git stderr pins (plan-mandated).** `tests/bin-lib/code-health/cli-validate-findings.test.js:75` and `tests/bin-lib/docs-health/cli-validate-findings.test.js:141` assert git's literal `fatal: not a git repository (or any of the parent directories): .git` lines.
+  - **Why it breaks:** the text depends on git's locale and version.
+  - **Fix:** pass an explicit env.
+
+#### Minor (Nice to Have)
+- `tests/bin-lib/code-health/cli-validate-findings.test.js:67`: the pin passes no `cwd`, so it inherits the repo cwd.
+- `tests/bin-lib/design-detect/cli.test.js:99-101`: the pin uses `assert.equal`, which is consistent but different from the other four files. Acceptable.
+
+### Assessment
+**Task quality:** Needs fixes
+**Reasoning:** The git `fatal:` stderr pins are environment-fragile.
+
+STATUS: DONE
+=== needs-fixes-minor-only (2026-11-11T005324-spec-5153, a79ac9fe8b6969207) ===
+### Issues
+#### Critical (Must Fix)
+None.
+
+#### Important (Should Fix)
+None.
+
+#### Minor (Nice to Have)
+- **M1. A failed GraphQL call whose body has an empty `nodes` reads as "no requirement".** Location: lib `ready-run.js:118-132` (`readReadyEvent`).
+  - Fix: `if (nodes.length === 0) return cause ? { failed: cause } : null;`
+- **M2. A missing or non-numeric `total_count` skips the truncation check.** Location: lib `:190`.
+- **M3. The `docs/plugin-structure.md:47` row overstates the fail-closed rule.**
+
+### Assessment
+**Task quality:** Needs fixes
+
+**Reasoning:** Three Minor gaps must still be fixed in this build under the rules.
+
+STATUS: DONE
+=== approved-unbolded (2026-11-17T080323-spec-5844, a9e2bc290a8eec12d) ===
+### Issues
+#### Critical (Must Fix)
+None.
+
+#### Important (Should Fix)
+None.
+
+#### Minor (Nice to Have)
+- `tools/count-node-procs-fixture/sample.test.js:73`: `git --version` verifies the git-not-counted property but touches no repo state.
+
+### Assessment
+Task quality: Approved
+Reasoning: The diff meets the in-scope deliverables with exact, non-loosened assertions.
+
+STATUS: DONE
+=== fix-round-no-verdict (2026-11-17T204803-spec-5881-5882-5883, a6d65e74747f887be) ===
+### New Breakage in the Fix Diff
+None. The diff adds four lines to the test file (`marker.test.js:126-129`) and changes no code.
+
+### Verdict
+**Fix round:** All findings are addressed, and the fix adds no new Critical or Important breakage.
+
+STATUS: DONE

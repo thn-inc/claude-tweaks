@@ -101,6 +101,67 @@ function extractTaskBlocks(text) {
   });
 }
 
+// ── Check G input: `Proof(<slug>): <text>` lines (#4618) ───────────────────
+// One entry per proof line inside a task body, outside fenced code. A line
+// before the first `### Task` heading is outside every task and never counts
+// (extractTaskBlocks starts at that heading). Two shapes, never one merged
+// list (parse-signal-discipline): a `proofs` entry matches the strict form
+// (an optional list bullet, checkbox and bold wrapper around a lowercase slug),
+// and a line whose start only resembles one (`proof (`, `Proof(Auth):`, a
+// missing colon, a placeholder slug, or a numbered or blockquoted line the
+// strict form does not admit) is a `nearMisses` entry, so a proof line
+// the author meant but mistyped is never read as "no proof written". CRLF
+// input is normalized to LF here, as extractPathWaivers does.
+//
+// Fences follow CommonMark's characters and lengths, not its indentation: an
+// opener is a run of 3+ backticks or tildes (a backtick opener's info string
+// holds no backtick), and only a line of the same character, at least as long,
+// with nothing but whitespace after, closes it. The opener and closer regexes
+// accept any leading indentation (CommonMark stops at 3 spaces; 4+ is an
+// indented code block, not a fence), so an indented fence line still fences. A
+// ```-fenced example nested inside a four-backtick or `~~~` fence stays
+// fenced. A task whose fence never closes is reported in `unclosedFences`: its
+// later lines were swallowed, which must not read as "no proof line" (Check F
+// reports the same state through hasUnclosedFence). AC_FENCE_RE, which Checks E
+// and F share, toggles on any fence-like line and is deliberately not reused.
+const PROOF_LINE_RE = /^[ \t]*(?:[-*+][ \t]+)?(?:\[[ xX]?\][ \t]+)?(?:\*\*)?Proof\(([a-z0-9][a-z0-9-]*)\):(?:\*\*)?[ \t]*(.*)$/;
+const PROOF_NEAR_MISS_RE = /^[ \t]*(?:>[ \t]*)*(?:(?:[-*+]|\d+[.)])[ \t]+)?(?:\[[ xX]?\][ \t]+)?(?:\*\*)?proof ?\(/i;
+const FENCE_OPEN_RE = /^[ \t]*(`{3,}|~{3,})(.*)$/;
+const FENCE_CLOSE_RE = /^[ \t]*(`{3,}|~{3,})[ \t]*$/;
+
+function fenceOpener(line) {
+  const m = line.match(FENCE_OPEN_RE);
+  if (!m || (m[1][0] === '`' && m[2].includes('`'))) return null;
+  return { char: m[1][0], length: m[1].length };
+}
+
+function closesFence(line, opener) {
+  const m = line.match(FENCE_CLOSE_RE);
+  return m !== null && m[1][0] === opener.char && m[1].length >= opener.length;
+}
+
+function extractProofLines(planText) {
+  const proofs = [];
+  const nearMisses = [];
+  const unclosedFences = [];
+  for (const block of extractTaskBlocks(planText.replace(/\r\n?/g, '\n'))) {
+    let fence = null;
+    for (const line of block.body.split('\n')) {
+      if (fence) {
+        if (closesFence(line, fence)) fence = null;
+        continue;
+      }
+      const opener = fenceOpener(line);
+      if (opener) { fence = opener; continue; }
+      const m = line.match(PROOF_LINE_RE);
+      if (m) proofs.push({ slug: m[1], text: m[2].trim(), task: block.taskNumber });
+      else if (PROOF_NEAR_MISS_RE.test(line)) nearMisses.push({ task: block.taskNumber, raw: line.trim() });
+    }
+    if (fence) unclosedFences.push(block.taskNumber);
+  }
+  return { proofs, nearMisses, unclosedFences };
+}
+
 // Within one task body, extracts the Step 2 Run:/Expected: pair (writing-plans'
 // "Run test to verify it fails" sub-step). Matched by step NUMBER, not by the
 // step's wording — real plans phrase the heading differently ("Run the new
@@ -230,6 +291,41 @@ function countTasks(text) {
   const batched = /^\*\*Execution:\*\*\s*batched\s*$/m.test(stripFencedCodeBlocks(header))
     || blocks.some((b) => /\[batch\]/i.test(b.title));
   return { tasks: blocks.length, batched };
+}
+
+// ── Check G: the plan's proofs and what counts as one (#4618) ──────────────
+// Pure readings shared by Check G (checks.js) and the packet's risk-flag-facts
+// producer, so the gate and the packet cannot disagree about what a proof is
+// or when a plan could not be read.
+const PROOF_MIN_CHARS = 20;
+const PROOF_FILLER_WORDS = new Set(['category', 'proof', 'risk', 'flag', 'the', 'a', 'an', 'for', 'of', 'this', 'is', 'and', 'covered', 'handled']);
+
+// null when the text is a proof; 'too-short' under PROOF_MIN_CHARS characters, or
+// when it holds no letter or digit at all (padding such as `--------------------`
+// says nothing, and is not a restatement of the category either);
+// 'restates-category' when nothing is left after the slug's own words and the fillers.
+function isSubstantiveProof(slug, text) {
+  const trimmed = String(text).trim();
+  if (Array.from(trimmed).length < PROOF_MIN_CHARS) return 'too-short';
+  const words = trimmed.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((word) => word !== '');
+  if (words.length === 0) return 'too-short';
+  const slugWords = new Set(slug.split('-'));
+  const rest = words.filter((word) => !slugWords.has(word) && !PROOF_FILLER_WORDS.has(word));
+  return rest.length === 0 ? 'restates-category' : null;
+}
+
+// plan text (already newline-normalized) -> { proofs, problems }: the plan's Proof lines and
+// every reason the plan could not be read with confidence (no tasks, a near-miss proof line,
+// an unclosed fence), in the order Check G reports them.
+function readPlanProofs(plan) {
+  const problems = [];
+  if (countTasks(plan).tasks === 0) problems.push({ source: 'plan', raw: 'no parseable tasks' });
+  const { proofs, nearMisses, unclosedFences } = extractProofLines(plan);
+  for (const { raw } of nearMisses) problems.push({ source: 'proof-line', raw });
+  // A fence left open swallowed the rest of its task, so a proof there reads as absent:
+  // say the plan could not be read, not that the proof is missing.
+  for (const task of unclosedFences) problems.push({ source: 'plan', raw: `unclosed code fence in task ${task}` });
+  return { proofs, problems };
 }
 
 // ── Check E inputs: the spec's acceptance-criterion clauses (#3099) ────────
@@ -618,6 +714,9 @@ module.exports = {
   extractScopeKeywords,
   extractPremiseRefs,
   extractTaskBlocks,
+  extractProofLines,
+  readPlanProofs,
+  isSubstantiveProof,
   extractStep1Text,
   extractStep2Verification,
   extractVerificationChecks,

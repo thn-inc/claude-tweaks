@@ -27,6 +27,14 @@ const ctxLib = require('./context');
 const NON_TERMINAL = new Set(['active', 'interrupted']);
 const RUN_STATE_STATUSES = new Set(['active', 'interrupted', 'clean']);
 
+// #5377: `env` (optional, last parameter of every git-reaching function below, `opts.env` on
+// checkRunIntegrity/checkBranchLanded) is the environment the git children run in. Absent, the call
+// builds exactly the runGit options it always did (no `env` key), so verbs and CLIs that do not pass one
+// keep the inherited environment.
+function gitOpts(env) {
+  return env ? { env } : undefined;
+}
+
 // run dirs live at {root}/.claude-tweaks/pipelines/{run-id} by anchoring
 // (_shared/pipeline-run-dir.md), so the repo root is three levels up.
 function repoRootOf(runDir) {
@@ -75,17 +83,17 @@ function realpathOrSelf(p) {
 // Shared by deriveBranch and worktreePathForBranch below — both read the same
 // `git worktree list --porcelain` output, so the cache lookup/populate
 // sequence lives here once instead of twice.
-function worktreeListStdout(root, cache) {
+function worktreeListStdout(root, cache, env) {
   if (cache && cache.worktreeList.has(root)) return cache.worktreeList.get(root);
-  const list = runGit(['worktree', 'list', '--porcelain'], root);
+  const list = runGit(['worktree', 'list', '--porcelain'], root, gitOpts(env));
   const stdout = list.failure || list.stdout === null ? null : list.stdout;
   if (cache) cache.worktreeList.set(root, stdout);
   return stdout;
 }
 
-function deriveBranch(root, worktreePath, cache) {
+function deriveBranch(root, worktreePath, cache, env) {
   if (!worktreePath) return null;
-  const stdout = worktreeListStdout(root, cache);
+  const stdout = worktreeListStdout(root, cache, env);
   if (stdout === null) return null;
   const target = realpathOrSelf(worktreePath);
   const realRoot = realpathOrSelf(root);
@@ -105,9 +113,9 @@ function deriveBranch(root, worktreePath, cache) {
 // when run-state.json carries no `worktree` field at all — never the main
 // checkout, never a dangling (prunable) entry, matching deriveBranch's own
 // liveness rule exactly.
-function worktreePathForBranch(root, branch, cache) {
+function worktreePathForBranch(root, branch, cache, env) {
   if (!branch) return null;
-  const stdout = worktreeListStdout(root, cache);
+  const stdout = worktreeListStdout(root, cache, env);
   if (stdout === null) return null;
   const realRoot = realpathOrSelf(root);
   for (const entry of parseWorktreeList(stdout)) {
@@ -128,9 +136,9 @@ function worktreePathForBranch(root, branch, cache) {
 // worse, match some unrelated merged branch and manufacture a false
 // 'shipped-unclosed'. This is the bound on the precision/coverage trade the
 // whole fallback makes.
-function branchExists(root, branch) {
+function branchExists(root, branch, env) {
   if (!branch) return false;
-  const r = runGit(['rev-parse', '--verify', '--quiet', '--end-of-options', `refs/heads/${branch}`], root);
+  const r = runGit(['rev-parse', '--verify', '--quiet', '--end-of-options', `refs/heads/${branch}`], root, gitOpts(env));
   return !r.failure && r.stdout !== null && r.stdout.trim() !== '';
 }
 
@@ -171,11 +179,11 @@ function branchFromDecisions(runDir) {
 // 'in-progress' permanently for exactly the runs the shipped-unclosed advisory
 // exists to catch. Two artifacts outlive the worktree; try them in the order
 // the record specifies, most durable first.
-function fallbackBranch(root, runDir, state) {
+function fallbackBranch(root, runDir, state, env) {
   const fromStamp = state && state.pr && typeof state.pr.branch === 'string' ? state.pr.branch : null;
-  if (branchExists(root, fromStamp)) return fromStamp;
+  if (branchExists(root, fromStamp, env)) return fromStamp;
   const fromDecisions = branchFromDecisions(runDir);
-  if (branchExists(root, fromDecisions)) return fromDecisions;
+  if (branchExists(root, fromDecisions, env)) return fromDecisions;
   return null;
 }
 
@@ -183,7 +191,7 @@ function fallbackBranch(root, runDir, state) {
 // merge-base --is-ancestor answers via exit code: 0 = ancestor (success), 1 =
 // not an ancestor (classified 'git-error' by runGit — the one failure kind that
 // is a real answer). Indeterminate kinds (timeout/spawn/no-git) -> null.
-function mergedEvidence(root, branch, integration) {
+function mergedEvidence(root, branch, integration, env) {
   // Belt-and-braces: deriveBranch should never hand back the integration
   // branch itself for a real worktree, but a worktree standing ON the
   // integration branch trivially satisfies `merge-base --is-ancestor X X`
@@ -194,10 +202,10 @@ function mergedEvidence(root, branch, integration) {
   // origin/-prefixed) below, since the actual merge-base/cherry calls
   // benefit from that freshness the same way they did before #1861.
   if (branch === bareIntegrationName(integration)) return null;
-  const anc = runGit(['merge-base', '--is-ancestor', '--end-of-options', branch, integration], root);
+  const anc = runGit(['merge-base', '--is-ancestor', '--end-of-options', branch, integration], root, gitOpts(env));
   if (!anc.failure) return 'ancestor';
   if (anc.failure !== 'git-error') return null;
-  const cherry = runGit(['cherry', '--end-of-options', integration, branch], root);
+  const cherry = runGit(['cherry', '--end-of-options', integration, branch], root, gitOpts(env));
   if (cherry.failure || cherry.stdout === null) return null;
   const lines = cherry.stdout.split('\n').filter(Boolean);
   // Defensive: an empty cherry list should already have been caught above —
@@ -233,7 +241,7 @@ function runStartIso(runDir) {
 // `--since` filters on committer date, so a rebase/amend that rewrites
 // timestamps can move a commit out of the window — an accepted edge case, not
 // the freshly-created-worktree path this guards.
-function hasCommitSinceRunStart(root, branch, runDir) {
+function hasCommitSinceRunStart(root, branch, runDir, env) {
   const since = runStartIso(runDir);
   if (!since) return false;
   // `--end-of-options` (not `--`) is what stops a ref name beginning with `-`
@@ -243,7 +251,7 @@ function hasCommitSinceRunStart(root, branch, runDir) {
   // convention-adoption on new code, not an exploitable hole being closed — the
   // two pre-existing call sites in mergedEvidence() above still use the old
   // shape and migrate separately.
-  const log = runGit(['log', `--since=${since}`, '--format=%H', '--max-count=1', '--end-of-options', branch, '--'], root);
+  const log = runGit(['log', `--since=${since}`, '--format=%H', '--max-count=1', '--end-of-options', branch, '--'], root, gitOpts(env));
   if (log.failure || log.stdout === null) return false;
   return log.stdout.trim() !== '';
 }
@@ -256,21 +264,21 @@ function hasCommitSinceRunStart(root, branch, runDir) {
 // that stops early (no branch, no integration ref) still reports what it found.
 // `hasCommit` is computed only for 'ancestor' (the corroboration gate, #1463);
 // 'cherry' needs none — `git cherry` only reports commits the branch really has.
-function branchMergeEvidence(runDir, state, cache) {
+function branchMergeEvidence(runDir, state, cache, env) {
   const out = { branch: null, merged: null, hasCommit: false };
   const root = repoRootOf(runDir);
-  out.branch = deriveBranch(root, state.worktree || null, cache);
+  out.branch = deriveBranch(root, state.worktree || null, cache, env);
   // Live worktree wins; the fallback runs only when it can't answer (#1672).
-  if (!out.branch) out.branch = fallbackBranch(root, runDir, state);
+  if (!out.branch) out.branch = fallbackBranch(root, runDir, state, env);
   if (!out.branch) return out;
   // #1861: mergedEvidence normalizes for its own self-ancestor guard --
   // kept un-bare-ified here so a genuine cross-branch check still benefits
   // from resolveIntegrationBranch's origin/-prefixed freshness upgrade
   // (#1688), same as before #1861.
-  const integration = resolveIntegrationBranch(root, cache);
+  const integration = resolveIntegrationBranch(root, cache, gitOpts(env));
   if (!integration) return out;
-  out.merged = mergedEvidence(root, out.branch, integration);
-  if (out.merged === 'ancestor') out.hasCommit = hasCommitSinceRunStart(root, out.branch, runDir);
+  out.merged = mergedEvidence(root, out.branch, integration, env);
+  if (out.merged === 'ancestor') out.hasCommit = hasCommitSinceRunStart(root, out.branch, runDir, env);
   return out;
 }
 
@@ -281,7 +289,7 @@ function checkRunIntegrity(runDir, opts = {}) {
   try {
     const state = readValidatedRunState(runDir);
     if (!state || !NON_TERMINAL.has(state.status)) return inProgress;
-    const found = branchMergeEvidence(runDir, state, cache);
+    const found = branchMergeEvidence(runDir, state, cache, opts.env);
     evidence.branch = found.branch;
     evidence.merged = found.merged;
     if (evidence.merged !== 'ancestor' && evidence.merged !== 'cherry') return inProgress;
@@ -315,7 +323,7 @@ function checkBranchLanded(runDir, opts = {}) {
   try {
     const state = readValidatedRunState(runDir);
     if (!state) return { landed: null, evidence };
-    const found = branchMergeEvidence(runDir, state, opts.cache);
+    const found = branchMergeEvidence(runDir, state, opts.cache, opts.env);
     evidence.branch = found.branch;
     evidence.merged = found.merged;
     if (found.merged === 'cherry') return { landed: true, evidence };
@@ -341,6 +349,9 @@ module.exports = {
   // only evaluates NON_TERMINAL ('active'/'interrupted') statuses, so a
   // 'clean' dir can't reuse that entry point and needs this piece directly.
   fallbackBranch,
+  // #3977: the run-disposition report needs the recorded branch NAME even when
+  // the branch is gone (fallbackBranch returns only a branch that still exists).
+  branchFromDecisions,
   worktreePathForBranch,
   // #3973: run-liveness ages a legacy run from the same run-id prefix.
   runStartIso,

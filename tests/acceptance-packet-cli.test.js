@@ -1,12 +1,15 @@
 'use strict';
 const { test } = require('node:test');
+const tokenPassCalls = require('./helpers/stub-token-pass').installTokenPassStub();
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
+const { runCliSync, spawnCli } = require('./helpers/run-cli');
 const { gitRepo, fixtureGit } = require('./helpers/git-fixtures');
+const { STUB_SKIP } = require('./helpers/path-stub');
 const { chmodDenialSkip } = require('./helpers/root');
+const { archiveRunDir } = require('../plugin/bin/lib/reconcile/archive-merged');
 const { QA_STAMP_NAME } = require('../plugin/bin/lib/verify/qa-stamp');
 const { readRecord, writeRecord, defaultFacets } = require('../plugin/bin/lib/issues/local-store');
 const { LOCAL_START, LOCAL_END, MAX_PACKET_CHARS, PACKET_MARKER } = require('../plugin/bin/lib/wrap-up/packet-contract');
@@ -57,6 +60,8 @@ function fakeGit({ revParse = {}, diff = null, log = '', mergeBase = null } = {}
       return diff;
     }
     if (args[0] === 'log') return log;
+    // The recording's destination check: exit 0 is ignored, so a stubbed run records as usual.
+    if (args[0] === '-C' && args[2] === 'check-ignore') return '';
     if (args[0] === 'merge-base') {
       if (mergeBase === null) throw new Error('merge-base failed');
       return `${mergeBase}\n`;
@@ -119,10 +124,17 @@ test('--help after a subcommand prints usage with nothing else run', (t) => {
   assert.match(h.stdout(), /usage:/);
 });
 
-test('a real subprocess answers --help', () => {
-  const result = spawnSync(process.execPath, [BIN, '--help'], { windowsHide: true, encoding: 'utf8' });
-  assert.equal(result.status, 0, result.stderr);
+test('run answers --help through the in-process runner', () => {
+  const result = runCliSync(BIN, ['--help'], { fresh: true });
+  assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /usage:/);
+});
+
+test('a real subprocess refuses an unknown subcommand with exit 2 and the usage on stderr', () => {
+  // real process: proves the script entry's exit code and stderr
+  const result = spawnCli(BIN, ['frobnicate']);
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /acceptance-packet\.js: .*\n[\s\S]*usage:/);
 });
 
 for (const [name, argv] of [
@@ -372,6 +384,80 @@ test('no --run reads no decisions log and no findings', (t) => {
   assert.deepEqual(idsOf(facts, 'finding'), []);
 });
 
+// ---- gather: settled planning lines (#6054) ----
+
+const PLANNING = '## Planning Decisions';
+const SETTLED_ONE = 'Settled at planning: alpha — chose x; not y';
+const SETTLED_TWO = 'Settled at planning: beta — chose p; not q';
+const specWithSettled = `# Spec\n\n${PLANNING}\n${SETTLED_ONE}\n${SETTLED_TWO}\n`;
+
+test('gather lists settled planning lines from the run dir\'s materialized spec', (t) => {
+  const ws = workspace(t);
+  writeText(path.join(ws.runDir, 'work', '7-spec.md'), specWithSettled);
+  const { facts } = gather(ws, ['--run', ws.runDir]);
+  assert.deepEqual(idsOf(facts, 'finding'), ['finding:1', 'finding:2']);
+  assert.deepEqual(facts.facts.filter((f) => f.kind === 'finding').map((f) => f.text), [SETTLED_ONE, SETTLED_TWO]);
+});
+
+test('gather falls back to --spec for the record\'s own spec', (t) => {
+  const ws = workspace(t);
+  const spec = writeText(ws.file('spec.md'), `${PLANNING}\n${SETTLED_ONE}\n`);
+  const { facts } = gather(ws, ['--run', ws.runDir, '--spec', spec]);
+  assert.deepEqual(idsOf(facts, 'finding'), ['finding:1']);
+  assert.equal(factOf(facts, 'finding:1').text, SETTLED_ONE);
+});
+
+test('gather reads a spec in the multi-spec spec-{n}/work layout', (t) => {
+  const ws = workspace(t);
+  writeText(path.join(ws.runDir, 'spec-7', 'work', '7-spec.md'), specWithSettled);
+  const { facts } = gather(ws, ['--run', ws.runDir]);
+  assert.deepEqual(idsOf(facts, 'finding'), ['finding:1', 'finding:2']);
+});
+
+test('gather reads the archived run dir\'s spec when the live run dir has none', (t) => {
+  const ws = workspace(t);
+  writeText(path.join(ws.root, '.claude-tweaks', 'pipelines', 'archive', 'run-1', 'work', '7-spec.md'), specWithSettled);
+  const { facts } = gather(ws, ['--run', ws.runDir]);
+  assert.deepEqual(idsOf(facts, 'finding'), ['finding:1', 'finding:2']);
+});
+
+test('the run dir\'s spec wins over --spec when both carry settled lines', (t) => {
+  const ws = workspace(t);
+  writeText(path.join(ws.runDir, 'work', '7-spec.md'), `${PLANNING}\n${SETTLED_ONE}\n`);
+  const spec = writeText(ws.file('spec.md'), `${PLANNING}\n${SETTLED_TWO}\n`);
+  const { facts } = gather(ws, ['--run', ws.runDir, '--spec', spec]);
+  assert.deepEqual(facts.facts.filter((f) => f.kind === 'finding').map((f) => f.text), [SETTLED_ONE]);
+});
+
+test('gather with no run dir reads --spec', (t) => {
+  const ws = workspace(t);
+  const spec = writeText(ws.file('spec.md'), `${PLANNING}\n${SETTLED_ONE}\n`);
+  const { facts } = gather(ws, ['--spec', spec]);
+  assert.deepEqual(idsOf(facts, 'finding'), ['finding:1']);
+});
+
+test('a spec with no Planning Decisions, or a missing or unreadable one, leaves the facts unchanged', (t) => {
+  const ws = workspace(t);
+  // The evidence facts are compared; partial notes say whether a spec was found, which is not this claim.
+  const baseline = gather(ws, ['--run', ws.runDir]).facts.facts;
+  const plain = writeText(ws.file('plain.md'), '# Spec\n\nNo planning section here.\n');
+  assert.deepEqual(gather(ws, ['--run', ws.runDir, '--spec', plain]).facts.facts, baseline);
+  assert.deepEqual(gather(ws, ['--run', ws.runDir, '--spec', ws.file('absent.md')]).facts.facts, baseline);
+  // A directory at the spec path: readFile throws, and the read must come back null, not throw.
+  fs.mkdirSync(path.join(ws.runDir, 'work', '7-spec.md'), { recursive: true });
+  assert.deepEqual(gather(ws, ['--run', ws.runDir]).facts.facts, baseline);
+});
+
+test('unreadable console findings still list the settled lines', (t) => {
+  const ws = workspace(t);
+  writeText(path.join(ws.runDir, 'decisions.md'), `${stagedLow('src/open.js:9')}\n`);
+  writeText(path.join(ws.runDir, 'work', '7-spec.md'), specWithSettled);
+  const denied = () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); };
+  const { facts } = gather(ws, ['--run', ws.runDir], { readdir: denied });
+  assert.deepEqual(idsOf(facts, 'finding'), ['finding:1', 'finding:2']);
+  assert.ok(facts.partial.includes('review findings not read — low-confidence findings not listed'));
+});
+
 test('Q13: a logged selection with no QA record states the gap', (t) => {
   const ws = workspace(t);
   writeText(path.join(ws.runDir, 'decisions.md'), '- AUTO 10:00:00 — QA scoped: 2/9.\n');
@@ -381,9 +467,18 @@ test('Q13: a logged selection with no QA record states the gap', (t) => {
 
 // ---- gather: pass-through inputs ----
 
-test('--recordings, --flags, --decision-items, --links, the base urls, --surface, --deploy and --ac-results all reach the facts', (t) => {
+test('--recordings is gone: an unknown argument, with no facts written', (t) => {
   const ws = workspace(t);
+  const h = harness(ws);
+  const out = ws.file('facts.json');
   const recordings = writeJson(ws.file('recordings.json'), [{ id: 'r1', text: 'walkthrough', url: 'https://videos.example/r1' }]);
+  assert.equal(run(['gather', '--record', '7', '--out', out, '--recordings', recordings], h.deps), 2);
+  assert.match(h.stderr(), /unknown argument: --recordings/);
+  assert.throws(() => fs.statSync(out));
+});
+
+test('--flags, --decision-items, --links, the base urls, --surface, --deploy and --ac-results all reach the facts', (t) => {
+  const ws = workspace(t);
   const flags = writeJson(ws.file('flags.json'), [{ id: 'f1', text: 'schema change' }]);
   const decisionItems = writeJson(ws.file('decisions.json'), [{ id: 'd1', text: 'pick one' }]);
   const links = writeJson(ws.file('links.json'), [
@@ -395,11 +490,10 @@ test('--recordings, --flags, --decision-items, --links, the base urls, --surface
   const spec = writeText(ws.file('spec.md'), '## Acceptance Criteria\n\n1. It works.\n');
   const ac = writeJson(ws.file('ac.json'), { 1: 'met' });
   const { facts } = gather(ws, [
-    '--recordings', recordings, '--flags', flags, '--decision-items', decisionItems, '--links', links,
+    '--flags', flags, '--decision-items', decisionItems, '--links', links,
     '--local-base-url', 'http://localhost:3000', '--dev-base-url', 'https://dev.example', '--surface', 'Web',
     '--deploy', deploy, '--spec', spec, '--ac-results', ac,
   ]);
-  assert.equal(factOf(facts, 'recording:r1').url, 'https://videos.example/r1');
   assert.equal(factOf(facts, 'flag:f1').text, 'schema change');
   assert.equal(factOf(facts, 'decision:d1').text, 'pick one');
   assert.ok(factOf(facts, 'link:local'));
@@ -410,7 +504,7 @@ test('--recordings, --flags, --decision-items, --links, the base urls, --surface
   assert.equal(factOf(facts, 'check:ac-1').status, 'passed');
 });
 
-for (const flag of ['--recordings', '--flags', '--decision-items', '--links']) {
+for (const flag of ['--flags', '--proofs', '--decision-items', '--links']) {
   test(`an unparseable or mis-shaped ${flag} file is a stated partial, not a crash`, (t) => {
     const ws = workspace(t);
     const note = `${flag} input not read — treated as absent`;
@@ -427,6 +521,26 @@ test('an unreadable --deploy or --ac-results is a stated partial', (t) => {
   assert.ok(facts.partial.includes('--deploy input not read — treated as absent'));
   assert.ok(facts.partial.includes('--ac-results input not read — treated as absent'));
   assert.equal(factOf(facts, 'deploy:status').target, 'local');
+});
+
+test('AC2.6: a malformed deploy ref is not read', (t) => {
+  const ws = workspace(t);
+  const note = '--deploy input not read — treated as absent';
+  for (const ref of ['not a sha', '0123ab', 'ABCDEF0', 'g123abc', 'a'.repeat(65), 123, null, '', ['0123abc']]) {
+    const deploy = writeJson(ws.file('deploy.json'), { target: 'dev', ref });
+    const { facts } = gather(ws, ['--deploy', deploy]);
+    assert.ok(facts.partial.includes(note), JSON.stringify(ref));
+    const fact = factOf(facts, 'deploy:status');
+    assert.equal(fact.target, 'local', JSON.stringify(ref));
+    assert.equal(fact.text, 'target: local');
+    assert.ok(!Object.hasOwn(fact, 'ref'), JSON.stringify(ref));
+  }
+  for (const ref of ['0123abc', 'f'.repeat(40), 'a'.repeat(64)]) {
+    const deploy = writeJson(ws.file('deploy.json'), { target: 'dev', live: true, ref });
+    const { facts } = gather(ws, ['--deploy', deploy]);
+    assert.ok(!facts.partial.includes(note), ref);
+    assert.equal(factOf(facts, 'deploy:status').ref, ref);
+  }
 });
 
 test('a story file that will not read is a stated partial', (t) => {
@@ -585,7 +699,13 @@ test('snapshot copies the reports into the run dir', (t) => {
   assert.equal(code, 0, stderr);
   const manifest = JSON.parse(stdout);
   assert.deepEqual(manifest, readJson(inputs(ws, 'manifest.json')));
-  assert.deepEqual(manifest, { schemaVersion: 1, head: H, mergeBase: MB, files: { verifyReport: 'copied', qaReport: 'copied', qaStamp: 'copied' } });
+  assert.deepEqual(manifest, {
+    schemaVersion: 1,
+    head: H,
+    mergeBase: MB,
+    files: { verifyReport: 'copied', qaReport: 'copied', qaStamp: 'copied' },
+    recording: { status: 'not-run', reason: 'no-story' },
+  });
   assert.deepEqual(readJson(inputs(ws, 'verify-report.json')), REPORT);
   assert.equal(readJson(inputs(ws, 'qa-stamp.json')).sha, H);
   assert.deepEqual(readJson(inputs(ws, 'qa-report.json')).stories[0].id, 'neg-x');
@@ -721,6 +841,537 @@ test('a snapshot write failure exits 3', (t) => {
   const { code, stderr } = snapshot(ws, { git });
   assert.equal(code, 3);
   assert.match(stderr, /packet-inputs/);
+});
+
+// ---- the walkthrough recording ----
+
+const GIF_BYTES = 'GIF';
+const LIVE_GIF = '.claude-tweaks/pipelines/run-1/packet-inputs/walkthrough.gif';
+const ARCHIVED_GIF = '.claude-tweaks/pipelines/archive/run-1/packet-inputs/walkthrough.gif';
+const NO_FRAMES = { status: 'not-run', reason: 'no-happy-path-screenshots' };
+const SELECTED = '- AUTO 10:00:00 — QA scoped: 1/1.\n';
+const STORY_FILE = 'stories:\n  - id: sign-in\n    name: Sign in\n  - id: neg-bad\n    name: Bad\n';
+
+// A finished QA run on disk: its report, the stories it read, and each story's screenshots.
+function qaRun(ws, {
+  stories = [
+    { id: 'sign-in', name: 'Sign in', status: 'PASS', frames: ['00_open.png', '01_submit.png', '01_submit-raw.png'] },
+    { id: 'neg-bad', name: 'Bad', status: 'PASS', frames: ['00_err.png'] },
+  ],
+  baseUrl = 'http://localhost:3000',
+  storyFile = STORY_FILE,
+} = {}) {
+  const qaDir = path.join(ws.root, '.claude-tweaks', 'artifacts', 'screenshots', 'qa', 'r1');
+  const entries = stories.map(({ frames = [], ...story }) => {
+    const dir = path.join(qaDir, story.id);
+    frames.forEach((name) => writeText(path.join(dir, name), 'png'));
+    return { screenshot_dir: dir, ...story };
+  });
+  writeJson(path.join(qaDir, 'report.json'), { base_url: baseUrl, stories_dir: 'stories', stories: entries });
+  if (storyFile !== null) writeText(path.join(ws.root, 'stories', 'app.yaml'), storyFile);
+  writeText(path.join(ws.runDir, 'decisions.md'), SELECTED);
+  return qaDir;
+}
+
+function encoderStub(impl = () => ({ buffer: Buffer.from(GIF_BYTES) })) {
+  const calls = [];
+  return {
+    calls,
+    encodeWalkthrough: (spec) => {
+      calls.push(spec);
+      return impl(spec);
+    },
+  };
+}
+
+const AHEAD = () => fakeGit({ revParse: { HEAD: H }, mergeBase: MB }).git;
+const PRIVATE_REPO = () => JSON.stringify({ isPrivate: true });
+
+function snapshotRecording(ws, overrides = {}) {
+  const result = snapshot(ws, { git: AHEAD(), gh: PRIVATE_REPO, ...overrides });
+  assert.equal(result.code, 0, result.stderr);
+  return JSON.parse(result.stdout).recording;
+}
+
+function gatherRecording(ws, run = ws.runDir) {
+  const { facts } = gather(ws, ['--run', run]);
+  return factOf(facts, 'recording:walkthrough');
+}
+
+function recordingSection(ws) {
+  const h = harness(ws);
+  const narrative = writeJson(ws.file('narrative.json'), { schemaVersion: 1, claims: [] });
+  assert.equal(run(['render', '--facts', ws.file('facts.json'), '--narrative', narrative, '--out', ws.file('out.md')], h.deps), 0, h.stderr());
+  const lines = fs.readFileSync(ws.file('out.md'), 'utf8').split('\n');
+  const rest = lines.slice(lines.indexOf('### Recording') + 1);
+  return { section: rest.slice(0, rest.findIndex((line) => line.startsWith('### '))).join('\n'), markdown: lines.join('\n') };
+}
+
+test('AC1.2: snapshot encodes and gather links the path', (t) => {
+  const ws = workspace(t);
+  const qaDir = qaRun(ws);
+  const stub = encoderStub();
+  const recording = snapshotRecording(ws, { encodeWalkthrough: stub.encodeWalkthrough });
+
+  assert.equal(stub.calls.length, 1);
+  assert.deepEqual(stub.calls[0].framePaths, [
+    path.join(qaDir, 'sign-in', '00_open.png'),
+    path.join(qaDir, 'sign-in', '01_submit.png'),
+  ]);
+  assert.deepEqual(stub.calls[0].delays, [200, 400]);
+  assert.equal(stub.calls[0].width, 960);
+  assert.equal(stub.calls[0].budgetBytes, 8 * 1024 * 1024);
+  assert.equal(fs.readFileSync(inputs(ws, 'walkthrough.gif'), 'utf8'), GIF_BYTES);
+  assert.deepEqual(recording, {
+    status: 'passed', file: 'walkthrough.gif', text: 'Walkthrough of Sign in', captions: ['open', 'submit'], exposure: 'local-only', frames: 2,
+  });
+  assert.deepEqual(readJson(inputs(ws, 'manifest.json')).recording, recording);
+
+  const fact = gatherRecording(ws);
+  assert.equal(fact.url_or_path, LIVE_GIF);
+  assert.equal(fact.archive_path, ARCHIVED_GIF);
+  assert.equal(fact.exposure, 'local-only');
+  assert.equal(fact.redactions, 0);
+  assert.deepEqual(fact.captions, ['open', 'submit']);
+
+  const { section } = recordingSection(ws);
+  assert.ok(section.includes(`- Walkthrough of Sign in: \`${LIVE_GIF}\` (local-only)`), section);
+  assert.ok(section.includes(`once archived: \`${ARCHIVED_GIF}\``), section);
+});
+
+test("A1: snapshot's stdout carries the redacted strings, and the manifest on disk stays raw", (t) => {
+  const ws = workspace(t);
+  qaRun(ws, {
+    stories: [{ id: 'sign-in', name: 'Sign in as bob@example.com', status: 'PASS', frames: ['00_sk_live_abc.png', '01_ghs_abc123def.png'] }],
+  });
+  const raws = ['bob@example.com', 'sk_live_abc', 'ghs_abc123def'];
+  const passed = snapshot(ws, { git: AHEAD(), gh: PRIVATE_REPO, encodeWalkthrough: encoderStub().encodeWalkthrough });
+  assert.equal(passed.code, 0, passed.stderr);
+  for (const raw of raws) assert.ok(!passed.stdout.includes(raw), raw);
+  assert.deepEqual(JSON.parse(passed.stdout).recording.captions, ['[redacted]', '[redacted]']);
+  const manifest = readJson(inputs(ws, 'manifest.json')).recording;
+  assert.deepEqual(manifest.captions, ['sk_live_abc', 'ghs_abc123def'], 'local input stays raw');
+  assert.equal(manifest.text, 'Walkthrough of Sign in as bob@example.com');
+  assert.ok(!Object.hasOwn(JSON.parse(passed.stdout).recording, 'redactions'), 'stdout mirrors the manifest entry');
+});
+
+test("A1: snapshot's stdout carries a redacted failure, and the manifest on disk stays raw", (t) => {
+  const ws = workspace(t);
+  qaRun(ws);
+  const secret = 'eyJhbGciOiJIUzI1NiJ9.e30.abc';
+  const failed = snapshot(ws, {
+    git: AHEAD(), gh: PRIVATE_REPO, encodeWalkthrough: encoderStub(() => { throw new Error(`bad ${secret}`); }).encodeWalkthrough,
+  });
+  assert.equal(failed.code, 0, failed.stderr);
+  assert.ok(!failed.stdout.includes(secret));
+  assert.equal(JSON.parse(failed.stdout).recording.failure, 'bad [redacted]');
+  assert.equal(readJson(inputs(ws, 'manifest.json')).recording.failure, `bad ${secret}`);
+});
+
+test('a relative screenshot_dir resolves against the cwd, not the process', (t) => {
+  const ws = workspace(t);
+  const qaDir = qaRun(ws);
+  const qaReport = path.join(qaDir, 'report.json');
+  const report = readJson(qaReport);
+  report.stories = report.stories.map((story) => ({ ...story, screenshot_dir: path.relative(ws.root, story.screenshot_dir) }));
+  writeJson(qaReport, report);
+  const stub = encoderStub();
+  assert.equal(snapshotRecording(ws, { encodeWalkthrough: stub.encodeWalkthrough }).status, 'passed');
+  assert.equal(stub.calls[0].framePaths[0], path.join(qaDir, 'sign-in', '00_open.png'));
+});
+
+for (const [name, gh] of [
+  ['public', () => JSON.stringify({ isPrivate: false })],
+  ['private', PRIVATE_REPO],
+  ['failed', () => { throw new Error('gh failed'); }],
+]) {
+  test(`AC2.2: ${name} visibility stays local-only with nothing embedded`, (t) => {
+    const ws = workspace(t);
+    qaRun(ws);
+    const calls = [];
+    const recording = snapshotRecording(ws, {
+      encodeWalkthrough: encoderStub().encodeWalkthrough,
+      gh: (args) => {
+        calls.push(args);
+        return gh(args);
+      },
+    });
+    assert.deepEqual(calls, [['repo', 'view', '--json', 'isPrivate']]);
+    assert.equal(recording.exposure, 'local-only');
+    gatherRecording(ws);
+    const { section, markdown } = recordingSection(ws);
+    assert.ok(section.includes(LIVE_GIF), section);
+    assert.ok(!markdown.includes('!['), markdown);
+    assert.ok(!markdown.includes('<img'), markdown);
+  });
+}
+
+test('the stub throwing gives encoder-failed and exit 0', (t) => {
+  const ws = workspace(t);
+  qaRun(ws);
+  const calls = [];
+  const stub = encoderStub(() => { throw new Error('over budget'); });
+  const recording = snapshotRecording(ws, {
+    encodeWalkthrough: stub.encodeWalkthrough,
+    gh: (args) => { calls.push(args); return PRIVATE_REPO(); },
+  });
+  assert.deepEqual(recording, { status: 'not-run', reason: 'encoder-failed', failure: 'over budget' });
+  assert.deepEqual(calls, [], 'visibility is read only once a GIF exists');
+  assert.throws(() => fs.statSync(inputs(ws, 'walkthrough.gif')));
+  const fact = gatherRecording(ws);
+  assert.equal(fact.status, 'not-run');
+  assert.equal(fact.reason, 'encoder-failed');
+  assert.equal(fact.failure, 'over budget');
+  assert.ok(!Object.hasOwn(fact, 'url_or_path'));
+});
+
+test('a failed GIF write gives encoder-failed and exit 0', (t) => {
+  const ws = workspace(t);
+  qaRun(ws);
+  fs.mkdirSync(inputs(ws, 'walkthrough.gif'), { recursive: true });
+  writeText(path.join(inputs(ws, 'walkthrough.gif'), 'in-the-way'), 'x');
+  const recording = snapshotRecording(ws, { encodeWalkthrough: encoderStub().encodeWalkthrough });
+  assert.equal(recording.status, 'not-run');
+  assert.equal(recording.reason, 'encoder-failed');
+  assert.ok(!recording.failure.includes(ws.root), recording.failure);
+  assert.ok(readJson(inputs(ws, 'manifest.json')), 'the manifest still lands');
+});
+
+// A workspace whose checkout is a real git repository, for what only real git can answer.
+function repoWorkspace(t) {
+  const root = gitRepo();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', 'run-1');
+  fs.mkdirSync(runDir, { recursive: true });
+  const gitDir = path.join(root, 'gitdir');
+  fs.mkdirSync(gitDir);
+  return { root, runDir, gitDir, file: (name) => path.join(root, 'work', name) };
+}
+
+// The stub's answers for the refs, and real git for the question asked in the run's own directory.
+const CHECK_IGNORE = ['check-ignore', '-q', '--', 'walkthrough.gif'];
+const realGitInDir = (args) => fixtureGit(args, { env: realGitEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+const realCheckIgnore = () => {
+  const refs = AHEAD();
+  return (args) => (args[0] === '-C' ? realGitInDir(args) : refs(args));
+};
+
+test('a destination git does not ignore gives encoder-failed naming it, with no encode and no GIF', (t) => {
+  const ws = repoWorkspace(t);
+  qaRun(ws);
+  const earlier = writeText(inputs(ws, 'walkthrough.gif'), 'an earlier GIF');
+  const stub = encoderStub();
+  const recording = snapshotRecording(ws, { git: realCheckIgnore(), encodeWalkthrough: stub.encodeWalkthrough });
+  assert.deepEqual(recording, {
+    status: 'not-run', reason: 'encoder-failed', failure: `${LIVE_GIF} is not ignored by git, so the GIF was not written`,
+  });
+  assert.deepEqual(stub.calls, []);
+  assert.throws(() => fs.statSync(earlier));
+  const fact = gatherRecording(ws);
+  assert.equal(fact.failure, recording.failure);
+});
+
+test('a destination git gives no answer for is held with no encode and no GIF, unless git says it is no repository', (t) => {
+  const refs = AHEAD();
+  const answering = (status, stderr) => (args) => {
+    if (args[2] !== 'check-ignore') return refs(args);
+    throw Object.assign(new Error('git could not answer'), { status, stderr });
+  };
+  const noAnswers = [[128, 'fatal: detected dubious ownership in repository'], [null, ''], [undefined, undefined], [2, 'fatal: not a git repository']];
+  for (const [status, stderr] of noAnswers) {
+    const ws = repoWorkspace(t);
+    qaRun(ws);
+    const stub = encoderStub();
+    assert.deepEqual(snapshotRecording(ws, { git: answering(status, stderr), encodeWalkthrough: stub.encodeWalkthrough }), {
+      status: 'not-run', reason: 'encoder-failed', failure: `git could not say whether ${LIVE_GIF} is ignored, so the GIF was not written`,
+    }, String(status));
+    assert.deepEqual(stub.calls, [], String(status));
+    assert.throws(() => fs.statSync(inputs(ws, 'walkthrough.gif')), String(status));
+  }
+  const ws = repoWorkspace(t);
+  qaRun(ws);
+  const stub = encoderStub();
+  const notARepository = answering(128, 'fatal: not a git repository (or any of the parent directories): .git');
+  assert.equal(snapshotRecording(ws, { git: notARepository, encodeWalkthrough: stub.encodeWalkthrough }).status, 'passed');
+});
+
+test('an ignored destination records as usual', (t) => {
+  const ws = repoWorkspace(t);
+  qaRun(ws);
+  writeText(path.join(ws.root, '.gitignore'), '.claude-tweaks/pipelines/*/*\n');
+  const stub = encoderStub();
+  assert.equal(snapshotRecording(ws, { git: realCheckIgnore(), encodeWalkthrough: stub.encodeWalkthrough }).status, 'passed');
+  assert.equal(fs.readFileSync(inputs(ws, 'walkthrough.gif'), 'utf8'), GIF_BYTES);
+});
+
+test('a directory outside any git repository records as usual, since nothing can commit it', (t) => {
+  const ws = workspace(t);
+  qaRun(ws);
+  fs.mkdirSync(path.dirname(inputs(ws, 'walkthrough.gif')), { recursive: true });
+  assert.throws(() => realGitInDir(['-C', ws.runDir, ...CHECK_IGNORE]), { status: 128 }, 'the fixture is no repository to git');
+  const stub = encoderStub();
+  assert.equal(snapshotRecording(ws, { git: realCheckIgnore(), encodeWalkthrough: stub.encodeWalkthrough }).status, 'passed');
+  assert.equal(fs.readFileSync(inputs(ws, 'walkthrough.gif'), 'utf8'), GIF_BYTES);
+});
+
+test('a failed manifest write after a new GIF removes that GIF, and the exit stays 3', (t) => {
+  const ws = workspace(t);
+  qaRun(ws);
+  const writeAtomic = (file, content) => {
+    if (path.basename(file) === 'manifest.json') throw new Error('disk full');
+    fs.writeFileSync(file, content);
+  };
+  const result = snapshot(ws, { git: AHEAD(), gh: PRIVATE_REPO, encodeWalkthrough: encoderStub().encodeWalkthrough, writeAtomic });
+  assert.equal(result.code, 3);
+  assert.match(result.stderr, /could not write .*disk full/);
+  assert.throws(() => fs.statSync(inputs(ws, 'walkthrough.gif')));
+  assert.throws(() => fs.statSync(inputs(ws, 'manifest.json')));
+});
+
+test('a failed removal of that GIF is stated, and the exit stays 3', (t) => {
+  const ws = workspace(t);
+  qaRun(ws);
+  const writeAtomic = (file, content) => {
+    if (path.basename(file) === 'manifest.json') throw new Error('disk full');
+    fs.writeFileSync(file, content);
+  };
+  const removeFile = () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); };
+  const result = snapshot(ws, { git: AHEAD(), gh: PRIVATE_REPO, encodeWalkthrough: encoderStub().encodeWalkthrough, writeAtomic, removeFile });
+  assert.equal(result.code, 3);
+  assert.ok(result.stderr.includes(`could not remove ${inputs(ws, 'walkthrough.gif')}`), result.stderr);
+});
+
+test('a write failure ahead of the encode leaves the earlier snapshot\'s GIF', (t) => {
+  const ws = workspace(t);
+  qaRun(ws);
+  const gif = writeText(inputs(ws, 'walkthrough.gif'), 'an earlier GIF');
+  const result = snapshot(ws, { git: AHEAD(), mkdir: () => { throw new Error('denied'); } });
+  assert.equal(result.code, 3);
+  assert.equal(fs.readFileSync(gif, 'utf8'), 'an earlier GIF');
+});
+
+test('the no-commits skip leaves an earlier GIF byte-unchanged, with no encode', (t) => {
+  const ws = workspace(t);
+  qaRun(ws);
+  const gif = writeText(inputs(ws, 'walkthrough.gif'), 'an earlier GIF');
+  const stub = encoderStub();
+  const result = snapshot(ws, { git: fakeGit({ revParse: { HEAD: H }, mergeBase: H }).git, encodeWalkthrough: stub.encodeWalkthrough });
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), { skipped: 'no commits ahead of base' });
+  assert.deepEqual(stub.calls, []);
+  assert.equal(fs.readFileSync(gif, 'utf8'), 'an earlier GIF');
+});
+
+test('no QA report gives no-story', (t) => {
+  const ws = workspace(t);
+  const stub = encoderStub();
+  const recording = snapshotRecording(ws, {
+    encodeWalkthrough: stub.encodeWalkthrough,
+    gh: (args) => { throw new Error(`unexpected gh ${args.join(' ')}`); },
+  });
+  assert.deepEqual(recording, { status: 'not-run', reason: 'no-story' });
+  assert.deepEqual(stub.calls, []);
+  const fact = gatherRecording(ws);
+  assert.equal(fact.reason, 'no-story');
+  const { section, markdown } = recordingSection(ws);
+  assert.equal(section.trim(), 'not recorded');
+  assert.ok(!markdown.includes('recording:walkthrough'), 'no-story is no gap');
+});
+
+test('a non-local base url gives no-local-base-url and no encode', (t) => {
+  const ws = workspace(t);
+  qaRun(ws, { baseUrl: 'https://dev.example' });
+  const stub = encoderStub();
+  assert.deepEqual(snapshotRecording(ws, { encodeWalkthrough: stub.encodeWalkthrough }), { status: 'not-run', reason: 'no-local-base-url' });
+  assert.deepEqual(stub.calls, []);
+});
+
+test('AC5: an unreadable QA report gives no-happy-path-screenshots', (t) => {
+  const ws = workspace(t);
+  const qaDir = qaRun(ws);
+  writeText(path.join(qaDir, 'report.json'), '{not json');
+  assert.deepEqual(snapshotRecording(ws), NO_FRAMES);
+  gatherRecording(ws);
+  const { markdown } = recordingSection(ws);
+  assert.match(markdown, /recording:walkthrough/, 'a recording expected and impossible is a gap');
+});
+
+test('AC5: a report with no stories list gives no-happy-path-screenshots', (t) => {
+  const ws = workspace(t);
+  const qaDir = qaRun(ws);
+  writeJson(path.join(qaDir, 'report.json'), { base_url: 'http://localhost:3000' });
+  assert.deepEqual(snapshotRecording(ws), NO_FRAMES);
+});
+
+test('AC5: decisions.md selecting stories with no report gives no-happy-path-screenshots', (t) => {
+  const ws = workspace(t);
+  writeText(path.join(ws.runDir, 'decisions.md'), SELECTED);
+  assert.deepEqual(snapshotRecording(ws), NO_FRAMES);
+});
+
+test('a stamp at head with no report gives no-happy-path-screenshots', (t) => {
+  const ws = workspace(t);
+  writeStamp(ws.gitDir);
+  assert.deepEqual(snapshotRecording(ws), NO_FRAMES);
+});
+
+test('a missing stories directory with a report listing stories gives no-happy-path-screenshots', (t) => {
+  const ws = workspace(t);
+  qaRun(ws, { storyFile: null });
+  assert.deepEqual(snapshotRecording(ws), NO_FRAMES);
+});
+
+test('a report with no stories_dir reads the default stories directory', (t) => {
+  const ws = workspace(t);
+  const qaDir = qaRun(ws);
+  const qaReport = path.join(qaDir, 'report.json');
+  const { stories_dir: _dropped, ...report } = readJson(qaReport);
+  writeJson(qaReport, report);
+  assert.equal(snapshotRecording(ws, { encodeWalkthrough: encoderStub().encodeWalkthrough }).status, 'passed');
+});
+
+test('AC2a.2: a tag-only negative story in the index stays out of the frames', (t) => {
+  const ws = workspace(t);
+  const qaDir = qaRun(ws, {
+    stories: [
+      { id: 'sign-in', name: 'Sign in', status: 'PASS', frames: ['00_open.png'] },
+      { id: 'tagged', name: 'T', status: 'PASS', frames: ['00_err.png'] },
+    ],
+    storyFile: 'stories:\n  - id: sign-in\n  - id: tagged\n    tags: [negative]\n',
+  });
+  const stub = encoderStub();
+  assert.equal(snapshotRecording(ws, { encodeWalkthrough: stub.encodeWalkthrough }).frames, 1);
+  assert.deepEqual(stub.calls[0].framePaths, [path.join(qaDir, 'sign-in', '00_open.png')]);
+});
+
+test('AC2a: a passing story with no screenshot_dir gives no partial GIF', (t) => {
+  const ws = workspace(t);
+  qaRun(ws, {
+    stories: [
+      { id: 'sign-in', name: 'Sign in', status: 'PASS', frames: ['00_open.png'] },
+      { id: 'second', name: 'Second', status: 'PASS', screenshot_dir: null },
+    ],
+    storyFile: 'stories:\n  - id: sign-in\n  - id: second\n',
+  });
+  const stub = encoderStub();
+  assert.deepEqual(snapshotRecording(ws, { encodeWalkthrough: stub.encodeWalkthrough }), NO_FRAMES);
+  assert.deepEqual(stub.calls, []);
+});
+
+test('AC2a: a gap in the second story gives no partial GIF', (t) => {
+  const ws = workspace(t);
+  qaRun(ws, {
+    stories: [
+      { id: 'sign-in', name: 'Sign in', status: 'PASS', steps_total: 2, frames: ['00_open.png', '01_submit.png'] },
+      { id: 'second', name: 'Second', status: 'PASS', steps_total: 3, frames: ['00_open.png', '02_done.png'] },
+    ],
+    storyFile: 'stories:\n  - id: sign-in\n  - id: second\n',
+  });
+  const stub = encoderStub();
+  assert.deepEqual(snapshotRecording(ws, { encodeWalkthrough: stub.encodeWalkthrough }), NO_FRAMES);
+  assert.deepEqual(stub.calls, []);
+});
+
+test('AC5: a damaged stamp with no report gives no-happy-path-screenshots', (t) => {
+  const ws = workspace(t);
+  writeText(path.join(ws.gitDir, QA_STAMP_NAME), '{not json');
+  assert.deepEqual(snapshotRecording(ws), NO_FRAMES);
+});
+
+test('a snapshot that passes then one that does not leaves no GIF', (t) => {
+  const ws = workspace(t);
+  qaRun(ws);
+  assert.equal(snapshotRecording(ws, { encodeWalkthrough: encoderStub().encodeWalkthrough }).status, 'passed');
+  assert.equal(fs.readFileSync(inputs(ws, 'walkthrough.gif'), 'utf8'), GIF_BYTES);
+  const wt = path.join(ws.root, '.claude', 'worktrees', 'x');
+  writeText(path.join(wt, '.git'), 'gitdir: elsewhere\n');
+  assert.deepEqual(snapshotRecording(ws, { cwd: () => wt }), NO_FRAMES);
+  assert.throws(() => fs.statSync(inputs(ws, 'walkthrough.gif')));
+});
+
+test("the encoder's absolute frame path never reaches the fact", (t) => {
+  const ws = workspace(t);
+  qaRun(ws);
+  const stub = encoderStub(() => { throw new Error('failed at /abs/q/00_a.png'); });
+  snapshotRecording(ws, { encodeWalkthrough: stub.encodeWalkthrough });
+  assert.equal(gatherRecording(ws).failure, 'failed at 00_a.png');
+});
+
+test('a frame path holding a space never reaches the fact in pieces', (t) => {
+  const ws = workspace(t);
+  const qaDir = qaRun(ws);
+  const qaReport = path.join(qaDir, 'report.json');
+  const report = readJson(qaReport);
+  const spaced = path.join(ws.root, 'Code Workspaces', 'sign-in');
+  writeText(path.join(spaced, '00_open.png'), 'png');
+  report.stories[0].screenshot_dir = spaced;
+  writeJson(qaReport, report);
+  const stub = encoderStub(({ framePaths }) => { throw new Error(`${framePaths[0]}: not a PNG file`); });
+  const { failure } = snapshotRecording(ws, { encodeWalkthrough: stub.encodeWalkthrough });
+  assert.equal(failure, '00_open.png: not a PNG file');
+});
+
+test('re-run from the main checkout keeps the GIF', (t) => {
+  const ws = workspace(t);
+  qaRun(ws);
+  assert.equal(snapshotRecording(ws, { encodeWalkthrough: encoderStub().encodeWalkthrough }).status, 'passed');
+  const stub = encoderStub(() => ({ buffer: Buffer.from('OTHER') }));
+  const result = snapshot(ws, { git: AHEAD(), encodeWalkthrough: stub.encodeWalkthrough });
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), MAIN_RERUN);
+  assert.deepEqual(stub.calls, []);
+  assert.equal(fs.readFileSync(inputs(ws, 'walkthrough.gif'), 'utf8'), GIF_BYTES);
+});
+
+test('a manifest with no recording key adds no fact', (t) => {
+  const ws = workspace(t);
+  writeJson(inputs(ws, 'manifest.json'), { schemaVersion: 1, head: H, mergeBase: MB, files: {} });
+  const { facts } = gather(ws, ['--run', ws.runDir]);
+  assert.deepEqual(idsOf(facts, 'recording'), []);
+  assert.ok(!facts.partial.some((note) => note.includes('recording')), facts.partial.join(' | '));
+});
+
+for (const [name, recording] of [
+  ['an unknown status', { status: 'weird' }],
+  ['a free not-run reason', { status: 'not-run', reason: 'token=abc' }],
+  ['a file other than the GIF', { status: 'passed', file: '../../secret', text: 'x', captions: [], exposure: 'local-only' }],
+  ['captions that are not strings', { status: 'passed', file: 'walkthrough.gif', text: 'x', captions: [1], exposure: 'local-only' }],
+  ['an unknown exposure', { status: 'passed', file: 'walkthrough.gif', text: 'x', captions: [], exposure: 'public' }],
+  ['a value that is not an object', 'nope'],
+]) {
+  test(`a manifest recording with ${name} adds no fact and states the gap`, (t) => {
+    const ws = workspace(t);
+    writeJson(inputs(ws, 'manifest.json'), { schemaVersion: 1, head: H, mergeBase: MB, files: {}, recording });
+    const { facts } = gather(ws, ['--run', ws.runDir]);
+    assert.deepEqual(idsOf(facts, 'recording'), []);
+    assert.ok(facts.partial.includes('manifest recording entry not read — treated as absent'), facts.partial.join(' | '));
+  });
+}
+
+test('Decision 2: a gather live and a gather after the real archive name the same two locations', (t) => {
+  const ws = repoWorkspace(t);
+  qaRun(ws);
+  snapshotRecording(ws, { encodeWalkthrough: encoderStub().encodeWalkthrough });
+  const live = gatherRecording(ws);
+  const result = archiveRunDir(ws.root, ws.runDir);
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.ok(result.movedEntries.includes('packet-inputs'), JSON.stringify(result));
+  assert.throws(() => fs.statSync(ws.runDir), 'the archive took the whole run dir');
+  const archivedRun = path.join(ws.root, '.claude-tweaks', 'pipelines', 'archive', 'run-1');
+  // The archive's token pass reached the file-level stub. A real one is a detached child started in pipelines/archive, which Windows then refuses to remove (#5694).
+  assert.equal(tokenPassCalls.at(-1), archivedRun);
+  const archived = gatherRecording(ws, archivedRun);
+  assert.deepEqual(archived, live);
+  assert.equal(fs.readFileSync(path.join(ws.root, ...archived.archive_path.split('/')), 'utf8'), GIF_BYTES);
+});
+
+test('the default encoder refusing a frame that is not a PNG gives encoder-failed', (t) => {
+  const ws = workspace(t);
+  qaRun(ws);
+  const recording = snapshotRecording(ws);
+  assert.equal(recording.status, 'not-run');
+  assert.equal(recording.reason, 'encoder-failed');
+  assert.ok(!recording.failure.includes(ws.root), recording.failure);
 });
 
 // ---- gather over a snapshot ----
@@ -1334,7 +1985,7 @@ function realGitEnv() {
   };
 }
 
-test('real subprocess: snapshot then gather over a real repo', (t) => {
+test('in-process over a real repo: snapshot then gather, real git and git dir', (t) => {
   const repo = gitRepo();
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
   const env = realGitEnv();
@@ -1354,7 +2005,10 @@ test('real subprocess: snapshot then gather over a real repo', (t) => {
   const runDir = path.join(repo, '.claude-tweaks', 'pipelines', 'run-1');
   fs.mkdirSync(runDir, { recursive: true });
 
-  const cli = (...args) => spawnSync(process.execPath, [BIN, ...args], { windowsHide: true, encoding: 'utf8', cwd: repo, env });
+  const cli = (...args) => {
+    const r = runCliSync(BIN, args, { cwd: repo, env, fresh: true, deps: { gh: unexpectedGh } });
+    return { ...r, status: r.code };
+  };
   const snap = cli('snapshot', '--run', runDir, '--base', mergeBase);
   assert.equal(snap.status, 0, snap.stderr);
   const manifest = JSON.parse(snap.stdout);
@@ -1381,4 +2035,316 @@ test('real subprocess: snapshot then gather over a real repo', (t) => {
   assert.equal(rerun.status, 0, rerun.stderr);
   assert.deepEqual(JSON.parse(rerun.stdout), MAIN_RERUN);
   assert.equal(readJson(path.join(runDir, 'packet-inputs', 'manifest.json')).head, head);
+});
+
+test('AC6.1: snapshot reads the git dir from the injected env', (t) => {
+  const repo = gitRepo();
+  const other = gitRepo();
+  t.after(() => { fs.rmSync(repo, { recursive: true, force: true }); fs.rmSync(other, { recursive: true, force: true }); });
+  const env = realGitEnv();
+  const base = fixtureGit(['-C', repo, 'rev-parse', 'HEAD'], { env, encoding: 'utf8' }).trim();
+  writeText(path.join(repo, 'a.txt'), 'a\n');
+  fixtureGit(['-C', repo, 'add', '.'], { env });
+  fixtureGit(['-C', repo, 'commit', '-q', '-m', 'a'], { env });
+  const head = fixtureGit(['-C', repo, 'rev-parse', 'HEAD'], { env, encoding: 'utf8' }).trim();
+  const repoGitDir = fixtureGit(['-C', repo, 'rev-parse', '--absolute-git-dir'], { env, encoding: 'utf8' }).trim();
+  writeJson(path.join(repoGitDir, 'claude-tweaks-verify', 'report.json'), REPORT);
+  const runDir = path.join(other, '.claude-tweaks', 'pipelines', 'run-1');
+  fs.mkdirSync(runDir, { recursive: true });
+  // cwd is a different repo; only the injected env points git at `repo`.
+  assert.notEqual(other, repo);
+  const result = runCliSync(BIN, ['snapshot', '--run', runDir, '--base', base], {
+    cwd: other, env: { ...env, GIT_DIR: repoGitDir }, fresh: true, deps: { gh: unexpectedGh },
+  });
+  assert.equal(result.code, 0, result.stderr);
+  const manifest = JSON.parse(result.stdout);
+  assert.equal(manifest.head, head);
+  assert.equal(manifest.files.verifyReport, 'copied');
+});
+
+test('AC3.1: tmpPath follows the injected CLAUDE_CODE_SESSION_ID and cwd, not process.env', (t) => {
+  const ws = workspace(t);
+  const body = writeText(ws.file('body.md'), BODY);
+  const bodyFiles = [];
+  const { gh } = fakeGh();
+  const spyGh = (args) => {
+    if (args[0] === 'pr' && args[1] === 'edit') bodyFiles.push(args[args.indexOf('--body-file') + 1]);
+    return gh(args);
+  };
+  const injected = 'injected-session-5383';
+  t.after(() => fs.rmSync(path.join(os.tmpdir(), `ct-session-${injected}`), { recursive: true, force: true }));
+  const saved = process.env.CLAUDE_CODE_SESSION_ID;
+  process.env.CLAUDE_CODE_SESSION_ID = 'ambient-session-5383';
+  let result;
+  try {
+    result = runCliSync(BIN, ['post', '--record', '7', '--body-file', body, '--pr', '9'], {
+      cwd: ws.root,
+      env: { PATH: process.env.PATH, TMPDIR: os.tmpdir(), CLAUDE_CODE_SESSION_ID: injected },
+      fresh: true,
+      deps: { gh: spyGh, ghAvailable: () => true, pinGhHost: () => {} },
+    });
+  } finally {
+    if (saved === undefined) delete process.env.CLAUDE_CODE_SESSION_ID;
+    else process.env.CLAUDE_CODE_SESSION_ID = saved;
+  }
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(bodyFiles.length, 1);
+  assert.equal(path.basename(path.dirname(bodyFiles[0])), `ct-session-${injected}`);
+});
+
+test('AC6.1: the gh probe runs on the injected env PATH, not the real one', { skip: STUB_SKIP }, (t) => {
+  const ws = workspace(t);
+  const body = writeText(ws.file('body.md'), BODY);
+  const withGh = path.join(ws.root, 'with-gh');
+  const noGh = path.join(ws.root, 'no-gh');
+  fs.mkdirSync(withGh);
+  fs.mkdirSync(noGh);
+  fs.writeFileSync(path.join(withGh, 'gh'), `#!${process.execPath}\nconsole.log('gh version 2.0.0');\n`);
+  fs.chmodSync(path.join(withGh, 'gh'), 0o755); // root-safe: makes the stub runnable
+  fs.symlinkSync(process.execPath, path.join(noGh, 'node'));
+  const { gh } = fakeGh();
+  const post = (bin) => runCliSync(BIN, ['post', '--record', '7', '--body-file', body, '--pr', '9'], {
+    cwd: ws.root,
+    env: { PATH: bin, HOME: process.env.HOME, TMPDIR: os.tmpdir() },
+    fresh: true,
+    allowRealRunner: true,
+    deps: { gh, pinGhHost: () => {} },
+  });
+  const absent = post(noGh);
+  assert.equal(absent.code, 4, absent.stderr);
+  const present = post(withGh);
+  assert.equal(present.code, 0, present.stderr);
+});
+
+// A `gh` that logs the cwd and the env it was started with, then answers a visibility probe.
+function recordingGhShim(ws) {
+  const dir = path.join(ws.root, 'gh-shim');
+  const log = path.join(ws.root, 'gh-calls.jsonl');
+  fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(dir, 'gh'), `#!${process.execPath}\n`
+    + `require('node:fs').appendFileSync(${JSON.stringify(log)}, JSON.stringify({ cwd: process.cwd(), marker: process.env.CT_MARKER_5383, ghHost: process.env.GH_HOST, args: process.argv.slice(2) }) + '\\n');\n`
+    + 'console.log(JSON.stringify({ isPrivate: true }));\n');
+  fs.chmodSync(path.join(dir, 'gh'), 0o755); // root-safe: makes the stub runnable
+  const calls = () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : []);
+  return { dir, calls };
+}
+
+// The environment an in-process call sees with the recording gh first on PATH.
+function shimEnv(shim) {
+  return { PATH: shim.dir + path.delimiter + process.env.PATH, HOME: process.env.HOME, TMPDIR: os.tmpdir() };
+}
+
+function unexpectedGh() {
+  throw new Error('unexpected gh');
+}
+
+function withAmbient(vars, fn) {
+  const saved = {};
+  for (const [k, v] of Object.entries(vars)) { saved[k] = process.env[k]; process.env[k] = v; }
+  try {
+    return fn();
+  } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+}
+
+test('AC6.2: the real gh member starts gh in the injected cwd with the injected env', { skip: STUB_SKIP }, (t) => {
+  const ws = workspace(t);
+  qaRun(ws);
+  const shim = recordingGhShim(ws);
+  assert.notEqual(ws.root, process.cwd());
+  const result = withAmbient({ CT_MARKER_5383: 'ambient' }, () => runCliSync(BIN, ['snapshot', '--run', ws.runDir, '--base', 'B'], {
+    cwd: ws.root,
+    env: { ...shimEnv(shim), CT_MARKER_5383: 'injected', GH_HOST: 'github.com' },
+    fresh: true,
+    allowRealRunner: true,
+    deps: { git: AHEAD(), gitDir: () => ws.gitDir, mainRoot: ws.root, encodeWalkthrough: encoderStub().encodeWalkthrough },
+  }));
+  assert.equal(result.code, 0, result.stderr);
+  const [call] = shim.calls();
+  assert.ok(call, 'the injected PATH reached the gh spawn');
+  assert.deepEqual(call.args, ['repo', 'view', '--json', 'isPrivate']);
+  assert.equal(call.cwd, ws.root, 'gh starts in the injected cwd');
+  assert.equal(call.marker, 'injected', 'gh gets the injected env, not process.env');
+});
+
+test('AC6.2: the real pinGhHost reads GH_HOST from the injected env, not process.env', { skip: STUB_SKIP }, (t) => {
+  const ws = workspace(t);
+  const body = writeText(ws.file('body.md'), BODY);
+  const shim = recordingGhShim(ws);
+  withAmbient({ GH_HOST: 'ambient.example' }, () => runCliSync(BIN, ['post', '--record', '7', '--body-file', body, '--repo', 'ghe.example/o/r'], {
+    cwd: ws.root,
+    env: shimEnv(shim),
+    fresh: true,
+    allowRealRunner: true,
+    deps: { ghAvailable: () => true },
+  }));
+  const calls = shim.calls();
+  assert.ok(calls.length > 0, 'the post reached gh');
+  // The injected env holds no GH_HOST, so the typed --repo host is pinned; an ambient one read in its place would pin nothing.
+  assert.ok(calls.every((c) => c.ghHost === 'ghe.example'), JSON.stringify(calls.map((c) => c.ghHost)));
+});
+
+test('AC6.3: the real pinGhHost compares the --repo host with the injected cwd\'s origin, not process.cwd()\'s', { skip: STUB_SKIP }, (t) => {
+  const ws = workspace(t);
+  const body = writeText(ws.file('body.md'), BODY);
+  const shim = recordingGhShim(ws);
+  const repo = gitRepo();
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  // A *.ghe.com origin is a known GitHub host, so resolveGhSpec admits it; this checkout's own origin is github.com.
+  fixtureGit(['-C', repo, 'remote', 'add', 'origin', 'https://corp.ghe.com/o/r.git'], { env: realGitEnv() });
+  runCliSync(BIN, ['post', '--record', '7', '--body-file', body, '--repo', 'github.com/o/r'], {
+    cwd: repo,
+    env: shimEnv(shim),
+    fresh: true,
+    allowRealRunner: true,
+    deps: { ghAvailable: () => true },
+  });
+  const calls = shim.calls();
+  assert.ok(calls.length > 0, 'the post reached gh');
+  // github.com differs from the injected cwd's origin host, so it is pinned; read against process.cwd() it matches and pins nothing.
+  assert.ok(calls.every((c) => c.ghHost === 'github.com'), JSON.stringify(calls.map((c) => c.ghHost)));
+});
+
+test('AC3.1: a relative --scope resolves against the injected working directory, not process.cwd()', (t) => {
+  const ws = workspace(t);
+  assert.notEqual(ws.root, process.cwd());
+  writeJson(path.join(ws.root, 'scope.json'), { checks: { lint: 'y' }, rules: [] });
+  const out = ws.file('facts.json');
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  const result = runCliSync(BIN, ['gather', '--record', '7', '--out', out, '--scope', 'scope.json'], {
+    cwd: ws.root,
+    env: { PATH: process.env.PATH },
+    fresh: true,
+    deps: { git: fakeGit().git, gitDir: () => ws.gitDir, mainRoot: ws.root, gh: unexpectedGh },
+  });
+  assert.equal(result.code, 0, result.stderr);
+  const facts = readJson(out);
+  assert.equal(factOf(facts, 'check:lint').status, 'not-run');
+  assert.ok(!facts.partial.includes(SCOPE_NOTE));
+});
+
+test('a relative --body-file resolves against the injected working directory, not process.cwd()', (t) => {
+  const ws = workspace(t);
+  assert.notEqual(ws.root, process.cwd());
+  writeText(path.join(ws.root, 'rel-body.md'), BODY);
+  const result = runCliSync(BIN, ['post', '--record', '7', '--body-file', 'rel-body.md'], {
+    cwd: ws.root,
+    env: { PATH: process.env.PATH },
+    fresh: true,
+    deps: { ghAvailable: () => false },
+  });
+  // Exit 4 (gh absent) is reached only once the body read: an unresolved relative path exits 1 first.
+  assert.equal(result.code, 4, result.stderr);
+});
+
+// ---- risk facts: unconfirmed flags, planned proofs, the plan copy ----
+
+test('--flags keeps unconfirmed: true on the flag fact and no other flag gains the field', (t) => {
+  const ws = workspace(t);
+  const flags = writeJson(ws.file('flags.json'), [{ id: 'f1', unconfirmed: true }, { id: 'f2', unconfirmed: false }, { id: 'f3' }]);
+  const { facts } = gather(ws, ['--flags', flags]);
+  assert.equal(factOf(facts, 'flag:f1').unconfirmed, true);
+  assert.equal(Object.hasOwn(factOf(facts, 'flag:f2'), 'unconfirmed'), false);
+  assert.equal(Object.hasOwn(factOf(facts, 'flag:f3'), 'unconfirmed'), false);
+});
+
+for (const bad of ['yes', 1]) {
+  test(`--flags with a non-boolean unconfirmed (${JSON.stringify(bad)}) is a stated partial and no flag fact`, (t) => {
+    const ws = workspace(t);
+    const flags = writeJson(ws.file('flags.json'), [{ id: 'f1', unconfirmed: bad }]);
+    const { facts } = gather(ws, ['--flags', flags]);
+    assert.ok(facts.partial.includes('--flags input not read — treated as absent'));
+    assert.deepEqual(idsOf(facts, 'flag'), []);
+  });
+}
+
+test('--proofs reaches the facts as a not-run proof fact', (t) => {
+  const ws = workspace(t);
+  const proofs = writeJson(ws.file('proofs.json'), [{ id: 'auth', text: 't' }]);
+  const { facts } = gather(ws, ['--proofs', proofs]);
+  assert.deepEqual(factOf(facts, 'proof:auth'), {
+    id: 'proof:auth', kind: 'proof', status: 'not-run', reason: 'planned in the plan, not yet run', source: 'proofs', text: 't',
+  });
+});
+
+test('--help names --proofs and --plan', () => {
+  const out = [];
+  assert.equal(run(['--help'], { stdout: (s) => out.push(s), stderr: () => {} }), 0);
+  const usage = out.join('');
+  assert.match(usage, /--proofs <file>/);
+  assert.match(usage, /snapshot --run <dir> --base <ref> \[--plan <file>\]/);
+});
+
+function snapshotWithPlan(ws, planFile, overrides) {
+  const h = harness(ws, { git: fakeGit({ revParse: { HEAD: H }, mergeBase: MB }).git, ...overrides });
+  const code = run(['snapshot', '--run', ws.runDir, '--base', 'B', ...(planFile === undefined ? ['--plan'] : ['--plan', planFile])], h.deps);
+  return { code, stdout: h.stdout(), stderr: h.stderr() };
+}
+
+test('snapshot --plan copies the plan byte-for-byte and the manifest says copied', (t) => {
+  const ws = workspace(t);
+  const text = '# Plan\r\n\r\nProof(auth): refuses an unauthenticated request\né\n';
+  const plan = writeText(ws.file('plan.md'), text);
+  const { code, stdout, stderr } = snapshotWithPlan(ws, plan);
+  assert.equal(code, 0, stderr);
+  assert.equal(fs.readFileSync(inputs(ws, 'plan.md'), 'utf8'), text);
+  assert.equal(JSON.parse(stdout).files.plan, 'copied');
+  assert.equal(readJson(inputs(ws, 'manifest.json')).files.plan, 'copied');
+  assert.deepEqual(fs.readdirSync(path.join(ws.runDir, 'packet-inputs')).filter((n) => n.includes('.tmp-')), []);
+});
+
+test('snapshot --plan with a missing plan says absent and writes no plan.md', (t) => {
+  const ws = workspace(t);
+  const { code, stdout, stderr } = snapshotWithPlan(ws, ws.file('nope.md'));
+  assert.equal(code, 0, stderr);
+  assert.equal(JSON.parse(stdout).files.plan, 'absent');
+  assert.equal(readJson(inputs(ws, 'manifest.json')).files.plan, 'absent');
+  assert.throws(() => fs.statSync(inputs(ws, 'plan.md')));
+});
+
+test('snapshot --plan with a directory says unreadable and writes no plan.md', (t) => {
+  const ws = workspace(t);
+  const dir = ws.file('a-dir');
+  fs.mkdirSync(dir, { recursive: true });
+  const { code, stdout, stderr } = snapshotWithPlan(ws, dir);
+  assert.equal(code, 0, stderr);
+  assert.equal(JSON.parse(stdout).files.plan, 'unreadable');
+  assert.throws(() => fs.statSync(inputs(ws, 'plan.md')));
+});
+
+test('snapshot --plan with no value exits 2 and runs nothing', (t) => {
+  const ws = workspace(t);
+  const { code, stderr } = snapshotWithPlan(ws, undefined);
+  assert.equal(code, 2);
+  assert.match(stderr, /--plan requires a value/);
+  assert.throws(() => fs.statSync(inputs(ws, 'manifest.json')));
+});
+
+test('snapshot without --plan leaves files.plan out of the manifest', (t) => {
+  const ws = workspace(t);
+  const { stdout } = snapshot(ws, { git: fakeGit({ revParse: { HEAD: H }, mergeBase: MB }).git });
+  assert.equal(Object.hasOwn(JSON.parse(stdout).files, 'plan'), false);
+  assert.throws(() => fs.statSync(inputs(ws, 'plan.md')));
+});
+
+test('a re-run from the main checkout keeps the earlier plan.md', (t) => {
+  const ws = workspace(t);
+  const earlier = writeText(inputs(ws, 'plan.md'), 'EARLIER PLAN\n');
+  writeJson(inputs(ws, 'manifest.json'), { schemaVersion: 1, head: OTHER, mergeBase: MB, files: { plan: 'copied' } });
+  const plan = writeText(ws.file('plan.md'), 'LATER PLAN\n');
+  const { code, stdout, stderr } = snapshotWithPlan(ws, plan);
+  assert.equal(code, 0, stderr);
+  assert.deepEqual(JSON.parse(stdout), MAIN_RERUN);
+  assert.equal(fs.readFileSync(earlier, 'utf8'), 'EARLIER PLAN\n');
+});
+
+test('snapshot --plan with nothing ahead of the base keeps the earlier plan.md', (t) => {
+  const ws = workspace(t);
+  const earlier = writeText(inputs(ws, 'plan.md'), 'EARLIER PLAN\n');
+  const plan = writeText(ws.file('plan.md'), 'LATER PLAN\n');
+  const { code, stdout } = snapshotWithPlan(ws, plan, { git: fakeGit({ revParse: { HEAD: H }, mergeBase: H }).git });
+  assert.equal(code, 0);
+  assert.deepEqual(JSON.parse(stdout), { skipped: 'no commits ahead of base' });
+  assert.equal(fs.readFileSync(earlier, 'utf8'), 'EARLIER PLAN\n');
 });

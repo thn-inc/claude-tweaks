@@ -14,7 +14,10 @@
 const fs = require('fs');
 const path = require('path');
 const { SHADOW_DUP_RE, SECTIONS, runIdOf } = require('./resolve');
-const { composeFindingProposal, findingFingerprint, fingerprintMap } = require('./finding-filing');
+const {
+  composeFindingProposal, findingFingerprint, fingerprintMap, areaOfPath, consoleFindingMarker, DIGEST_FINDING_MAX,
+  DIGEST_DEFER_REASON, isDropRecommended,
+} = require('./finding-filing');
 const { composeShadowDupProposal } = require('./shadow-dup-proposal');
 const { digestTextOf, targetOf } = require('./staged-digest-text');
 const { REFLECT_NO_DESTINATION, isApplicableReflect, parseReflectDestination } = require('./reflect-destination');
@@ -22,7 +25,7 @@ const { BACKFILL_OUTCOMES, BACKFILL_SOURCES } = require('./backfill-apply');
 const { materialityEntryLine, materialityFingerprint, parseMaterialityFingerprints } = require('../health-core/materiality-digest');
 const { fingerprintFromBasis } = require('../health-core/fingerprint');
 const {
-  extractFingerprint, checkFingerprint, defuse, FP_RE_WORK, FP_RE_WORK_PLAIN,
+  extractFingerprint, extractFingerprints, checkFingerprint, defuse, FP_RE_WORK, FP_RE_WORK_PLAIN,
 } = require('../issues/record');
 const { isTrustedComment } = require('../issues/comment-trust');
 
@@ -31,7 +34,7 @@ const DIGEST_REASONS = Object.freeze({
   UNMAPPED_KIND: 'console-backfill-unmapped-kind',
   REFLECT_NO_DESTINATION,
   CONFIRMED_LOW: 'console-backfill-confirmed-low',
-  CANT_TELL: 'tiebreak-cant-tell',
+  CANT_TELL: DIGEST_DEFER_REASON,
 });
 
 const OUTCOME_OF_ACTION = Object.freeze({ file: 'filed', digest: 'digested', drop: 'dropped', dismiss: 'dismissed' });
@@ -44,7 +47,6 @@ for (const source of ['tiebreak', 'staged-kind', 'digest']) {
 
 const FINDING_FILED_SEVERITIES = new Set(['critical', 'high', 'medium']);
 const KNOWN_SEVERITIES = new Set(['critical', 'high', 'medium', 'low', 'info']);
-const DIGEST_FINDING_MAX = 200;
 const DEFAULT_LIMIT = 24;
 
 const squash = (s) => String(s).replace(/\s+/g, ' ').trim();
@@ -52,16 +54,6 @@ const squash = (s) => String(s).replace(/\s+/g, ' ').trim();
 // A digest entry field is one line and can never spell a marker (record.js's defuse): the entry's
 // own fingerprint marker must be the only one on its line.
 const oneLine = (s) => defuse(squash(s));
-
-// A path under plugin/skills/{s}/ -> s; plugin/bin/lib/{m}/ -> m; any other plugin/bin/ file -> bin;
-// else the path's first segment (tests, docs).
-function areaOfPath(p) {
-  const segs = String(p).replace(/\\/g, '/').replace(/^\.\//, '').split('/').filter(Boolean);
-  let area = segs[0] || 'console';
-  if (segs[0] === 'plugin' && segs[1] === 'skills') area = segs.length > 3 ? segs[2] : 'skills';
-  else if (segs[0] === 'plugin' && segs[1] === 'bin') area = segs[2] === 'lib' && segs.length > 4 ? segs[3] : 'bin';
-  return area.toLowerCase();
-}
 
 // An item that names a location (a finding, or a no-claim item standing for a located finding) takes
 // its area from that path. No path to read an area from: a reflect staged finding is `reflect`,
@@ -101,8 +93,10 @@ const itemMarkerOf = (item) => `<!-- ${ITEM_MARKER_PREFIX}: ${itemFingerprint(it
 
 // `marked`: the line also carries the item marker, after the materiality marker, so `{provenance}`
 // stays the bare run id digest-sweep.md dates expiry from (the entry's fields, and so its
-// fingerprint, are unchanged).
-function digestEntryOf({ item, finding, fileRefs, deferReason, runId, marked = false }) {
+// fingerprint, are unchanged). `claimMarker` (a console-finding marker) sits between the two.
+function digestEntryOf({
+  item, finding, fileRefs, deferReason, runId, marked = false, claimMarker = null,
+}) {
   const entry = {
     area: oneLine(areaFor(item)),
     finding: oneLine(finding).slice(0, DIGEST_FINDING_MAX),
@@ -110,7 +104,9 @@ function digestEntryOf({ item, finding, fileRefs, deferReason, runId, marked = f
     deferReason,
     provenance: oneLine(runId),
   };
-  const line = marked ? `${materialityEntryLine(entry)} ${itemMarkerOf(item)}` : materialityEntryLine(entry);
+  const line = marked
+    ? `${materialityEntryLine(entry)}${claimMarker ? ` ${claimMarker}` : ''} ${itemMarkerOf(item)}`
+    : materialityEntryLine(entry);
   return { entry, line, fingerprint: materialityFingerprint(entry) };
 }
 
@@ -140,6 +136,9 @@ function findingProposal(item, verdict, runId, confirmed) {
     finding: { claim: item.claimText },
     runId,
     staged: item.stagedFinding,
+    // The unattended can't-tell shape (#4679); composeFindingProposal ignores it for a staged finding,
+    // and a confirmed filing passes `confirmed`, so both keep their shape.
+    ...(confirmed ? {} : { unattended: true }),
     ...(confirmed ? { verdict: { kind: 'confirmed', evidence: verdict.evidence, mainSha: confirmed.mainSha } } : {}),
   });
   // The record is filed under its claim fingerprint (the first marker, which extractFingerprint reads);
@@ -149,11 +148,23 @@ function findingProposal(item, verdict, runId, confirmed) {
   return { fingerprint: composed.fingerprint, itemFingerprint: fp, title: composed.title, text };
 }
 
-// A finding's digest entry; both digest outcomes (can't-tell, confirmed-low) build it from the same
-// area, claim and location, and materialityFingerprint omits deferReason.
-const findingDigest = (item, deferReason, runId) => digestEntryOf({
-  item, finding: item.claimText, fileRefs: locationOf(item.finding), deferReason, runId, marked: true,
-});
+// The fingerprint composeFindingProposal files this finding under (same lens, path and claim), or null
+// when the item carries no claim to hash.
+function prefiledFingerprint(item) {
+  const f = item.finding;
+  if (!f || typeof item.claimText !== 'string' || !item.claimText.trim()) return null;
+  return findingFingerprint({ lens: f.lens, path: f.path, claim: item.claimText });
+}
+
+// A finding's digest entry; every digest outcome (can't-tell, confirmed-low) builds it from the same
+// area, claim and location, and materialityFingerprint omits deferReason. An item with a claim also
+// carries its console-finding marker (#4679), so the console's own digest dedups against it.
+function findingDigest(item, deferReason, runId) {
+  const fp = prefiledFingerprint(item);
+  return digestEntryOf({
+    item, finding: item.claimText, fileRefs: locationOf(item.finding), deferReason, runId, marked: true, claimMarker: fp ? consoleFindingMarker(fp) : null,
+  });
+}
 
 function disposeFinding({ item, verdict, runId, mainSha }) {
   const digestFor = (deferReason) => result(item, 'digest', 'tiebreak', { digest: findingDigest(item, deferReason, runId) });
@@ -169,6 +180,9 @@ function disposeFinding({ item, verdict, runId, mainSha }) {
       return result(item, 'drop', 'tiebreak', { ref: squash(`${ev.path}:${ev.line ?? 'unknown'} "${ev.quote}"`) });
     }
     case 'console':
+      // A can't-tell item the tiebreak recommends dropping is digested, never filed (#4679); any other
+      // recommendation files the verification task (findingProposal).
+      if (isDropRecommended(verdict)) return digestFor(DIGEST_REASONS.CANT_TELL);
       return result(item, 'file', 'tiebreak', { proposal: findingProposal(item, verdict, runId, null) });
     case 'digest':
       return digestFor(DIGEST_REASONS.CANT_TELL);
@@ -202,10 +216,10 @@ function disposeNoClaim({ item, runId }) {
 // run's existing-records map instead of being filed a second time. A marker already in the text wins.
 function withFingerprint(item, text) {
   const own = extractFingerprint(text);
-  if (own) return { fingerprint: own, text };
+  if (own) return { fingerprint: own, fingerprints: extractFingerprints(text), text };
   const fingerprint = itemFingerprint(item);
   const gap = text.endsWith('\n') ? '\n' : '\n\n';
-  return { fingerprint, minted: true, text: `${text}${gap}<!-- work-fingerprint: ${fingerprint} -->\nwork-fingerprint: ${fingerprint}\n` };
+  return { fingerprint, fingerprints: [], minted: true, text: `${text}${gap}<!-- work-fingerprint: ${fingerprint} -->\nwork-fingerprint: ${fingerprint}\n` };
 }
 
 // A backfill filing never adds or removes an auto:* / bot:* label by itself (they are granted, not
@@ -238,16 +252,16 @@ function disposeStaged({ item, runId, readStaged }) {
     text = read(s.name);
     const composed = composeShadowDupProposal({ name: s.name, text, anchorText: read(shadow[1]), runId });
     if (composed.ok) {
-      const { fingerprint, minted, text: proposal } = withFingerprint(item, composed.proposal);
-      return result(item, 'file', 'staged-kind', { proposal: { fingerprint, minted, title: composed.title, text: proposal } });
+      const { fingerprint, fingerprints, minted, text: proposal } = withFingerprint(item, composed.proposal);
+      return result(item, 'file', 'staged-kind', { proposal: { fingerprint, fingerprints, minted, title: composed.title, text: proposal } });
     }
   } else if (typeof s.name === 'string' && s.reason !== 'engine-row') {
     text = read(s.name);
     if (s.section === SECTIONS.QUEUE && !s.reason && typeof text === 'string' && text.startsWith('Title:')) {
       const stripped = stripGrantLabels(text);
       const title = squash(/^Title:(.*)$/m.exec(stripped)[1]);
-      const { fingerprint, minted, text: proposal } = withFingerprint(item, stripped);
-      return result(item, 'file', 'staged-kind', { proposal: { fingerprint, minted, title, text: proposal } });
+      const { fingerprint, fingerprints, minted, text: proposal } = withFingerprint(item, stripped);
+      return result(item, 'file', 'staged-kind', { proposal: { fingerprint, fingerprints, minted, title, text: proposal } });
     }
   }
 
@@ -316,14 +330,6 @@ const verdictOf = (verdicts, id) => {
   return Object.hasOwn(verdicts, id) ? verdicts[id] : undefined;
 };
 
-// The fingerprint composeFindingProposal files this finding under (same lens, path and claim), or null
-// when the item carries no claim to hash.
-function prefiledFingerprint(item) {
-  const f = item.finding;
-  if (!f || typeof item.claimText !== 'string' || !item.claimText.trim()) return null;
-  return findingFingerprint({ lens: f.lens, path: f.path, claim: item.claimText });
-}
-
 const WORK_MARKER_RES = [new RegExp(FP_RE_WORK.source, 'g'), new RegExp(FP_RE_WORK_PLAIN.source, 'gm')];
 
 // fingerprint -> record number over EVERY work-fingerprint marker in each row's body (fingerprintMap
@@ -351,10 +357,12 @@ function filedRecordOf(item, fp, known, markers) {
 const commentRef = (comment) => (comment && typeof comment.url === 'string' && comment.url ? comment.url : null);
 
 // The trusted digest comment already holding this digest line — by its materiality fingerprint, or, for
-// a finding, by its item marker — or null. A string (a local-files body) is single-writer and trusted.
+// a finding, by its item marker or its console-finding marker — or null. A string (a local-files body) is single-writer and trusted.
 function heldDigestComment(digestComments, digest, item) {
-  const marker = item && item.kind === 'finding' ? itemMarkerOf(item) : null;
-  const holds = (text) => typeof text === 'string' && (parseMaterialityFingerprints(text).includes(digest.fingerprint) || (marker !== null && text.includes(marker)));
+  const isFinding = Boolean(item) && item.kind === 'finding';
+  const claimFp = isFinding ? prefiledFingerprint(item) : null;
+  const markers = isFinding ? [itemMarkerOf(item), ...(claimFp ? [consoleFindingMarker(claimFp)] : [])] : [];
+  const holds = (text) => typeof text === 'string' && (parseMaterialityFingerprints(text).includes(digest.fingerprint) || markers.some((m) => text.includes(m)));
   if (typeof digestComments === 'string') return holds(digestComments) ? { url: null } : null;
   for (const c of Array.isArray(digestComments) ? digestComments : []) {
     if (isTrustedComment(c) && holds(c.body)) return c;
@@ -385,8 +393,14 @@ function planBatch({ workList, verdicts, existingIssues, digestComments, limit =
   const out = {
     dispositions: [], file: [], reuse: [], digest: { lines: [], duplicates: [], sameAs: [] }, entries: [], awaitingVerdict: [],
   };
+  // fingerprint -> its filing entry / its digest line ({ itemId, index in out.digest.lines, its disposition's digest }),
+  // so a same-pass twin's item marker can join it (#4162).
   const batchFiled = new Map();
   const batchDigested = new Map();
+  // fingerprint -> the existing record number a same-pass item matched (by its claim or its item marker).
+  const batchMatched = new Map();
+  // fingerprint -> the trusted comment a same-pass digest item was held by (by its claim or its item marker), so a twin is a duplicate of it (#4162).
+  const batchHeld = new Map();
 
   for (const run of workList.runs) {
     for (const item of run.items) {
@@ -399,6 +413,8 @@ function planBatch({ workList, verdicts, existingIssues, digestComments, limit =
         const fp = prefiledFingerprint(item);
         const number = filedRecordOf(item, fp, known, markers);
         if (number !== null) {
+          // Record the match so a later same-claim twin in this pass reuses the record (#4162).
+          if (fp) batchMatched.set(fp, number);
           out.dispositions.push(result(item, 'file', 'tiebreak', { prefiled: true, proposal: { fingerprint: fp, title: null } }));
           out.reuse.push({ itemId: item.itemId, number });
           out.entries.push({
@@ -407,11 +423,12 @@ function planBatch({ workList, verdicts, existingIssues, digestComments, limit =
           continue;
         }
         // Likewise a finding whose digest line a trusted comment already carries (digested by an interrupted
-        // run), by fingerprint or by item marker. The fingerprint does not depend on the verdict (findingDigest).
+        // run), by fingerprint, item marker, or console-finding marker. The fingerprint does not depend on the verdict (findingDigest).
         if (item.finding && typeof item.claimText === 'string' && item.claimText.trim()) {
           const prefiledDigest = findingDigest(item, DIGEST_REASONS.CANT_TELL, runIdOf(item.consoleDir));
           const held = heldDigestComment(digestComments, prefiledDigest, item);
           if (held) {
+            batchHeld.set(prefiledDigest.fingerprint, held);
             out.dispositions.push(result(item, 'digest', 'tiebreak', { prefiled: true, digest: prefiledDigest }));
             out.digest.duplicates.push(item.itemId);
             out.entries.push({
@@ -435,30 +452,54 @@ function planBatch({ workList, verdicts, existingIssues, digestComments, limit =
         // A staged proposal whose fingerprint was minted here (its text carried no marker) cannot match a record
         // filed before the backfill existed, so it also dedups by exact title. Anything with a marker of its own,
         // and every finding filing, is fingerprint-only.
-        const number = filedRecordOf(item, fp, known, markers);
+        let number = filedRecordOf(item, fp, known, markers);
+        // A bundle proposal carries one marker per member; any of them already on a record is that record (#6283).
+        if (number === null && d.source === 'staged-kind') {
+          for (const f of d.proposal.fingerprints || []) { number = checkFingerprint(known, f); if (number !== null) break; }
+        }
         const byTitle = number === null && d.source === 'staged-kind' && d.proposal.minted === true ? titles.get(normalizeTitle(d.proposal.title)) : undefined;
         const matched = number !== null ? number : (byTitle === undefined ? null : byTitle);
         if (matched !== null) {
+          if (fp) batchMatched.set(fp, matched);
           out.reuse.push({ itemId: d.itemId, number: matched });
           ref = `#${matched}`;
+        } else if (fp && batchMatched.has(fp)) {
+          out.reuse.push({ itemId: d.itemId, number: batchMatched.get(fp) });
+          ref = `#${batchMatched.get(fp)}`;
         } else if (fp && batchFiled.has(fp)) {
-          out.reuse.push({ itemId: d.itemId, number: null, sameAs: batchFiled.get(fp) });
+          const filing = batchFiled.get(fp);
+          out.reuse.push({ itemId: d.itemId, number: null, sameAs: filing.itemId });
+          if (item.kind === 'finding') {
+            // The twin's record carries this item's marker, so the next pass finds it there if its claim has moved.
+            const fpOwn = itemFingerprint(item);
+            filing.text += `${filing.text.endsWith('\n') ? '' : '\n'}<!-- work-fingerprint: ${fpOwn} -->\nwork-fingerprint: ${fpOwn}\n`;
+          }
         } else {
-          if (fp) batchFiled.set(fp, d.itemId);
-          out.file.push({ itemId: d.itemId, fingerprint: fp, title: d.proposal.title, text: d.proposal.text });
+          const filing = { itemId: d.itemId, fingerprint: fp, title: d.proposal.title, text: d.proposal.text };
+          if (fp) batchFiled.set(fp, filing);
+          out.file.push(filing);
         }
       } else if (d.action === 'digest') {
         // A duplicate's ref is the comment holding its entry: an already-posted one's URL now; a same-pass
         // twin's once that line is posted (`sameAs`, resolved by the procedure as a filing's is).
-        const held = batchDigested.has(d.digest.fingerprint) ? null : heldDigestComment(digestComments, d.digest, item);
+        const held = batchHeld.get(d.digest.fingerprint)
+          || (batchDigested.has(d.digest.fingerprint) ? null : heldDigestComment(digestComments, d.digest, item));
         if (batchDigested.has(d.digest.fingerprint)) {
+          const owner = batchDigested.get(d.digest.fingerprint);
           out.digest.duplicates.push(d.itemId);
-          out.digest.sameAs.push({ itemId: d.itemId, sameAs: batchDigested.get(d.digest.fingerprint) });
+          out.digest.sameAs.push({ itemId: d.itemId, sameAs: owner.itemId });
+          // The twin's line carries this item's marker too, so the next pass finds it there if its claim has moved (#4162).
+          // The owner's disposition gets the same text: tidy/console-backfill.md maps each planned line to its owner by it.
+          if (item.kind === 'finding') {
+            owner.digest.line += ` ${itemMarkerOf(item)}`;
+            out.digest.lines[owner.index] = owner.digest.line;
+          }
         } else if (held) {
+          batchHeld.set(d.digest.fingerprint, held);
           out.digest.duplicates.push(d.itemId);
           ref = commentRef(held);
         } else {
-          batchDigested.set(d.digest.fingerprint, d.itemId);
+          batchDigested.set(d.digest.fingerprint, { itemId: d.itemId, index: out.digest.lines.length, digest: d.digest });
           out.digest.lines.push(d.digest.line);
         }
       }

@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const {
@@ -182,7 +183,7 @@ test('findConflictingSession: self-exclusion survives a symlink in the worktree 
   // link/wt is a symlinked path to it, mirroring how a session might reach
   // the same worktree via a symlinked ancestor directory (e.g. macOS's own
   // /tmp -> /private/tmp).
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sib-'));
+  const root = scratchDir('ct-sib-');
   const real = path.join(root, 'real');
   fs.mkdirSync(real);
   const target = path.join(real, 'wt');
@@ -261,7 +262,7 @@ test('findSessionOnWorktree: a null branch never matches a detached worktree els
 });
 
 test('findSessionOnWorktree: a path match survives a symlink on either side (git canonicalizes, path.resolve does not)', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sib-'));
+  const root = scratchDir('ct-sib-');
   try {
     const real = path.join(root, 'real');
     fs.mkdirSync(path.join(real, 'wt'), { recursive: true });

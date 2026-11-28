@@ -78,6 +78,15 @@ reporter.
   "nothing to report" (`[IL-146]`'s silent-fallback shape). Note the reporting posture:
   `composedErrors` never gates `ok`, which stays keyed off `composed`/`breaches` — the fix shape's
   step 2 says *surface it*, not *block on it*.
+- **Validate every line a skip depends on; never reuse a lenient list reader on the skip side (#5605).**
+  `plugin/bin/lib/skill-gate/index.js`'s `parseJourneyText` first read a journey's `files:` list
+  through `health-core/frontmatter-list.js`, whose contract is "no list means no declared domain":
+  an inline comment stayed in the item, a blank or comment line ended the list early, and a BOM
+  fence read as no frontmatter, each giving a shorter list with no error. For the gate, a shorter list
+  is a wrong `skip` (a journey that did list the file looked as if it did not). The fix walks every
+  line of the list itself and turns anything the reader would drop into a parse error, which the gate
+  fails open as `cannot tell:`. Per-task and whole-branch reviews passed the lenient read; only a
+  fresh reader checking the reader against the rule's closed set caught it.
 
 ## The fix shape
 
@@ -190,6 +199,15 @@ When mechanizing a prose heuristic into a deterministic check:
    "no citation" result, with any other non-zero exit keeping the plan as cited-unverified.
    Branch on the exit code, not the output, and on a destructive path make the failure arm fail
    closed.
+   A write gate owes the same split, and there the harm is a leak. `destinationHold` in
+   `plugin/bin/acceptance-packet.js` (#4612) asks `git check-ignore -q` whether an unredacted GIF's
+   destination is ignored before writing it. Its first version held the write only on exit 1, so
+   any other failure (a timeout, a missing binary, a 128 for dubious ownership) wrote the GIF where
+   git could commit it. Review caught it. The write now goes ahead only on exit 0, or on an exit 128
+   whose stderr says `not a git repository`, where nothing can commit the file; every other answer
+   holds it. When a benign answer shares the fatal exit code, require the code and the message
+   together, and pin each half alone: `tests/acceptance-packet-cli.test.js` feeds 128 with another
+   message and exit 2 with the benign message, and both must hold the write.
 9. **A probe that skill prose tells the agent to run owes the same split, and two things break it
    that a code check never meets.** Each Bash tool call starts a fresh shell, so a variable an
    earlier call set is unset in the probe's call: the probe reads an empty path and reports the
@@ -312,10 +330,10 @@ When mechanizing a prose heuristic into a deterministic check:
     transform that mis-parses produces a clean scan. `stripComments` (implemented in
     `plugin/bin/lib/strip-comments.js`, re-exported by `tests/helpers/strip-comments.js`)
     blanks comments to spaces before its callers' scans count tokens. Its
-    callers, by test-file stem: `accept-label-reader`, `backfill-cli`, `below-floor-parent-close`, `cli`, `exit-code`, `gh-host-seam`, `git-status-optional-locks`,
-    `hooks-harness-refusal`, `hooks-pre-tool-use`, `markdown-blocks`, `owner-pid-probe`, `path-containment`, `path-guard`, `phase-exit`, `phase-exit-call-sites`, `porcelain-cwd-compare`, `post-merge`,
-    `precondition`, `raw-markdown-read`, `release-notes`, `run-liveness-callers`, `staged-id-producers`, `subprocess-timing`, `wall-clock-budget` and
-    `windows-hide-spawn`.
+    callers, by test-file stem: `accept-label-reader`, `accept-monotonic`, `backfill-cli`, `below-floor-parent-close`, `ci-health-skill-agnostic`, `cli`, `cli-entry`, `evaluate-maturation-build-label`, `exit-code`, `fixture-identity-config-scan`, `gate-fragments`, `gh-host-seam`, `git-status-optional-locks`,
+    `hooks-event-env`, `hooks-event-process-ceiling`, `hooks-harness-refusal`, `hooks-pre-tool-use`, `lens-reply`, `markdown-blocks`, `merge`, `owner-pid-probe`, `path-containment`, `path-guard`, `phase-exit-call-sites`, `plan-line-writer`, `porcelain-cwd-compare`, `post-merge`,
+    `precondition`, `raw-markdown-read`, `recording-no-embed`, `relaunch`, `release-notes`, `report-only-constant`, `risk-flags-writer`, `run`, `run-header`, `run-liveness-callers`, `settle`, `staged-id-producers`, `station-literal`, `statusline-no-shell`, `step-yield-report-shared-count`, `subprocess-timing`, `timeout-source`, `tmp-dir-cleanup`, `trust-policy-keys`, `wall-clock-budget`,
+    `windows-hide-spawn` and `wrap-up-learned-skills-pr`.
     `tests/strip-comments-callers-twin.test.js` pins this list and the helper header's to the
     tree. It models regex literals (#3585); its residual
     ambiguity is a regex right after `)` or `}`, which it reads as division. In
@@ -367,7 +385,7 @@ When mechanizing a prose heuristic into a deterministic check:
     arm, classified by the thrown error's shape, and pin "main probe times out, precondition probe
     succeeds" with its own assertion (`tests/verify-run-bookends.test.js`'s
     `catFileTimeoutRevParseOk`).
-Items 17-26 live in `fix-shape-late-items.md` in this skill's directory, with their numbers
+Items 17-33 live in `fix-shape-late-items.md` in this skill's directory, with their numbers
 kept. Read it when your case matches one of these:
 
 17. **A start/end snapshot guard sees only the window between its two reads, and each value it records has an unsafe direction.**
@@ -380,6 +398,13 @@ kept. Read it when your case matches one of these:
 24. **A composer's validator owes its reader's sentinels and delimiters too, not only its skip set (item 18).**
 25. **An unanchored extractor with a narrow character class truncates instead of failing, so an out-of-class input yields a confident wrong value, not "no match".**
 26. **A recogniser that must ignore a marker shown as code owes a rule the host format guarantees, not a home-made model of that format.**
+27. **A parse problem that hides content owes its own report, found by a second read under the relaxed reading and credited only to a cause the author can edit.**
+28. **A parser that fails closed owes a cheap precondition that proves the signal absent, so its gaps cost only on inputs that could hold the signal.**
+29. **A producer handing a file to another tool owes its parse verdict across that boundary, because the consumer reads the file, not the producer's envelope.**
+30. **A reader that feeds several independent checks owes each could-not-read reason the field it concerns, so a consumer suppresses only the checks that read that field.**
+31. **A signal line read from an append-only log is also quoted or carried forward by later writers, so a counting reader keys on a measured writer-label allow-list, not on any label before the token.**
+32. **A map keyed by text parsed from a log line or event owes own-property reads and writes, because the parsed key can be `__proto__` or `constructor`.**
+33. **A reader that sorts items into in-sample, excluded and out-of-population owes the membership decision before any exclusion check, so an item that was never in the population cannot read as lost.**
 
 ## When to use
 

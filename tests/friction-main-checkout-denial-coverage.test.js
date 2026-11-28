@@ -28,6 +28,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -60,7 +61,7 @@ function runFrictionEvents(args, { cwd } = {}) {
 }
 
 function gitRepo() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-friction-mainchk-'));
+  const dir = scratchDir('ct-friction-mainchk-');
   execFileSync('git', ['-C', dir, 'init', '-q']);
   return fs.realpathSync(dir);
 }

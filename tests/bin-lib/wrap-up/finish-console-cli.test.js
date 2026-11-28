@@ -1,9 +1,10 @@
 'use strict';
 // tests/bin-lib/wrap-up/finish-console-cli.test.js — #2546: exercises
 // `wrap-up-engine.js finish-console --run-dir <dir> --approve-all` end to
-// end as a real child process. Mirrors engine-cli.test.js's anchoring setup
+// end as an in-process `run` call (runCliSync, with the cwd, env and stdin
+// injected and `gh` faked). Mirrors engine-cli.test.js's anchoring setup
 // (a real git repo as the "main checkout"; run dirs nest under it) since
-// main()'s #790/[IL-127] guard rejects an unanchored --run-dir for every
+// run()'s #790/[IL-127] guard rejects an unanchored --run-dir for every
 // verb, this one included.
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
@@ -12,6 +13,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { chmodDenialSkip } = require('../../helpers/root');
+const { runCliSync } = require('../../helpers/run-cli');
+const { cleanGitEnv, committedRepo, initRepo } = require('../../helpers/git-fixtures');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'wrap-up-engine.js');
 const { runVerify } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'wrap-up', 'engine-verify'));
@@ -23,22 +26,22 @@ function git(args, cwd) {
   return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 }
 
-function run(args, { cwd, input } = {}) {
-  try {
-    const stdout = execFileSync(process.execPath, [CLI, ...args], {
-      cwd: cwd || repoDir, input: input !== undefined ? input : undefined, encoding: 'utf8',
-    });
-    return { status: 0, stdout, stderr: '' };
-  } catch (e) {
-    return { status: e.status, stdout: e.stdout || '', stderr: e.stderr || '' };
-  }
+// `gh` absent: the docs/plans fallback's `gh repo view` probe reads as a failed lookup, so the real gh
+// is never reached (a fixture with no remote fails it the same way).
+function ghAbsent() {
+  throw Object.assign(new Error('spawnSync gh ENOENT'), { code: 'ENOENT' });
+}
+
+function run(args, { cwd, input, env, deps } = {}) {
+  const r = runCliSync(CLI, args, {
+    cwd: cwd || repoDir, stdin: input !== undefined ? input : '', env: env || { ...process.env }, deps: { gh: ghAbsent, ...deps },
+  });
+  return { status: r.code, stdout: r.stdout, stderr: r.stderr };
 }
 
 before(() => {
   repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'finish-console-cli-'));
-  git(['init', '-q'], repoDir);
-  git(['config', 'user.email', 'test@example.com'], repoDir);
-  git(['config', 'user.name', 'Test'], repoDir);
+  initRepo(repoDir, { name: 'Test', email: 'test@example.com', cwd: repoDir, encoding: 'utf8' });
   fs.writeFileSync(path.join(repoDir, 'a.txt'), 'one\n');
   git(['add', '.'], repoDir);
   git(['commit', '-q', '-m', 'base'], repoDir);
@@ -403,6 +406,14 @@ test('finish-console with malformed stdin JSON exits 1, not 2', () => {
   assert.match(r.stderr, /not valid JSON/);
 });
 
+test('finish-console with a falsy JSON stdin (null) exits 0 with no output', () => {
+  // pins today's `if (!payload) return 0;`
+  const r = run(['finish-console', '--run-dir', makeRunDir(), '--approve-all'], { input: 'null' });
+  assert.strictEqual(r.status, 0);
+  assert.strictEqual(r.stdout, '');
+  assert.strictEqual(r.stderr, '');
+});
+
 test('finish-console without --approve-all exits 2 with usage', () => {
   const runDir = makeRunDir();
   const r = run(['finish-console', '--run-dir', runDir], { input: '{}' });
@@ -503,10 +514,8 @@ const PREFLIGHT_PAYLOAD = JSON.stringify({
 function makeScratchRepo(t, branch) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'finish-console-scratch-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  git(['init', '-q'], dir);
+  initRepo(dir, { name: 'Test', email: 'test@example.com', cwd: dir, encoding: 'utf8' });
   git(['checkout', '-q', '-b', branch], dir);
-  git(['config', 'user.email', 'test@example.com'], dir);
-  git(['config', 'user.name', 'Test'], dir);
   fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');
   git(['add', '.'], dir);
   git(['commit', '-q', '-m', 'base'], dir);
@@ -579,4 +588,84 @@ test('finish-console refuses a ledger it cannot read before writing any artifact
   t.after(() => fs.chmodSync(unreadable, 0o644));
   const r = run(['finish-console', '--run-dir', runDir, '--approve-all', '--ledger', unreadable], { input: PREFLIGHT_PAYLOAD });
   assertNothingWritten(runDir, r, /ledger pre-flight failed: could not read .*locked-ledger\.md/);
+});
+
+// ---- injected cwd / env wiring (#5379) --------------------------------------
+
+const FLIP_PAYLOAD = JSON.stringify({ ledger: [{ item: 1, status: 'fixed', resolution: 'Fixed in place' }] });
+const FLIPPED_ROW = /\| 1 \| review \| Needs a memory capture \| fixed \| Fixed in place \|/;
+
+test('AC8.1: with no worktree in run-state, the ledger resolves under the injected cwd', (t) => {
+  // The run dir has no run-state.json, so the worktree falls back to the injected cwd. Only that
+  // cwd holds the docs/plans ledger (untracked, so this branch owns it); the runner's own cwd holds none.
+  const { dir, runDir } = makeScratchRepo(t, 'main');
+  const ledger = path.join(dir, 'docs', 'plans', 'a-ledger.md');
+  fs.writeFileSync(ledger, LEDGER_SAMPLE);
+  assert.ok(!fs.existsSync(path.join(process.cwd(), 'docs', 'plans', 'a-ledger.md')), 'the runner cwd must not hold the ledger');
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { cwd: dir, input: FLIP_PAYLOAD, env: cleanGitEnv() });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(fs.readFileSync(ledger, 'utf8'), FLIPPED_ROW);
+});
+
+test('relative --ledger resolves against the injected cwd', () => {
+  const runDir = makeRunDir();
+  const ledger = path.join(runDir, 'x-ledger.md');
+  fs.writeFileSync(ledger, LEDGER_SAMPLE);
+  const rel = path.relative(repoDir, ledger);
+  assert.ok(!path.isAbsolute(rel), rel);
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all', '--ledger', rel], { cwd: repoDir, input: FLIP_PAYLOAD });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(fs.readFileSync(ledger, 'utf8'), FLIPPED_ROW);
+});
+
+test('an outside relative --ledger is rejected, naming the value as typed', (t) => {
+  const runDir = makeRunDir();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'finish-console-outside-'));
+  t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(outside, 'ledger.md'), LEDGER_SAMPLE);
+  const rel = path.relative(repoDir, path.join(outside, 'ledger.md'));
+  assert.ok(!path.isAbsolute(rel), rel);
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all', '--ledger', rel], { cwd: repoDir, input: PREFLIGHT_PAYLOAD });
+  assertNothingWritten(runDir, r, new RegExp(`ledger pre-flight failed: --ledger ${rel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} rejected \\(outside the run directory and worktree\\)`));
+});
+
+test('the docs/plans fallback asks gh for the default branch through the one gh seam, handing it the injected env', (t) => {
+  // No policy and no origin/HEAD in the fixture, so resolveIntegrationBranch reaches `gh repo view`.
+  // A resolveBase override that left pack.js's own gh in place would never call this fake.
+  const { dir, runDir } = makeScratchRepo(t, 'main');
+  const ledger = path.join(dir, 'docs', 'plans', 'a-ledger.md');
+  fs.writeFileSync(ledger, LEDGER_SAMPLE);
+  const env = { ...cleanGitEnv(), CT_GH_SEAM_MARK: 'injected' };
+  const calls = [];
+  const gh = (args, cwd, ctx) => { calls.push({ args, cwd, ctx }); return 'main\n'; };
+  const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { cwd: dir, input: FLIP_PAYLOAD, env, deps: { gh } });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.strictEqual(calls.length, 1, 'one gh call: the default-branch probe');
+  assert.deepStrictEqual(calls[0].args, ['repo', 'view', '--json', 'defaultBranchRef', '-q', '.defaultBranchRef.name']);
+  assert.strictEqual(calls[0].cwd, dir);
+  assert.strictEqual(calls[0].ctx.env.CT_GH_SEAM_MARK, 'injected');
+  assert.match(fs.readFileSync(ledger, 'utf8'), FLIPPED_ROW);
+});
+
+test('AC8.1: the docs/plans ownership git follows the injected env (GIT_DIR only in env)', () => {
+  // cwd is repo A, on `feature` with no `main`: its own git cannot resolve a merge base. The injected
+  // env points GIT_DIR at repo B, whose `main` resolves one. The base lookup (defaultDeps' git) and the
+  // ownership diff (resolveLedgerPath's git) must both run under that env: with the first on the real
+  // env the base is unavailable, with the second on it B's base sha is unknown to A's git. Either way the
+  // ledger reads unattributable instead of flipping.
+  const a = committedRepo({ prefix: 'finish-console-env-a-', branch: 'feature' });
+  const b = committedRepo({ prefix: 'finish-console-env-b-', branch: 'main' });
+  try {
+    fs.mkdirSync(path.join(a.dir, 'docs', 'plans'), { recursive: true });
+    const ledger = path.join(a.dir, 'docs', 'plans', 'a-ledger.md');
+    fs.writeFileSync(ledger, LEDGER_SAMPLE);
+    const runDir = fs.mkdtempSync(path.join(a.dir, 'finish-console-rundir-'));
+    const env = { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git') };
+    const r = run(['finish-console', '--run-dir', runDir, '--approve-all'], { cwd: a.dir, input: FLIP_PAYLOAD, env });
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.match(fs.readFileSync(ledger, 'utf8'), FLIPPED_ROW);
+  } finally {
+    fs.rmSync(a.dir, { recursive: true, force: true });
+    fs.rmSync(b.dir, { recursive: true, force: true });
+  }
 });

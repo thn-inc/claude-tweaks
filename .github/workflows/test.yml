@@ -1,8 +1,19 @@
+# The PR merge gate: the full `npm test` suite, split across parallel shard jobs.
+#
+# Pull requests only. On main, test-impact-map.yml runs the same full suite (under the read
+# tracer) on every push and fails when it is red, so a second post-merge run here would only
+# repeat it.
+#
+# Each `shard` job runs one slice (`npm test -- --shard <i>/<n>`, partitioned by
+# tools/test-durations.json in tools/run-tests.js) and uploads its TAP output. The `test` job
+# then prints all slices as one suite log with one summary (tools/merge-shard-logs.js) and is red
+# when any shard was. It keeps the job name `test` because .claude-tweaks/verify-scope.json's
+# `ci` source takes the suite's verdict from that one job's log (plugin/skills/test/ci-source.md).
+# The shard count appears twice, in the matrix and in `--expect`; they must match
+# (tests/verify-scope-declaration.test.js checks it).
 name: test
 
 on:
-  push:
-    branches: [main]
   pull_request:
 
 concurrency:
@@ -10,9 +21,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
+  shard:
+    name: shard ${{ matrix.shard }}/${{ strategy.job-total }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      # Every shard runs to the end, so a red PR shows all of its failures, not one slice's.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     env:
       # Several suites build git fixtures that commit; CI runners have no git identity.
       GIT_AUTHOR_NAME: ci
@@ -25,17 +42,54 @@ jobs:
       # whole pass, which is exactly what happened here without a token.
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Full history: changelog-coverage and shipped-record tests walk
           # origin/main's history; a shallow clone makes those gates vacuous.
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
       # ubuntu-latest ships no zsh, and the zsh cases (the zsh-only word-split
       # defect in wrap-up-closing-records-array-fill.test.js, #4107) skip
-      # when it is absent from PATH.
-      - run: sudo apt-get update && sudo apt-get install -y zsh
+      # when it is absent from PATH. The image's package index usually has zsh,
+      # so the slow `apt-get update` runs only when the first install fails.
+      - run: sudo apt-get install -y --no-install-recommends zsh || (sudo apt-get update && sudo apt-get install -y --no-install-recommends zsh)
       # No npm install step: the plugin ships zero npm deps, and node --test is built in.
-      - run: npm test
+      # `shell: bash` runs with pipefail, so the suite's exit code survives the tee.
+      - name: Run this shard of the suite
+        shell: bash
+        run: npm test --silent -- --shard ${{ matrix.shard }}/${{ strategy.job-total }} | tee "$RUNNER_TEMP/shard-${{ matrix.shard }}.tap"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: shard-tap-${{ matrix.shard }}
+          path: ${{ runner.temp }}/shard-${{ matrix.shard }}.tap
+          retention-days: 7
+          if-no-files-found: error
+
+  # Runs after a red shard too (its log is the evidence), but not after a cancelled run.
+  test:
+    needs: shard
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: tools
+      # A shard that died before uploading leaves no artifact; the merge step names it.
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          pattern: shard-tap-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/shards
+      # The runner image's own Node runs this; it needs no npm deps and no particular version.
+      - name: Print the whole suite's log
+        run: node tools/merge-shard-logs.js --expect 4 "$RUNNER_TEMP/shards"
+      - name: Fail when any shard did not succeed
+        if: needs.shard.result != 'success'
+        run: |
+          echo "::error::the shard jobs ended '${{ needs.shard.result }}' — see their logs"
+          exit 1

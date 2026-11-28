@@ -7,7 +7,9 @@ Present this summary after completing all review steps.
 When **all** of the following hold, render the compact block below instead of the full template — a zero-findings review does not earn ten mostly-empty section headers:
 
 - Verdict is PASS
-- Zero findings in every category (code review, hindsight, visual, design quality, coverage, docs) and zero unresolved QA ledger entries. A non-empty skill load delta (3j) is informational and does not disqualify the compact form. A Coverage caveat (`step3-lens-dispatch.md`'s partner-died single-read degrade) is informational and does not disqualify the compact form either. An **Independence: degraded** line is informational the same way.
+- Every deliverable is `done` and every criterion `met` — a `partial`, `missing` or `unverifiable` item (Step 1 item 6) needs the full template's Spec Compliance tables
+- Step 1 item 5's Current-State outcome is not `partial` — a diff that does not reach the outcome its record named needs the full template, even when every deliverable is `done` and every criterion `met`
+- Zero findings in every category (code review, hindsight, visual, design quality, coverage, docs) and zero unresolved QA ledger entries. A non-empty skill load delta (3j) is informational and does not disqualify the compact form. A Coverage caveat (`step3-tier-variants.md`'s partner-died single-read degrade) is informational and does not disqualify the compact form either. An **Independence: degraded** line is informational the same way.
 - Zero tradeoffs accepted, zero autonomous actions performed (no fixes, no simplifier changes, no ledger resolutions)
 - No manual steps required
 - No `/build` plan step left not run (the full template's "Not run by /build" section would be omitted)
@@ -20,8 +22,8 @@ When **all** of the following hold, render the compact block below instead of th
 **Review effort:** {tier} ({derivation source, same format as the full template's Review effort line})
 **Status:** Spec compliance {met | skipped — fast-lane | n/a — no spec} · Tests pass · QA {status} · Findings 0 · Hindsight clean · Simplification {none needed | skipped — /build simplified at {sha}} · Visual {status, one word} · Design Quality {skipped ({reason}) | 0 findings} · Fan-out leftovers 0
 {only when 3j printed a table:} **Skill load delta:** {N} entry point(s) moved (a grouped `{count} entries:` row counts as {count}) — largest ΔClosure {signed bytes} on {entry, or a grouped row's first name and "+{count−1} more"}
-{only when a lens fell back to single-read coverage — `step3-lens-dispatch.md`'s partner-died paragraph:} **Coverage caveat:** {every affected lens with its reason, e.g. 3b (timed out), 3c (unavailable)} — single-read coverage, findings unconfirmed
-{only when Step 3 found no Agent tool — `step3-lens-dispatch.md`'s run-level no-Agent note:} **Independence: degraded** — no Agent tool in this host; every lens and tiebreak was judged by the reviewer itself{only when this review runs in the same `/claude-tweaks:flow` call whose step list also ran `build` (omitted when that is unknown, e.g. a standalone review), append "; the reviewer is the same session that ran this build's implementation"}
+{only when a lens fell back to single-read coverage — `step3-tier-variants.md`'s partner-died paragraph:} **Coverage caveat:** {every affected lens with its reason, e.g. 3b (timed out), 3c (unavailable)} — single-read coverage, findings unconfirmed
+{only when Step 3 found no Agent tool — `step3-tier-variants.md`'s run-level no-Agent note:} **Independence: degraded** — no Agent tool in this host; every lens and tiebreak was judged by the reviewer itself{only when this review runs in the same `/claude-tweaks:flow` call whose step list also ran `build` (omitted when that is unknown, e.g. a standalone review), append "; the reviewer is the same session that ran this build's implementation"}
 
 ### Key Learnings
 {1-3 insights, or "No key learnings — straightforward review."}
@@ -38,17 +40,17 @@ The compact form never suppresses information, only empty scaffolding: if any se
 ## Review: {spec number or description}
 
 **Review effort:** {tier} (derived from {explicit argument | record labels: risk:{x} × size:{y} | diff heuristic: {reasoning} | label {a}, diff heuristic {b} (risk:{x} × size:{y}; {reasoning})})
-{only when a lens fell back to single-read coverage — `step3-lens-dispatch.md`'s partner-died paragraph:} **Coverage caveat:** {every affected lens with its reason, e.g. 3b (timed out), 3c (unavailable)} — single-read coverage, findings unconfirmed
-{only when Step 3 found no Agent tool — `step3-lens-dispatch.md`'s run-level no-Agent note:} **Independence: degraded** — no Agent tool in this host; every lens and tiebreak was judged by the reviewer itself{only when this review runs in the same `/claude-tweaks:flow` call whose step list also ran `build` (omitted when that is unknown, e.g. a standalone review), append "; the reviewer is the same session that ran this build's implementation"}
+{only when a lens fell back to single-read coverage — `step3-tier-variants.md`'s partner-died paragraph:} **Coverage caveat:** {every affected lens with its reason, e.g. 3b (timed out), 3c (unavailable)} — single-read coverage, findings unconfirmed
+{only when Step 3 found no Agent tool — `step3-tier-variants.md`'s run-level no-Agent note:} **Independence: degraded** — no Agent tool in this host; every lens and tiebreak was judged by the reviewer itself{only when this review runs in the same `/claude-tweaks:flow` call whose step list also ran `build` (omitted when that is unknown, e.g. a standalone review), append "; the reviewer is the same session that ran this build's implementation"}
 
 ### Spec Compliance (spec-based only)
 | Deliverable | Status |
 |-------------|--------|
-| {deliverable} | {done/partial/missing} |
+| {deliverable} | {done/partial/missing/unverifiable} |
 
 | Acceptance Criterion | Status |
 |---------------------|--------|
-| {criterion} | {met/partially met/not met} |
+| {criterion} | {met/partially met/not met/unverifiable} |
 (or: No spec — file/commit-based review.)
 (or, when skipped: "Skipped — ceremony-profile: fast-lane.")
 
@@ -77,7 +79,7 @@ Possible QA statuses (the four canonical values from qa-reporting.md's Status de
 - **ALL FAILED** — no stories passed
 - **Skipped** / **Not run** — QA did not execute
 
-**Stale-QA qualifier (#3047):** when the review applied a fix wave — Step 3 Routing's, Step 6.7's, or both, all measured from one `{WAVE_BASE}` (`code-mode-steps.md` Step 3 Routing and Step 6.7) — that touched a story's `source_files` and its post-wave `/claude-tweaks:test qa affected` re-run did not happen or left such a story unexecuted (self-skipped with no dev server or browser, errored, stopped without running, or reported the story SKIPPED), append ` — ran before the review's fix wave ({N} commits since); stories touching changed files: {ids}` to the status — `{N}` is `git rev-list --count {WAVE_BASE}..HEAD` (when the wave also left uncommitted edits — `git diff --quiet HEAD` exits non-zero, or `git ls-files --others --exclude-standard` lists a file, since a Fix-now edit can leave only a new untracked file — render `({N} commits since, plus uncommitted edits)` instead — accepted (#3598): on a tree dirty before the wave, that check also counts the pre-wave edits and untracked files, so it can add the words but never hides a commit), `{ids}` the stories whose `source_files` the wave touched. When the re-run ran, report the status recomputed over all stories, unqualified (except under the never-run rule below); with no applied wave, or a wave touching no story file, the qualifier never renders. The verdict comment (`code-mode-steps.md` Step 7) copies this line verbatim.
+**Stale-QA qualifier (#3047):** when the review applied a fix wave — Step 3 Routing's, Step 6.7's, or both, all measured from one `{WAVE_BASE}` (`code-mode-steps.md` Step 3 Routing and `late-findings-routing.md`, Step 6.7's body) — that touched a story's `source_files` and its post-wave `/claude-tweaks:test qa affected` re-run did not happen or left such a story unexecuted (self-skipped with no dev server or browser, errored, stopped without running, or reported the story SKIPPED), append ` — ran before the review's fix wave ({N} commits since); stories touching changed files: {ids}` to the status — `{N}` is `git rev-list --count {WAVE_BASE}..HEAD` (when the wave also left uncommitted edits — `git diff --quiet HEAD` exits non-zero, or `git ls-files --others --exclude-standard` lists a file, since a Fix-now edit can leave only a new untracked file — render `({N} commits since, plus uncommitted edits)` instead — accepted (#3598): on a tree dirty before the wave, that check also counts the pre-wave edits and untracked files, so it can add the words but never hides a commit), `{ids}` the stories whose `source_files` the wave touched. When the re-run ran, report the status recomputed over all stories, unqualified (except under the never-run rule below); with no applied wave, or a wave touching no story file, the qualifier never renders. The verdict comment (`code-mode-steps.md` Step 7) copies this line verbatim.
 
 **Never-run pre-wave status (#3598):** the qualifier attaches only to a status built from stories that actually ran. When the pre-wave status was `Skipped — no stories`, `Skipped — no dev server`, or `Not run`, there are no pre-wave per-story results to merge into. If the post-wave re-run executed stories, render its status over those stories, followed by ` — post-wave re-run only ({ids}); no pre-wave QA results`. If it executed none, keep the pre-wave status as it was, with no qualifier — there is no earlier pass to call stale.
 
@@ -123,6 +125,7 @@ Possible QA statuses (the four canonical values from qa-reporting.md's Status de
 - {If completed with QA data: note QA data enrichment — caveats surfaced, page inventories consumed, findings confirmed/resolved}
 - {If recommended: `/claude-tweaks:visual-review journey:{name}` or `/claude-tweaks:visual-review {url}`}
 - {If skipped because `/claude-tweaks:visual-review` found no frontend surface: its reason (`Surface: {value}` or no UI trigger file in the diff) and the journeys whose `files:` overlapped the diff, copied from its suppressed line}
+- {If skipped because Step 6's skill-load gate returned `skip`: the gate's `reason`, verbatim, and its `journeys` names}
 
 ### Design Quality (from /claude-tweaks:design-wrapper review)
 

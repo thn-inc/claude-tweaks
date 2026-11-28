@@ -70,7 +70,7 @@ A `must-match` proves that a line survived. It does not show that the behaviour 
 ## Verify
 
 ```bash
-node --test tests/impeccable-plugin-contract.test.js tests/impeccable-cli-contract.test.js tests/impeccable-retired-scripts-sweep.test.js tests/bin-lib/superpowers-version.test.js tools/upstream-drift/tests/run.test.js
+node tools/run-tests.js tests/impeccable-plugin-contract.test.js tests/impeccable-cli-contract.test.js tests/impeccable-retired-scripts-sweep.test.js tests/bin-lib/superpowers-version.test.js tools/upstream-drift/tests/run.test.js
 ```
 
 Then run `/upstream-drift --dep <name> --drift-only`. A contract-test skip reason that reads "installed version(s) do not match the pin" means the re-pin is not done. Neither check reads behaviour, so the re-pin is also not done until every `contract-paths` diff has been read and each behaviour change is fixed or filed.

@@ -10,6 +10,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 
@@ -94,7 +95,7 @@ test('AC1.1: --plugin-root <plugin/> output includes qa-agent marked as an agent
 });
 
 test('a high-tool-count agent is flagged like a skill', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-cost-report-agent-'));
+  const root = scratchDir('harness-cost-report-agent-');
   fs.mkdirSync(path.join(root, 'skills', 's'), { recursive: true });
   fs.writeFileSync(path.join(root, 'skills', 's', 'SKILL.md'), '---\nname: s\nallowed-tools: Read\n---\nbody\n');
   fs.mkdirSync(path.join(root, 'agents'));
@@ -112,7 +113,7 @@ test('a high-tool-count agent is flagged like a skill', () => {
 });
 
 test('an agent with no tools: line is counted in unscopedAgentCount, not unscopedCount', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-cost-report-unscoped-agent-'));
+  const root = scratchDir('harness-cost-report-unscoped-agent-');
   fs.mkdirSync(path.join(root, 'skills', 's'), { recursive: true });
   fs.writeFileSync(path.join(root, 'skills', 's', 'SKILL.md'), '---\nname: s\nallowed-tools: Read\n---\nbody\n');
   fs.mkdirSync(path.join(root, 'agents'));

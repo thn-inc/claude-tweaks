@@ -2,7 +2,7 @@
 
 Canonical definition of the `### Observation plan` section of an acceptance packet (`_shared/acceptance-packet.md`), or of a legacy Verification Brief. The
 producer (`skills/wrap-up/verification-brief.md` Step 2) authors one per record at wrap-up
-time; `/claude-tweaks:demo` Step 2 executes it show-first; demo's session-recall path
+time; `/claude-tweaks:accept` Step 2 executes it show-first; demo's session-recall path
 composes one directly from recall. Both cite this file — the schema and per-kind semantics
 are stated once, here.
 
@@ -23,6 +23,10 @@ are stated once, here.
 
 ## Grammar rules
 
+- An Entry point with a credential-shaped path segment (the bearer-segment rule,
+  `_shared/acceptance-packet.md`'s `## Links and credentials`) holds the route with that segment
+  replaced by the placeholder `{id}`, since render screens the raw value out of the plan. The
+  bearer-shaped value itself is never written.
 - One Prepare command per `-` sub-bullet; `Prepare: none` when nothing needs running first.
 - One Inspect pointer per `-` sub-bullet.
 - `Regenerate:` attaches to its Inspect pointer as an indented continuation line, at most
@@ -69,7 +73,7 @@ would read as a dependency edge rather than a verification pointer. The block is
 
 ## Producer
 
-Composed only by `/claude-tweaks:demo`'s `#N`-branch composers (`demo/entry-paths.md`'s Full
+Composed only by `/claude-tweaks:accept`'s `#N`-branch composers (`accept/entry-paths.md`'s Full
 verification pointer sub-procedure), from live parent/sibling state at demo time — sibling
 open/closed state is fresher there than anything wrap-up could have written at build time.
 `wrap-up/verification-brief.md` Step 2 never composes this block: its Routing sends every

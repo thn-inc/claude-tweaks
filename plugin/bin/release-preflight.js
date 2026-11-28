@@ -90,7 +90,7 @@ async function run(argv, deps = {}) {
   if (requested) {
     const target = resolveTarget({ runDir: requested, cwd: cwd(), mainRoot: deps.mainRoot });
     if (!target.ok) {
-      stderr(`release-preflight.js: run dir ${requested} refused (${target.reason === 'missing' ? 'missing' : 'not anchored under the main checkout'}) — nothing written\n`);
+      stderr(`release-preflight.js: run dir ${requested} refused (${target.reason === 'missing' ? 'missing' : 'not anchored under the main checkout\'s .claude-tweaks/pipelines'}) — nothing written\n`);
       return 3;
     }
     dir = target.dir;

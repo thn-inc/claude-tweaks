@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -11,11 +12,12 @@ const PLUGIN_ROOT = path.resolve(__dirname, '..', '..', '..', 'plugin');
 const { run, parseArgs, ghReadGrants, checkPatchStack } = require(CLI);
 const { gitEnv } = require('../../../plugin/bin/lib/staged-patch/stack-check');
 const { chmodDenialSkip } = require('../../helpers/root');
+const { initRepo, writeIdentity } = require('../../helpers/git-fixtures');
 
 function mainCheckoutWithRun({ autonomy = 'unattended', staged = {}, decisions = '', policyExtra = '', writePolicy = true, runConfig = null, consoleJson = null } = {}) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-cli-')));
+  const root = fs.realpathSync(scratchDir('console-resolve-cli-'));
   const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  git('init', '-q'); git('config', 'user.email', 't@example.invalid'); git('config', 'user.name', 't'); git('commit', '-q', '--allow-empty', '-m', 'init');
+  initRepo(root, { name: 't', email: 't@example.invalid', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); git('commit', '-q', '--allow-empty', '-m', 'init');
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   if (writePolicy) fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), `autonomy: ${autonomy}\n${policyExtra}`);
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-09-06T000000-record-7');
@@ -38,7 +40,7 @@ function fakeExec(calls, root) {
   return (cmd, args) => {
     calls.push([cmd, ...args]);
     if (cmd === 'git' && args[0] === 'rev-parse') return `${root}\n`;
-    if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'view') return JSON.stringify({ labels: [{ name: 'auto:merge' }], comments: [] });
+    if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'view') return JSON.stringify({ labels: [{ name: 'auto:build' }, { name: 'auto:merge' }], comments: [] });
     if (cmd === 'git' && args[0] === 'apply') return '';
     throw new Error(`unexpected exec: ${cmd} ${args.join(' ')}`);
   };
@@ -66,7 +68,7 @@ test('unattended: exit 0, one decisions block of items+1 lines, console.json res
   assert.strictEqual(cj.mode, 'auto-resolve');
   assert.strictEqual(cj.ceiling, 'unattended');
   assert.strictEqual(cj.items.length, 3);
-  assert.deepStrictEqual(cj.merge, { resolution: 'merge', reason: 'every member carries auto:merge or a matured auto:merge-pending; no needs-human verdict' });
+  assert.deepStrictEqual(cj.merge, { resolution: 'merge', reason: 'every member carries auto:build with auto:merge or a matured auto:merge-pending; no needs-human verdict' });
   const rows = out().split('\n').filter((l) => /AUTO-RESOLVED/.test(l));
   assert.strictEqual(rows.length, 3 + 1, 'one row per item plus the cleanup row');
   // #1932 M2: the closed reversibility vocabulary, and the stage path on every
@@ -128,7 +130,7 @@ test('console.json and --json carry filings as {item, fingerprint, title} with n
   const { formatEntry } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'log-decision', 'append'));
   const tbNow = new Date(2026, 9, 24, 10, 0, 0);
   const finding = { lens: '3a', path: 'src/a.js', line: 9, claim: 'claim one', reporterSeverity: 'medium', kind: 'unconfirmed' };
-  const r = resolveTiebreak(finding, 'Verdict: cant-tell\nSeverity: medium\nRecommendation: drop\nSTATUS: DONE', { readFile: () => '', now: tbNow });
+  const r = resolveTiebreak(finding, 'Verdict: cant-tell\nSeverity: medium\nRecommendation: file\nSTATUS: DONE', { readFile: () => '', now: tbNow });
   const entry = formatEntry({ status: r.logStatus, now: tbNow, step: r.logStep, text: r.logText, reversibility: 'high' });
   const fx = mainCheckoutWithRun({ decisions: `${entry}\n` });
   const json = baseDeps(fx, []);
@@ -142,16 +144,42 @@ test('console.json and --json carry filings as {item, fingerprint, title} with n
   assert.ok(!json.out().includes('work-fingerprint'), 'no proposal text in --json');
   assert.ok(!JSON.stringify(cj).includes('work-fingerprint'), 'no proposal text in console.json');
   assert.deepStrictEqual(cj.items.map((i) => i.resolution), ['filed']);
+  assert.deepStrictEqual(cj.digests, [], 'a file recommendation plans no digest entry');
   const none = mainCheckoutWithRun({ staged: THREE });
   assert.strictEqual(await run(['--run', none.runDir, '--policy', 'console-auto'], baseDeps(none, []).d), 0);
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(none.runDir, 'console.json'), 'utf8')).filings, [], 'always written');
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(none.runDir, 'console.json'), 'utf8')).digests, [], 'always written');
+});
+
+test('a drop-recommended can\'t-tell item digests: console.json and --json carry digests as {item, fingerprint}, no filing, reversibility n/a (#4679)', async () => {
+  const { resolveTiebreak } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'tiebreak'));
+  const { formatEntry } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'log-decision', 'append'));
+  const tbNow = new Date(2026, 9, 24, 10, 0, 0);
+  const finding = { lens: '3a', path: 'src/a.js', line: 9, claim: 'claim one', reporterSeverity: 'medium', kind: 'unconfirmed' };
+  const r = resolveTiebreak(finding, 'Verdict: cant-tell\nSeverity: medium\nRecommendation: drop\nSTATUS: DONE', { readFile: () => '', now: tbNow });
+  const entry = formatEntry({ status: r.logStatus, now: tbNow, step: r.logStep, text: r.logText, reversibility: 'high' });
+  const fx = mainCheckoutWithRun({ decisions: `${entry}\n` });
+  const json = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto', '--json'], json.d), 0);
+  const cj = JSON.parse(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'));
+  assert.deepStrictEqual(cj.items.map((i) => i.resolution), ['digested']);
+  assert.deepStrictEqual(cj.filings, []);
+  assert.strictEqual(cj.digests.length, 1);
+  assert.deepStrictEqual(Object.keys(cj.digests[0]).sort(), ['fingerprint', 'item']);
+  assert.strictEqual(cj.digests[0].item, `tiebreak:${r.id}`);
+  assert.match(cj.digests[0].fingerprint, /^consolefinding-[0-9a-f]{8}$/);
+  assert.deepStrictEqual(JSON.parse(json.out()).digests, cj.digests, '--json prints the same');
+  assert.ok(!json.out().includes('<!-- console-finding'), 'no digest line text in --json');
+  assert.ok(!JSON.stringify(cj).includes('<!-- console-finding'), 'no digest line text in console.json');
+  const decisions = fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8');
+  assert.match(decisions, /Console item tiebreak:[0-9a-f]+ \(Low-confidence findings\): digested — .*Reversibility: n\/a\.$/m);
 });
 
 // grant-veto-window-hours only reaches evaluateMaturation if the CLI resolves
 // it: 30h-old pending grant, matured under the 24h default, still inside a 72h
 // window. Same fixture, two policies, opposite merge halves.
 const PENDING_30H = JSON.stringify({
-  labels: [{ name: 'auto:merge-pending' }],
+  labels: [{ name: 'auto:build' }, { name: 'auto:merge-pending' }],
   comments: [{ body: 'Grant recorded.\n<!-- grant-mode-audit: date=2026-09-05T06:00:00Z auto-merge=pending -->', authorAssociation: 'MEMBER' }],
 });
 
@@ -182,7 +210,7 @@ test('grant-veto-window-hours is resolved and passed to the maturation check, ne
 // the issue -- a backdated NONE-authored one must not mature a pending grant. The
 // comment is passed over (same path as "no marker"), so the grant reads unknown-age.
 const PLANTED_PENDING = (association) => JSON.stringify({
-  labels: [{ name: 'auto:merge-pending' }],
+  labels: [{ name: 'auto:build' }, { name: 'auto:merge-pending' }],
   comments: [{
     body: '<!-- grant-mode-audit: date=2020-01-01T00:00:00Z auto-merge=pending -->',
     url: 'https://x/issues/7#c1', author: { login: 'eve' }, authorAssociation: association,
@@ -206,7 +234,7 @@ test('a planted backdated pending-grant marker does not mature a grant (#3358)',
 
 test('ghReadGrants: an untrusted pending-grant marker leaves pendingSince null and is named in skippedUntrusted (#3358)', () => {
   const g = ghReadGrants(() => PLANTED_PENDING('NONE'), '/unused')([7])[7];
-  assert.deepStrictEqual(g.labels, ['auto:merge-pending']);
+  assert.deepStrictEqual(g.labels, ['auto:build', 'auto:merge-pending']);
   assert.strictEqual(g.pendingSince, null);
   assert.deepStrictEqual(g.skippedUntrusted, ['skipped marker comment https://x/issues/7#c1 by eve (NONE) — not an owner, member, or collaborator']);
 });
@@ -219,7 +247,7 @@ test('ghReadGrants: the same marker authored MEMBER is that date, with nothing s
 
 test('ghReadGrants: a trusted marker counts when a later untrusted one is passed over; a non-marker NONE comment is silent (#3358)', () => {
   const raw = JSON.stringify({
-    labels: ['auto:merge-pending'],
+    labels: ['auto:build', 'auto:merge-pending'],
     comments: [
       { body: '<!-- grant-mode-audit: date=2026-09-05T06:00:00Z auto-merge=pending -->', authorAssociation: 'OWNER' },
       { body: '<!-- grant-mode-audit: date=2026-09-06T06:00:00Z auto-merge=pending -->', url: 'https://x/c2', author: { login: 'eve' } },
@@ -394,7 +422,7 @@ test('malformed: a missing --run exits 2 (#1932 Gotcha)', async () => {
 
 test('a --run outside the main checkout exits 3 and writes nothing (#1932 AC5)', async () => {
   const fx = mainCheckoutWithRun();
-  const shadow = fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-shadow-'));
+  const shadow = scratchDir('console-resolve-shadow-');
   fs.mkdirSync(path.join(shadow, 'staged'));
   fs.writeFileSync(path.join(shadow, 'decisions.md'), '');
   const { d, err } = baseDeps(fx, []);
@@ -582,10 +610,10 @@ const STACK_BASE = ['l1', 'l2', 'l3', 'l4', 'anchor', 'a1', 'a2', 'a3'].join('\n
 const STACK_ENV = gitEnv();
 
 function captureInsertAboveAnchor(tag) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-capture-'));
+  const dir = scratchDir('console-resolve-capture-');
   try {
     const git = (...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8', env: STACK_ENV, stdio: ['ignore', 'pipe', 'ignore'] });
-    git('init', '-q'); git('config', 'user.email', 't@example.invalid'); git('config', 'user.name', 't');
+    git('init', '-q'); writeIdentity(dir, { name: 't', email: 't@example.invalid' });
     fs.writeFileSync(path.join(dir, 'f.txt'), STACK_BASE);
     git('add', 'f.txt'); git('commit', '-q', '-m', 'base');
     fs.writeFileSync(path.join(dir, 'f.txt'), STACK_BASE.replace('anchor\n', `${tag}a\n${tag}b\nanchor\n`));
@@ -653,12 +681,12 @@ test('AC4.1: a successful Queue write keeps apply and leaves no residue (#4170)'
   assert.deepStrictEqual(readRunResidue(fx.runDir).consoles, []);
 });
 
-test('AC3.1: a console whose can\'t-tell filings never ran reports the planned filing, and the re-render names the --only re-run (#4170)', async () => {
+test('AC3.1: a console whose can\'t-tell filings never ran reports the planned filing, and the re-render names the default-selection re-run (#4170)', async () => {
   const { resolveTiebreak } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'tiebreak'));
   const { formatEntry, appendEntry } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'log-decision', 'append'));
   const tbNow = new Date(2026, 9, 24, 10, 0, 0);
   const finding = { lens: '3a', path: 'src/a.js', line: 9, claim: 'claim one', reporterSeverity: 'medium', kind: 'unconfirmed' };
-  const r = resolveTiebreak(finding, 'Verdict: cant-tell\nSeverity: medium\nRecommendation: drop\nSTATUS: DONE', { readFile: () => '', now: tbNow });
+  const r = resolveTiebreak(finding, 'Verdict: cant-tell\nSeverity: medium\nRecommendation: file\nSTATUS: DONE', { readFile: () => '', now: tbNow });
   const entry = formatEntry({ status: r.logStatus, now: tbNow, step: r.logStep, text: r.logText, reversibility: 'high' });
   const fx = mainCheckoutWithRun({ decisions: `${entry}\n` });
   const first = baseDeps(fx, []);
@@ -672,8 +700,22 @@ test('AC3.1: a console whose can\'t-tell filings never ran reports the planned f
   const second = baseDeps(fx, []);
   assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], second.d), 0);
   assert.match(second.out(), /Needs a human — 1 item\(s\)/);
-  assert.ok(second.out().includes(`--only 'tiebreak:${r.id}'`), second.out());
+  assert.ok(second.out().includes('--out-dir <dir> --digest-comments <comments.json>') && !second.out().includes('--only'), second.out());
   appendEntry({ runDir: fx.runDir, section: '/wrap-up', entry: formatEntry({ status: 'AUTO', now: tbNow, step: 'Review Console', text: `tiebreak:${r.id} filed as #501 (work-fingerprint ${cj.filings[0].fingerprint})`, reversibility: 'high' }) });
+  assert.deepStrictEqual(readRunResidue(fx.runDir).consoles, []);
+});
+
+test('AC3.1 (old shape): a previous-release console with a drop item in `filings` stays filing-pending, then clears on the digested line (#4679)', () => {
+  const { formatEntry, appendEntry } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'log-decision', 'append'));
+  const consoleJson = `${JSON.stringify({
+    resolved: true,
+    mode: 'auto-resolve',
+    items: [{ id: 'tiebreak:a1', section: 'Low-confidence findings', resolution: 'filed', reason: 'r', tiebreak: { recommendation: 'drop' } }],
+    filings: [{ item: 'tiebreak:a1', fingerprint: 'consolefinding-0123abcd', title: 't' }],
+  })}\n`;
+  const fx = mainCheckoutWithRun({ consoleJson });
+  assert.deepStrictEqual(readRunResidue(fx.runDir).consoles[0].items.map((i) => i.resolution), ['filing-pending']);
+  appendEntry({ runDir: fx.runDir, section: '/wrap-up', entry: formatEntry({ status: 'AUTO', now: new Date(2026, 9, 24, 10, 0, 0), step: 'Queue write', text: 'tiebreak:a1 digested (work-fingerprint consolefinding-0123abcd)', reversibility: 'n/a' }) });
   assert.deepStrictEqual(readRunResidue(fx.runDir).consoles, []);
 });
 
@@ -780,7 +822,7 @@ test('--set-item malformed invocations exit 2 (#4170)', async () => {
 
 test('--set-item with a --run outside the main checkout exits 3 (#4170)', async () => {
   const fx = mainCheckoutWithRun();
-  const shadow = fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-shadow-'));
+  const shadow = scratchDir('console-resolve-shadow-');
   fs.mkdirSync(path.join(shadow, 'staged'));
   fs.writeFileSync(path.join(shadow, 'decisions.md'), '');
   fs.writeFileSync(path.join(shadow, 'console.json'), `${JSON.stringify({ mode: 'auto-resolve', items: [{ id: 'leftover-1.md', resolution: 'apply' }] })}\n`);
@@ -915,10 +957,216 @@ test('#4636: --check-repair refuses the other shapes\' flags', () => {
 
 test('#4636: --check-repair with a --run outside the main checkout exits 3', async () => {
   const fx = mainCheckoutWithRun();
-  const shadow = fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-shadow-'));
+  const shadow = scratchDir('console-resolve-shadow-');
   const p = path.join(shadow, 'x.md');
   fs.writeFileSync(p, 'diff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1 +1 @@\n-old\n+new\n');
   const { d, out } = baseDeps(fx, []);
   assert.strictEqual(await run(['--run', shadow, '--check-repair', p], d), 3);
   assert.strictEqual(out(), '', 'a refused anchor never prints clear');
+});
+
+// ---- #5833: --recheck-merge ----
+
+const { verdictText } = require('../../../plugin/bin/lib/dispatch/merge-verdict');
+const { formatEntry } = require('../../../plugin/bin/lib/log-decision/append');
+
+const RM_NOW = new Date(2026, 8, 6, 12, 0, 0);
+const rmLine = (n, verdict) => formatEntry({ status: 'AUTO', now: RM_NOW, step: 'Auto-merge short-circuit', text: verdictText(n, verdict), reversibility: 'n/a' });
+const rmUnparsed = (n) => rmLine(n).replace(/\. Reversibility: n\/a\./, ' — extra. Reversibility: n/a.');
+const MERGE_JSON = (extra = {}) => `${JSON.stringify({ resolved: true, mode: 'auto-resolve', merge: { resolution: 'merge', reason: 'every member carries auto:build with auto:merge; no needs-human verdict' }, ...extra }, null, 2)}\n`;
+const recheckLines = (fx) => fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8').split('\n').filter((l) => /Merge re-check:/.test(l));
+
+async function recheck(fx) {
+  const { d, out, err } = baseDeps(fx, []);
+  const code = await run(['--run', fx.runDir, '--recheck-merge'], d);
+  return { code, out: out(), err: err() };
+}
+
+test('AC1.1: a needs-human verdict logged after console.json recorded merge — --recheck-merge resolves leave-open, rewrites console.json, logs one line', async () => {
+  const fx = mainCheckoutWithRun({ consoleJson: MERGE_JSON(), decisions: `${rmLine(7, 'needs-human')}\n` });
+  const r = await recheck(fx);
+  assert.strictEqual(r.code, 0, r.err);
+  assert.match(r.out, /recheck-merge leave-open — /);
+  const data = JSON.parse(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'));
+  assert.strictEqual(data.merge.resolution, 'leave-open');
+  assert.strictEqual(data.merge.recheckedFrom, 'merge');
+  assert.strictEqual(data.merge.recheckedAt, '2026-09-06T12:00:00.000Z');
+  assert.strictEqual(recheckLines(fx).length, 1);
+});
+
+test('AC2.1 (CLI): the resolve shape names the stale merge half on stderr, leaves console.json without mergeStale, and --recheck-merge then prints leave-open', async () => {
+  const fx = mainCheckoutWithRun({ staged: THREE });
+  const { d, err } = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], d), 0);
+  const data = JSON.parse(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'));
+  assert.strictEqual(data.merge.resolution, 'merge');
+  assert.strictEqual('mergeStale' in data, false);
+  assert.match(err(), /console-resolve\.js: merge half stale — #7: no confirmed merge-check verdict/);
+  const r = await recheck(fx);
+  assert.strictEqual(r.code, 0, r.err);
+  assert.match(r.out, /recheck-merge leave-open — /);
+});
+
+test('the resolve shape prints no stale line when a pass verdict is logged', async () => {
+  const fx = mainCheckoutWithRun({ staged: THREE, decisions: `${rmLine(7)}\n` });
+  const { d, err } = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], d), 0);
+  assert.doesNotMatch(err(), /merge half stale/);
+});
+
+test('--recheck-merge is idempotent for every hit kind: a second run prints leave-open and logs nothing more', async () => {
+  const fixtures = {
+    'needs-human': mainCheckoutWithRun({ consoleJson: MERGE_JSON(), decisions: `${rmLine(7, 'needs-human')}\n` }),
+    unparsed: mainCheckoutWithRun({ consoleJson: MERGE_JSON(), decisions: `${rmUnparsed(7)}\n` }),
+    unconfirmed: mainCheckoutWithRun({ consoleJson: MERGE_JSON() }),
+  };
+  for (const [kind, fx] of Object.entries(fixtures)) {
+    const a = await recheck(fx);
+    assert.strictEqual(a.code, 0, `${kind}: ${a.err}`);
+    assert.match(a.out, /recheck-merge leave-open — /, kind);
+    const b = await recheck(fx);
+    assert.strictEqual(b.code, 0, `${kind}: ${b.err}`);
+    assert.match(b.out, /recheck-merge leave-open — /, kind);
+    assert.strictEqual(recheckLines(fx).length, 1, kind);
+  }
+});
+
+test('--recheck-merge with no late verdict prints merge and writes nothing', async () => {
+  const fx = mainCheckoutWithRun({ consoleJson: MERGE_JSON(), decisions: `${rmLine(7)}\n` });
+  const before = fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8');
+  const r = await recheck(fx);
+  assert.strictEqual(r.code, 0, r.err);
+  assert.match(r.out, /recheck-merge merge — .*\(stored: merge\)\n$/);
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'), before);
+  assert.strictEqual(recheckLines(fx).length, 0);
+});
+
+test('--recheck-merge with no console.json (local-merge) judges decisions.md alone', async () => {
+  const clean = mainCheckoutWithRun({ decisions: `${rmLine(7)}\n` });
+  const a = await recheck(clean);
+  assert.strictEqual(a.code, 0, a.err);
+  assert.match(a.out, /recheck-merge merge — .*\(stored: none\)\n$/);
+  const late = mainCheckoutWithRun({ decisions: `${rmLine(7, 'needs-human')}\n` });
+  const b = await recheck(late);
+  assert.strictEqual(b.code, 0, b.err);
+  assert.match(b.out, /recheck-merge leave-open — /);
+  assert.strictEqual(recheckLines(late).length, 1);
+  assert.strictEqual(fs.existsSync(path.join(late.runDir, 'console.json')), false);
+});
+
+test('--recheck-merge fails closed: unparsable console.json is exit 5, an unreadable decisions.md is exit 3, nothing written', async () => {
+  const bad = mainCheckoutWithRun({ consoleJson: '{not json', decisions: `${rmLine(7, 'needs-human')}\n` });
+  const a = await recheck(bad);
+  assert.strictEqual(a.code, 5);
+  assert.doesNotMatch(a.out, /recheck-merge (merge|leave-open)/);
+  assert.strictEqual(recheckLines(bad).length, 0);
+  assert.strictEqual(fs.readFileSync(path.join(bad.runDir, 'console.json'), 'utf8'), '{not json');
+  const dir = mainCheckoutWithRun({ consoleJson: MERGE_JSON() });
+  fs.rmSync(path.join(dir.runDir, 'decisions.md'));
+  fs.mkdirSync(path.join(dir.runDir, 'decisions.md'));
+  const before = fs.readFileSync(path.join(dir.runDir, 'console.json'), 'utf8');
+  const b = await recheck(dir);
+  assert.strictEqual(b.code, 3);
+  assert.match(b.err, /recheck-merge failed \(decisions\.md unreadable: .*\) — not merging/);
+  assert.strictEqual(fs.readFileSync(path.join(dir.runDir, 'console.json'), 'utf8'), before);
+});
+
+test('--recheck-merge: an absent decisions.md is empty content, not an error', async () => {
+  const fx = mainCheckoutWithRun({});
+  fs.rmSync(path.join(fx.runDir, 'decisions.md'));
+  const r = await recheck(fx);
+  assert.strictEqual(r.code, 0, r.err);
+  assert.match(r.out, /recheck-merge merge — /);
+});
+
+test('--recheck-merge: a console.json recording merge, with no verdict line prints leave-open', async () => {
+  const fx = mainCheckoutWithRun({ consoleJson: MERGE_JSON() });
+  const r = await recheck(fx);
+  assert.strictEqual(r.code, 0, r.err);
+  assert.match(r.out, /recheck-merge leave-open — #7 has no confirmed merge-check verdict/);
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8')).merge.resolution, 'leave-open');
+});
+
+test('--recheck-merge: a console.json recording merge with a pass verdict logged prints merge; a stored mergeStale: null does not suppress the check', async () => {
+  const pass = mainCheckoutWithRun({ consoleJson: MERGE_JSON(), decisions: `${rmLine(7)}\n` });
+  assert.match((await recheck(pass)).out, /recheck-merge merge — /);
+  const explicit = mainCheckoutWithRun({ consoleJson: MERGE_JSON({ mergeStale: null }) });
+  assert.match((await recheck(explicit)).out, /recheck-merge leave-open — /);
+});
+
+test('--recheck-merge: an old-format console.json whose members cannot be read fails closed with members-unresolved', async () => {
+  const fx = mainCheckoutWithRun({ consoleJson: MERGE_JSON() });
+  fs.rmSync(path.join(fx.runDir, 'work'), { recursive: true });
+  const r = await recheck(fx);
+  assert.strictEqual(r.code, 0, r.err);
+  assert.match(r.out, /recheck-merge leave-open — members-unresolved/);
+  assert.match(fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8'), /Merge re-check: .*members-unresolved/);
+});
+
+test('parseArgs: --recheck-merge takes no other flag than --run', async () => {
+  assert.strictEqual(parseArgs(['--run', 'x', '--recheck-merge']).recheckMerge, true);
+  for (const extra of [['--policy', 'console-auto'], ['--dry-run'], ['--json'], ['--ceiling'], ['--full']]) {
+    assert.throws(() => parseArgs(['--run', 'x', '--recheck-merge', ...extra]), /--recheck-merge takes no other flag than --run/);
+  }
+  const fx = mainCheckoutWithRun({});
+  const { d } = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--recheck-merge', '--policy', 'console-auto'], d), 2);
+});
+
+test('--recheck-merge: a held console lock is exit 3 "lock", nothing written', async () => {
+  const fx = mainCheckoutWithRun({ consoleJson: MERGE_JSON(), decisions: `${rmLine(7, 'needs-human')}\n` });
+  const lock = path.join(fx.runDir, '.console.lock');
+  fs.mkdirSync(lock);
+  fs.writeFileSync(path.join(lock, '.owner'), `${process.pid}-held`);
+  const before = fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8');
+  const { d, out, err } = baseDeps(fx, [], { env: { CLAUDE_TWEAKS_LOCK_WAIT_MS: '50' } });
+  assert.strictEqual(await run(['--run', fx.runDir, '--recheck-merge'], d), 3);
+  assert.match(err(), /recheck-merge failed \(lock: .*\) — not merging/);
+  assert.doesNotMatch(out(), /recheck-merge (merge|leave-open)/);
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'), before);
+  assert.strictEqual(recheckLines(fx).length, 0);
+});
+
+test('--recheck-merge: a throwing append is exit 3 and console.json is unchanged', async () => {
+  const fx = mainCheckoutWithRun({ consoleJson: MERGE_JSON(), decisions: `${rmLine(7, 'needs-human')}\n` });
+  const before = fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8');
+  const { d, out, err } = baseDeps(fx, [], { appendEntry: () => { throw new Error('append boom'); } });
+  assert.strictEqual(await run(['--run', fx.runDir, '--recheck-merge'], d), 3);
+  assert.match(err(), /recheck-merge failed \(decisions\.md entry not written: append boom\) — not merging/);
+  assert.doesNotMatch(out(), /recheck-merge (merge|leave-open)/);
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'), before);
+});
+
+test('--recheck-merge: a throwing console.json rewrite is exit 3 with the Merge re-check line already landed (append precedes the write)', async () => {
+  const fx = mainCheckoutWithRun({ consoleJson: MERGE_JSON(), decisions: `${rmLine(7, 'needs-human')}\n` });
+  const { d, out, err } = baseDeps(fx, [], { writeFileAtomic: () => { throw new Error('write boom'); } });
+  assert.strictEqual(await run(['--run', fx.runDir, '--recheck-merge'], d), 3);
+  assert.match(err(), /recheck-merge failed \(console\.json not rewritten: write boom\) — not merging/);
+  assert.doesNotMatch(out(), /recheck-merge (merge|leave-open)/);
+  assert.strictEqual(recheckLines(fx).length, 1);
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8')).merge.resolution, 'merge');
+});
+
+test('--recheck-merge: an unexpected throw inside the lock is labelled without "lock:" and exits 3', async () => {
+  const fx = mainCheckoutWithRun({ consoleJson: MERGE_JSON(), decisions: `${rmLine(7, 'needs-human')}\n` });
+  const { d, err } = baseDeps(fx, [], { stdout: () => { throw new Error('stdout boom'); } });
+  assert.strictEqual(await run(['--run', fx.runDir, '--recheck-merge'], d), 3);
+  assert.match(err(), /recheck-merge failed \(stdout boom\) — not merging/);
+  assert.doesNotMatch(err(), /\(lock:/);
+});
+
+test('--recheck-merge: a console.json that cannot be read (not ENOENT) is exit 3', async () => {
+  const fx = mainCheckoutWithRun({});
+  fs.mkdirSync(path.join(fx.runDir, 'console.json'));
+  const r = await recheck(fx);
+  assert.strictEqual(r.code, 3);
+  assert.match(r.err, /recheck-merge failed \(console\.json unreadable: .*\) — not merging/);
+});
+
+test('--recheck-merge: the duplicate check parses entries — a stray line merely mentioning the verdict does not suppress the log line', async () => {
+  const verdict = rmLine(7, 'needs-human');
+  const fx = mainCheckoutWithRun({ consoleJson: MERGE_JSON(), decisions: `${verdict}\n- AUTO 12:00:00 — Review Console: noted Merge re-check: ${verdict.replace(/^- /, '')}\n` });
+  const r = await recheck(fx);
+  assert.strictEqual(r.code, 0, r.err);
+  assert.strictEqual(recheckLines(fx).filter((l) => /— Merge re-check: /.test(l)).length, 1);
 });

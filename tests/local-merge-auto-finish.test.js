@@ -71,7 +71,7 @@ const EXEC = readText(path.join(ROOT, 'plugin', 'skills', 'wrap-up', 'cleanup-pr
 function localMergeSection() {
   const localMergeStart = EXEC.indexOf('**`integration-model: local-merge`:**');
   assert.ok(localMergeStart > 0, 'the local-merge branch heading must exist');
-  const nextSectionStart = EXEC.indexOf('3.5.', localMergeStart);
+  const nextSectionStart = EXEC.indexOf('3.6.', localMergeStart);
   return EXEC.slice(localMergeStart, nextSectionStart > 0 ? nextSectionStart : undefined);
 }
 
@@ -115,4 +115,19 @@ const SKILL_GRAPH = readText(path.join(ROOT, 'docs', 'skill-graph.md'));
 
 test('skill-graph.md documents the new local-merge-auto-finish.md edge(s)', () => {
   assert.match(SKILL_GRAPH, /local-merge-auto-finish\.md/);
+});
+
+// --- #5833: the no-prompt finish re-checks the merge-check verdict before step 3 ---
+
+test('AC1.1 (local-merge): the no-prompt finish re-checks with --recheck-merge before the pre-merge checks', () => {
+  const text = read();
+  const proc = text.slice(text.indexOf('## Procedure'), text.indexOf('## Interactive mode is unaffected'));
+  const at = proc.indexOf('--recheck-merge');
+  assert.ok(at !== -1, 'the Procedure must run --recheck-merge');
+  assert.ok(at < proc.indexOf('**Pre-merge checks**'), '--recheck-merge must precede step 3 (**Pre-merge checks**)');
+  const step = proc.slice(proc.indexOf('2a.'), proc.indexOf('3. **Pre-merge checks**')).replace(/\s+/g, ' ');
+  assert.match(step, /Park\*\* branch below with no re-stamp/);
+  assert.ok(step.includes('Proceed only on exit 0 printing `recheck-merge merge`'), 'the step proceeds only on exit 0 with `recheck-merge merge`');
+  assert.ok(step.includes('`merge-check verdict withheld the merge`'), 'the leave-open Park reason is pinned');
+  assert.ok(step.includes('`merge re-check failed (exit {code})`'), 'the failed-exit Park reason is pinned');
 });

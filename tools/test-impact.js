@@ -3,7 +3,7 @@
 // tools/test-impact.js — refreshes the test-impact map verify.js's impact selection reads (#4024).
 //
 //   trace [--out <path>] [--allow-dirty]
-//     Runs the full suite (`node {repo}/tools/run-tests.js`) under tools/test-impact/tracer.js and folds
+//     Runs the full suite (`node {repo}/tools/run-tests.js --full`) under tools/test-impact/tracer.js and folds
 //     the trace files into a map (tools/test-impact/build-map.js) recording HEAD and the suite's exit
 //     code — a failing suite still writes its map, which verify.js then refuses as
 //     map-from-failing-suite. A run in which a traced process could not record a read (a `.lost` marker)
@@ -13,9 +13,11 @@
 //   fetch [--repo owner/name] [--out <path>]
 //     Downloads the map CI built: of the last 30 successful `test-impact-map.yml` runs on main, the
 //     newest whose head commit is an ancestor of HEAD (a branch behind main could never use a newer
-//     one). Skips the download when the cached map already holds that commit and is not dirty (a dirty
-//     cached map is replaced); validates the artifact (parseImpactMap, commit === the run's headSha,
-//     exitCode 0, not traced from a dirty tree) before replacing the cache.
+//     one). Skips the download when the cached map already holds that commit and is not dirty, or when it
+//     parses, passed (exit 0), is not dirty, descends from that commit and is an ancestor of HEAD (a
+//     fresher local trace is kept; any other cached map, a dirty one included, is replaced, and a git
+//     error on an ancestry check counts as "not kept"); validates the artifact (parseImpactMap, commit
+//     === the run's headSha, exitCode 0, not traced from a dirty tree) before replacing the cache.
 //
 // --out defaults to `{git-common-dir}/claude-tweaks-test-impact.json` (shared by every worktree); the
 // map is written atomically. The repo root is `git rev-parse --show-toplevel` of the cwd.
@@ -191,7 +193,7 @@ async function trace(args, deps) {
     env.NODE_OPTIONS = env.NODE_OPTIONS ? `${env.NODE_OPTIONS} ${req}` : req;
 
     if (interrupted) return interruptedExit();
-    child = deps.spawn(deps.execPath, [path.join(root, 'tools', 'run-tests.js')], { cwd: root, env });
+    child = deps.spawn(deps.execPath, [path.join(root, 'tools', 'run-tests.js'), '--full'], { cwd: root, env });
     const result = await waitForExit(child);
     // A signal delivered alongside the suite's own exit must run its handler before the check below.
     await new Promise((resolve) => setImmediate(resolve));
@@ -244,6 +246,15 @@ function fetch(args, deps) {
   const root = loc.repoRoot;
   const repoArgs = parsed.opts['--repo'] ? ['--repo', parsed.opts['--repo']] : [];
   const out = resolveOut(parsed.opts['--out'], loc, deps);
+  // Not an ancestor, or a commit this clone does not have, both read as false.
+  const isAncestor = (older, newer) => {
+    try {
+      deps.git(['merge-base', '--is-ancestor', '--end-of-options', older, newer], { cwd: root });
+      return true;
+    } catch (_) {
+      return false;
+    }
+  };
 
   let runs;
   try {
@@ -263,12 +274,7 @@ function fetch(args, deps) {
     // `main` would list here too — and its artifact is built by that PR's own code. Only the runs
     // the workflow makes from this repo's main (push, dispatch) are trusted.
     if (r.event !== 'push' && r.event !== 'workflow_dispatch') return false;
-    try {
-      deps.git(['merge-base', '--is-ancestor', '--end-of-options', r.headSha, 'HEAD'], { cwd: root });
-      return true;
-    } catch (_) {
-      return false; // not an ancestor, or a commit this clone does not have
-    }
+    return isAncestor(r.headSha, 'HEAD');
   });
   if (!chosen) {
     deps.err(`test-impact.js fetch: no successful main ${WORKFLOW} map (of ${runs.length} run(s)) is an ancestor of HEAD`);
@@ -285,6 +291,17 @@ function fetch(args, deps) {
   if (cached && cached.ok && cached.map.commit === sha && !cached.map.dirty) {
     deps.log(`fetch: map at ${sha} already current → ${out}`);
     return 0;
+  }
+  // A clean, passing map traced at a commit that descends from the chosen CI commit and is itself an
+  // ancestor of HEAD is fresher than the CI map and as trustworthy as the one verify.js already reads
+  // as-is: keep it. A git error (an unknown commit) counts as "not kept".
+  if (cached && cached.ok && cached.map.exitCode === 0 && !cached.map.dirty && cached.map.commit !== sha) {
+    const cachedCommit = cached.map.commit;
+    // Diverged, not on HEAD's line, or a commit this clone does not have: take the CI map.
+    if (isAncestor(sha, cachedCommit) && isAncestor(cachedCommit, 'HEAD')) {
+      deps.log(`fetch: cached map at ${cachedCommit} descends from CI map ${sha}, kept → ${out}`);
+      return 0;
+    }
   }
 
   let dir = null;

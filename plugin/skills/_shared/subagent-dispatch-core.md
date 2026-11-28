@@ -1,17 +1,6 @@
 # Subagent Dispatch Core — Working Directory, Foreground Execution, Read-only Reviewers, Model Selection, Template A, Retrieval, Fan-Out
 
-Extracted from `_shared/subagent-output-contract.md` (#2019) — the dispatch-facing sections a
-review/test call site actually needs to compose as a lean bundle, without also paying for
-that file's remaining content (Input Discipline, HARD-GATE Marker Convention, Waiting for
-Dispatched Agents, Implementer Status Protocol, Templates B/C, the third-party exemption,
-re-prompt-on-violation, and Anti-Patterns), none of which any of this file's call sites cite.
-`subagent-output-contract.md` remains the canonical parent contract and single source of truth
-for everything not reproduced here — cited from there, never restated independently; a change to
-one of the sections below lands here first, exactly as `subagent-output-contract.md` itself
-states at its own top ("This file is the single source of truth"). The Foreground Execution
-Discipline (#2271) and Read-only Reviewer Discipline (#3001) sections below are the two
-exceptions to "extracted" — they originate here, directly, since no equivalent content exists
-in the parent file to move from.
+The dispatch-facing sections of `_shared/subagent-output-contract.md` (#2019), composed as a lean bundle; that file stays the canonical parent contract, so a section changes here first. The Foreground Execution (#2271) and Read-only Reviewer (#3001) Disciplines originate here.
 
 ## Working Directory Discipline
 
@@ -34,9 +23,9 @@ When the dispatch is for a verification or test-running agent (no commits), the 
 
 During worktree-mode pipeline runs this rule is mechanically enforced — the plugin's PreToolUse hook denies commits whose resolved checkout differs from the run's recorded worktree assignment.
 
-**A denial is recoverable, and the dispatch prompt must say how.** E1 resolves the run's worktree assignment from `run-state.json`, and under concurrent sibling pipeline runs that lookup can read as stale or misattributed — so a correctly-placed implementer can still see its *first* commit denied. The fix is an idempotent re-stamp of the assignment onto this run, from either checkout: `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "<resolved-run-dir>" "<worktree>"`, then retry the commit. Both values must be substituted as literal absolute paths before dispatch, per the substitution rule above — never `--run` omitted, which lets the command's fallback resolver pick some other session's run and corrupt its state. A denial that survives one re-stamp is a genuine wrong-checkout mismatch: report `BLOCKED`, do not keep retrying. Observed on record #315 — both dispatched implementers hit this denial on their first commit and both cleared it with one re-stamp, solely because the dispatch prompt had been pre-warned.
+**A denial is recoverable, and the dispatch prompt must say how.** E1 resolves the run's worktree assignment from `run-state.json`, and under concurrent sibling pipeline runs that lookup can read as stale or misattributed — so a correctly-placed implementer can still see its *first* commit denied. The fix is an idempotent re-stamp of the assignment onto this run, from either checkout: `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "<resolved-run-dir>" "<worktree>"`, then retry the commit. Both values must be substituted as literal absolute paths before dispatch, per the substitution rule above — never `--run` omitted, which lets the command's fallback resolver pick some other session's run and corrupt its state. A denial that survives one re-stamp is a genuine wrong-checkout mismatch: report `BLOCKED`, do not keep retrying.
 
-**One plain command per Bash call.** Any dispatched agent — implementer, reviewer, or lens agent — whose session is worktree-isolated (it entered its worktree via the native `EnterWorktree` tool, or inherits a harness-pinned one, as every dispatch under `worktree-always` does) runs under a harder constraint than anything above: `&&`/`;` chains, a variable assigned and then used in the same call, loops, and heredocs are refused by shape, not just discouraged by convention. The dispatch prompt must say so explicitly — one plain command per Bash call, `Edit`/`Write` instead of a heredoc for a path inside the agent's own worktree, and no reliance on a shell variable surviving between calls. The refused shapes and their workarounds are documented once, canonically, in `_shared/scratch-worktree.md` §7 ("Shell constraint") — cite it rather than restating it here. Observed across five implementer dispatches on the skill-invocation-ledger build: every dispatch that baked this constraint into its prompt up front avoided the failure; none that omitted it did. #3480's medium-tier review lens agents, whose prompts lacked it, hit the guard about 14 times in three minutes on their own scratch files (#3675).
+**One plain command per Bash call.** Any dispatched agent — implementer, reviewer, or lens agent — whose session is worktree-isolated (it entered its worktree via the native `EnterWorktree` tool, or inherits a harness-pinned one, as every dispatch under `worktree-always` does) runs under a harder constraint than anything above: `&&`/`;` chains, a variable assigned and then used in the same call, loops, and heredocs are refused by shape, not just discouraged by convention. The dispatch prompt must say so explicitly — one plain command per Bash call, `Edit`/`Write` instead of a heredoc for a path inside the agent's own worktree, and no reliance on a shell variable surviving between calls. The refused shapes and their workarounds are documented once, canonically, in `_shared/scratch-worktree.md` §7 ("Shell constraint") — cite it rather than restating it here. Prompts that omitted it hit the guard repeatedly (#3675).
 
 Inline this line verbatim into every `/claude-tweaks:review` Step 3 dispatch prompt (lens, debate, refutation, gap-sweep, tiebreak), outside any byte-pinned Calibration/Output block; an implementer or other dispatch states the rule above in its own prompt:
 
@@ -52,94 +41,101 @@ Inline this line verbatim into every `/claude-tweaks:review` Step 3 dispatch pro
 on Claude Code (#3722): interactive 2.1.302 holds it open and re-wakes it when a nested child or
 `Monitor` watch it started reports; headless (`claude -p`) 2.1.299 and older never re-wake it for a
 nested child, whose result goes to the top-level session instead; headless 2.1.302 and later runs a
-nested `Agent` call synchronously. An agent cannot tell in advance whether it will be re-woken, so it
-never relies on one. So a backgrounded `Bash` call or `Monitor` watch it ends on can hang it until an
-outside caller intervenes. Observed as a harness-level `contract-violation` pattern: 13+ occurrences
-of agents narrating "waiting for the background task/Monitor notification" and stopping mid-turn in
-one build phase, plus 2 more in a review/wrap-up session, corrected only externally (#1965, #2271).
-Run long-running commands in the **foreground** of the current turn — a generous timeout, output
-redirected to a file if it's long — never `run_in_background`, and never end a turn hoping a
-notification will re-wake it. `test/verification.md`'s Foreground rule and
-`dispatch/task-prompt.md`'s foreground-execution instruction are the concrete pattern; point a new
-dispatch site at them rather than re-deriving it.
+nested `Agent` call synchronously. An agent cannot tell in advance whether it will be re-woken, so
+it never relies on one. So a backgrounded `Bash` call or `Monitor` watch it ends on can hang it
+until an outside caller intervenes (#1965, #2271). Run long-running commands in the **foreground**
+of the current turn — a generous timeout, output redirected to a file if it's long — never
+`run_in_background`, and never end a turn hoping a notification will re-wake it.
+`test/verification.md`'s Foreground rule and `dispatch/task-prompt.md`'s Context pack item 7 are the
+concrete pattern; point a new dispatch site at them rather than re-deriving it.
 
 **Nested `Agent` children (#2644, #3078).** A nested `Agent` call from a dispatched agent launches
 async — its tool result is launch metadata, not the child's reply — and the child's
 `<task-notification>` reaches the agent only while its turn is alive. When the call instead returns
 the child's own reply (headless 2.1.302 and later, above), that child has reported and needs no
-wait. A dispatched agent may fan
-out nested agents at every tier (lens pairs, single reads, curation judges), but it keeps its own
-turn alive with bounded foreground waits — repeated `sleep 20` Bash calls, at most 60 (20 minutes)
-per wave of children (the set launched together; a child that keeps editing its worktree earns
-more windows, below), each wait logged per the bounded-polling
-paragraph below (what is waited on, the iteration against the bound, how many children are still
-pending), stopping as soon as every child's `<task-notification>` has arrived, never reading or
-tailing a running child's `output_file` (a failed child's output is retrieved per Failed-agent
-retrieval below) — until every child has reported, and never ends its turn with a child
-outstanding. A reply that ends without a tool call ends the turn, whatever is still in
-flight. **Fallback:** when no `Agent`/`Task` tool exists (`ToolSearch` finds none, deferred or
-otherwise — the normal case in a cloud routine sandbox), or a child has not reported when the
-bound expires, judge that unit in-session, applying the child's own checklist or template as a
-genuinely adversarial self-review, log the downgrade (which unit, why) to `{run-dir}/decisions.md`
-when a pipeline run directory is set, otherwise as one line in the reply, and mark every finding
-from that unit `unconfirmed`. Never skip the unit or fabricate a dispatch. A child whose unit was
-self-judged at the bound is abandoned: it no longer counts as outstanding, and the agent's final
-reply still ends with `STATUS: {WORD}`; `INTERIM_STATUS:` is only for a turn that ends while a
-keep-alive wait is still in progress. An abandoned child cannot be stopped (`TaskStop` refuses a
-nested child), so it keeps running, and the harness may hold the
-agent's final result until it finishes: the bound caps the wait, not the delivery. A child result
-that arrives after its unit was self-judged is ignored; it never changes a verdict already reached,
-and a late notification that re-wakes the agent after its final reply is answered by repeating its
-whole final reply unchanged: the dispatcher keeps only the agent's latest reply, so a bare `STATUS:`
-line would replace the report (#3722). A child that reports a failure (a `failed` notification, an
-API error, a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so it is not outstanding: handle it
-per the dispatching skill's own status handling where one exists
-(`superpowers:subagent-driven-development`'s BLOCKED handling, or Failed-agent retrieval below),
-otherwise judge that unit as in the fallback. The self-judge fallback is for a read-only unit (a
-lens, a single read, a judge); a write-capable child (one that edits files) still silent at the
-bound is never redone in-session, because an abandoned child keeps running and may still write —
-stop, and end with `STATUS: BLOCKED` naming that child and its unit. Before that stop (#4557), probe
-the worktree its prompt names, read-only: `git -C "{child-worktree}" rev-parse HEAD`, `git -C
-"{child-worktree}" --no-optional-locks status --porcelain` and `git -C "{child-worktree}"
---no-optional-locks diff HEAD` piped to `git hash-object --stdin` (a `fatal:` line fails the probe), against the previous probe (taken right
-after launching the wave, then at each bound; lacking one, the first bound's probe sets it and
-grants a window). Per wave, while any child shows a change, log one wait line and grant one more
-60-wait window; stop when a whole window passes with no change, or at a ceiling of 3 windows (60
-minutes) per wave, naming which fired (`no progress for one window` or `ceiling reached while
-progressing`) and every unchanged child. Children sharing a worktree progress together; a child
-whose prompt names no worktree counts as unchanged. A failed wait call counts as no wait but ends its window, and the
-probe runs as at any bound; a failed probe command counts as no change, never retried in another
-form. Read-only units keep the first-bound self-judge. A wait call that is blocked or fails (a
-harness or hook refusal) is not a wait and never counts toward the bound; never retry it in another
-form (a longer, wrapped or backgrounded sleep): treat every child still outstanding as silent at the
-bound and apply the fallback above.
+wait. A dispatched agent may fan out nested agents at every tier (lens pairs, single reads, curation
+judges), but it keeps its own turn alive with bounded foreground waits —
+`node "${CLAUDE_PLUGIN_ROOT}/bin/wait-for.js" agents --ids {ids} --max-seconds 150`, 20 minutes per
+wave of children (the set launched together; a child that keeps editing its worktree earns more
+windows, below), stopping as soon as every child's `<task-notification>` has arrived, never reading
+or tailing a running child's `output_file` (a failed child's output is retrieved per Failed-agent
+retrieval below) — until every child has reported, and never ends its turn with a child outstanding.
+`{ids}` are the agent ids of the children whose notification has not arrived and that no call has
+reported, comma-separated (the last call's `pending` list; empty means the wait is over). Each call is a foreground Bash call with no `timeout` parameter: the
+command returns within 150 seconds, under the 180-second ceiling a dispatched agent's foreground
+call has (#5602). Exit 0 means a listed child stopped: its notification is in hand or arrives next;
+call again while any child is outstanding. Exit 3 with `"bound":"call"` means call again. Exit 3
+with `"bound":"deadline"` means the 20-minute window is over: the bound has expired, and when the
+rule below grants another window, the next call is that window. Any other exit is a failed wait call. The
+command's output line is the wait's log line, so the agent writes no separate one. A reply that ends
+without a tool call ends the turn, whatever is still in flight. **Fallback:**
+when no `Agent`/`Task` tool exists (`ToolSearch` finds none, deferred or otherwise — the normal case
+in a cloud routine sandbox), or a child has not reported when the bound expires, judge that unit
+in-session, applying the child's own checklist or template as a genuinely adversarial self-review,
+log the downgrade (which unit, why) to `{run-dir}/decisions.md` when a pipeline run directory is set,
+otherwise as one line in the reply, and mark every finding from that unit `unconfirmed`. Never skip
+the unit or fabricate a dispatch. A child whose unit was self-judged at the bound is abandoned: it no
+longer counts as outstanding, and the agent's final reply still ends with `STATUS: {WORD}`;
+`INTERIM_STATUS:` is only for a turn that ends while a keep-alive wait is still in progress. An
+abandoned child cannot be stopped (`TaskStop` refuses a nested child), so it keeps running, and the
+harness may hold the agent's final result until it finishes: the bound caps the wait, not the
+delivery. Outside the rendered-UI exception below, a child result that arrives after its unit was
+self-judged is ignored; it never changes a verdict already reached, and a late notification that
+re-wakes the agent after its final reply is answered by repeating its whole final reply unchanged:
+the dispatcher keeps only the agent's latest reply, so a bare `STATUS:` line would replace the report
+(#3722). A child that reports a failure (a `failed` notification, an API error, a
+`BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so it is not outstanding: handle it per the
+dispatching skill's own status handling where one exists (`superpowers:subagent-driven-development`'s
+BLOCKED handling, or Failed-agent retrieval below), otherwise judge that unit as in the fallback. The
+self-judge fallback is for a read-only unit (a lens, a single read, a judge); a write-capable child
+(one that edits files) still silent at the bound is never redone in-session, because an abandoned
+child keeps running and may still write — stop, and end with `STATUS: BLOCKED`
+naming that child and its unit. Before that stop (#4557), probe the worktree its prompt names,
+read-only: `git -C "{child-worktree}" rev-parse HEAD`, `git -C "{child-worktree}" --no-optional-locks
+status --porcelain` and `git -C "{child-worktree}" --no-optional-locks diff HEAD` piped to `git
+hash-object --stdin` (a `fatal:` line fails the probe), against the previous probe (taken right after
+launching the wave, then at each bound; lacking one, the first bound's probe sets it and grants a
+window). Per wave, while any child shows a change, log one wait line and grant one more 20-minute
+window; stop when a whole window passes with no change, or at a ceiling of 3 windows (60 minutes) per
+wave, naming which fired (`no progress for one window` or `ceiling reached while progressing`) and
+every unchanged child. Children sharing a worktree progress together; a child whose prompt names no
+worktree counts as unchanged. A failed wait call counts as no wait but ends its window, and the probe
+runs as at any bound; a failed probe command counts as no change, never retried in another form.
+Read-only units keep the first-bound self-judge. Exception: a rendered-UI unit (review Step 6/6.5)
+gets more windows while its artifact directory changes; stage its late result
+(`_shared/rendered-ui-units.md`). A wait call that is blocked or fails (a harness or hook refusal, or
+exit 2) is not a wait and does not move the window's deadline; never retry it in another form (a
+`sleep` of any length, or a longer, wrapped or backgrounded call): treat every child still
+outstanding as silent at the bound and apply the fallback above.
 
 **Top-level dispatchers.** A session waiting on its own `Agent`/`Task` children within its turn is
 the pattern `_shared/dispatch-waiting.md` documents; this section restricts only what a dispatched
 agent instructs itself or its children to do.
 
-**Bounded polling for a long external wait.** Neither of the two patterns above (running long
-commands in the foreground; collecting nested `Agent` children in-turn) fits a genuinely long
-*external* process with no completion-notification channel at all — a live CI run, a cloud
-deploy — that a dispatched agent must verify finished, not just kick off. Backgrounding it and
-ending the turn to wait for a notification is the same violation as above (a dispatched agent cannot
-count on being re-woken), and the agent cannot simply block for however long the process takes
-either. The compliant shape is a **bounded check-interval loop run with real foreground tool
-calls**: repeated `Bash` calls (or a `Monitor` watch over a polling script) that check the
-external condition on a fixed interval — e.g. `sleep 20 && gh run view {id} --json
-status,conclusion` — never a backgrounded watcher left to report back on its own. Cap the loop to
-a fixed iteration count rather than leaving it open-ended; `release/execute.md`'s re-render poll
-already uses 20-second intervals for up to 15 attempts (5 minutes) and is a reasonable default to
-copy rather than re-derive. When the bound is exhausted without the condition resolving, that is
-a **re-arm**, not a failure: run the same bounded loop again as an explicit new attempt and say
-so, rather than silently extending the original wait or escalating to backgrounding instead.
+**Bounded polling for a long external wait.** A genuinely long *external* process with no
+completion notification (a live CI run, a cloud deploy) that a dispatched agent must verify
+finished is never backgrounded with the turn ended on it (the violation above), and the agent
+cannot block for however long it takes either. The compliant shape is a **bounded check-interval
+loop run with real foreground tool calls**. For a pull request's checks, a workflow run or a local
+process it is `wait-for.js` (`wait-for.js ci --pr {n}`, `wait-for.js ci --run {id}`,
+`wait-for.js pid --pid {pid}`), called as the `agents` form above (foreground, no `timeout`,
+`--max-seconds 150`; a `ci` call may run 20 s past it): 0 means read the result, 3 with
+`"bound":"call"` means call again, and 3 with `"bound":"deadline"` means the bound is exhausted
+(below); on exit 2 call it once more, which joins the failed call's window, and a second exit 2
+ends the wait unresolved. Its bound is its 20-minute window and its output line is its log line;
+the cap, interval and logging rules below are for any other condition (a deploy, a log line),
+whose repeated `Bash` calls (or a `Monitor` watch over a polling script) check it on a fixed
+interval, never a backgrounded watcher left to report back on its own. Cap the loop to a fixed
+iteration count rather than leaving it open-ended; `release/execute.md`'s re-render poll already
+uses 20-second intervals for up to 15 attempts (5 minutes) and is a reasonable default to copy
+rather than re-derive. When the bound is exhausted without the condition resolving, that is a
+**re-arm**, not a failure: run the same bounded loop again as an explicit new attempt and say so,
+rather than silently extending the original wait or escalating to backgrounding instead.
 
 Log every iteration: name what's being waited on, the iteration number against the bound, and
 the current status, in one line — e.g. "Polling CI run {id}: attempt 4/15, status=in_progress".
-This is the detail that matters most in practice: without it, "an agent doing bounded polling
-with real tool calls" and "an agent stuck in a silent loop" are indistinguishable from outside
-the transcript, and a coordinating session watching the dispatched work has no signal to check
-before interrupting with a false-alarm check-in (#2784).
+Without it, bounded polling and a silent loop look the same from outside the transcript, and a
+coordinating session has no signal before a false-alarm check-in (#2784).
 
 ## Read-only Reviewer Discipline
 
@@ -212,19 +208,19 @@ Match the profile to the work. A **work profile** names the kind of work; this t
 | Fast | haiku | — | No effort dial (Haiku ignores effort) |
 | Standard | sonnet | high | — |
 | Capable | opus | high | — |
-| Frontier | fable | high | Singleton-only; degrades to Capable |
+| Frontier | fable | high | Singleton-only (one named exception, below); degrades to Capable |
 
 This table is pinned to `bin/lib/model-profiles/profiles.js` by test — change them together. Models are family aliases, never versioned IDs. The effort scale is ordered `low < medium < high < xhigh < max`.
 
-**Dispatching.** Name the profile in the prompt as `[Use: {Profile}]`, and resolve it mechanically: run `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" {profile}` (profile lowercase; add `--run-dir "$PIPELINE_RUN_DIR"` inside a pipeline, `--unattended` in any headless context) and copy the returned `model` into the Agent tool's `model` parameter. The `${CLAUDE_PLUGIN_ROOT}` spelling is a model-resolved placeholder, not a shell contract — the harness does not set it in Bash tool calls (#170) — the executing agent substitutes the absolute plugin root itself, per `docs/skill-authoring.md`'s Plugin-root references section, which owns this convention for every `skills/**/*.md` file. The two flag families answer different questions: `--frontier-used N` / `--run-dir` express the Frontier singleton tally (how many Frontier dispatches this run has already spent), while `--unattended` expresses "no human is present" and unconditionally degrades a Frontier resolution — so a Frontier singleton call site must never hard-code `--unattended` unconditionally — write the interactive form (or, for a command that only ever runs headless, state the headless context beside it) and append the flag only when the invocation is genuinely headless, resolved from session state. Append the returned `effortLine` to the dispatch prompt. Its shape is `[Effort: {level} — apply {level}-level reasoning depth to this task.]`. When a dispatched agent's own failure is specifically a credit/usage-exhaustion error (not a reasoning failure, not a timeout), run `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" record-failure {model}` — `{model}` is the family alias this dispatch resolved to (`haiku`/`sonnet`/`opus`/`fable`) — before any retry or re-dispatch this session. The same call also covers a harness usage-limit warning hit inline, on the main thread rather than by a dispatched agent — there `{model}` is simply the session's own currently-active model family alias, the one that just hit the credit error, since there is no dispatch resolution to read it from. The resolver reads this session-scoped blacklist on every later resolution and steps down to the next viable tier rather than re-resolving the same failed model (#763); the blacklist lives under `os.tmpdir()`, keyed by `CLAUDE_CODE_SESSION_ID`, and is never consulted across sessions. Effort binds mechanically only where an agent definition carries `effort:` frontmatter — the Agent tool has no per-dispatch effort parameter, so `effortLine` is a best-effort prompt instruction. Upstream watch item: adopt a per-dispatch effort parameter the release it exists.
+**Dispatching.** Name the profile in the prompt as `[Use: {Profile}]`, and resolve it mechanically: run `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" {profile}` (profile lowercase; add `--run-dir "$PIPELINE_RUN_DIR"` inside a pipeline, `--unattended` in any headless context) and copy the returned `model` into the Agent tool's `model` parameter. When the returned `launchEffort` is not `null`, set the Agent tool's `effort` parameter to it on that launch; when it is `null`, set no effort — this sentence is the instruction the Agent tool's description asks for before `effort` is set. Exemptions, which set no `effort`: a `fork` launch (`subagent_type: "fork"`); an agent type whose definition carries `effort:` frontmatter the dispatcher can read (today `plugin/agents/qa-agent.md`; a launch effort overrides it, as the 2026-11-21 probe showed); a session whose Agent tool schema has no `effort` parameter. The executing agent substitutes the absolute plugin root for `${CLAUDE_PLUGIN_ROOT}` itself (`docs/skill-authoring.md`'s Plugin-root references section). The two flag families answer different questions: `--frontier-used N` / `--run-dir` express the Frontier singleton tally (how many Frontier dispatches this run has already spent), while `--unattended` expresses "no human is present" and unconditionally degrades a Frontier resolution — so a Frontier singleton call site must never hard-code `--unattended` unconditionally — write the interactive form (or, for a command that only ever runs headless, state the headless context beside it) and append the flag only when the invocation is genuinely headless, resolved from session state. Append the returned `effortLine` to the dispatch prompt. Its shape is `[Effort: {level} — apply {level}-level reasoning depth to this task.]`. When a dispatched agent's own failure is specifically a credit/usage-exhaustion error (not a reasoning failure, not a timeout), run `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" record-failure {model}` — `{model}` is the family alias this dispatch resolved to (`haiku`/`sonnet`/`opus`/`fable`) — before any retry or re-dispatch this session. The same call covers a usage-limit warning hit inline on the main thread, where `{model}` is the session's own active model family alias. The resolver reads this session-scoped blacklist on every later resolution and steps down to the next viable tier rather than re-resolving the same failed model (#763); the blacklist lives under `os.tmpdir()`, keyed by `CLAUDE_CODE_SESSION_ID`, and is never consulted across sessions.
 
-**Overrides.** The resolver merges *values* in precedence order: per-invocation override > project policy (`model-profiles` rows in `.claude-tweaks/policy.yml`) > the table. The run stance (`--stance`, else the policy's `model-stance`) is a run-level *posture*, not a value source: it applies after the merge, shifting the resolved effort one notch (`economy` down, `max-rigor` up, capped at the scale's ends), and `economy` resolves a still-Frontier result as Capable. Stance applies even to per-invocation choices, and Frontier's own gates (below) apply last regardless of how Frontier was selected. `model-ceiling` clamps any resolution whose per-invocation override named no field. The per-invocation override is the resolver's `cliOverride` API argument — deliberately not exposed as CLI flags; a dispatch site's per-invocation lever is normally which profile it names. Stances shift effort, never the model upward. `CLAUDE_CODE_SUBAGENT_MODEL` and the session's `/model`/`/effort` are harness-level and always win — the plugin defers to them **only when a dispatch omits the Agent tool's `model` parameter entirely**. An explicit per-invocation `model` value **does** override the session's own ambient model — "the plugin defers to them" describes a choice not to pass `model`, not a structural limit on passing it. This is what licenses `build/SKILL.md`'s whole-branch-review model-resolution step — see there for the one site that acts on it.
+**Overrides.** The resolver merges *values* in precedence order: per-invocation override > project policy (`model-profiles` rows in `policy.yml`; factory layer: #6007) > the table. The run stance (`--stance`, else the policy's `model-stance`) is a run-level *posture*, not a value source: it applies after the merge, shifting the resolved effort one notch (`economy` down, `max-rigor` up, capped at the scale's ends), and `economy` resolves a still-Frontier result as Capable. Stance applies even to per-invocation choices, and Frontier's own gates (below) apply last regardless of how Frontier was selected. `model-ceiling` clamps any resolution whose per-invocation override named no field. The per-invocation override is the resolver's `cliOverride` API argument — deliberately not exposed as CLI flags; a dispatch site's per-invocation lever is normally which profile it names. Stances shift effort, never the model upward. `CLAUDE_CODE_SUBAGENT_MODEL` and the session's `/model`/`/effort` are harness-level and always win — the plugin defers to them **only when a dispatch omits the Agent tool's `model` parameter entirely**. An explicit per-invocation `model` value **does** override the session's own ambient model — "the plugin defers to them" describes a choice not to pass `model`, not a structural limit on passing it. This is what licenses `build/SKILL.md`'s whole-branch-review model-resolution step — see there for the one site that acts on it.
 
-**Selection and upgrade.** Default to the cheapest profile that can do the job. Upgrade one profile when the agent comes back `BLOCKED` for reasoning reasons (not for context reasons). Capable→Frontier upgrades are valid only at the singleton slots enumerated in this section.
+**Selection and upgrade.** Default to the cheapest profile that can do the job. Upgrade one profile when the agent comes back `BLOCKED` for reasoning reasons (not for context reasons). Capable→Frontier upgrades are valid only at the singleton slots enumerated in this section (the named fan-out exception is not an upgrade path).
 
-**Frontier is singleton-only.** Profiles govern *dispatches*; inline steps ride the session model by design. Frontier is never valid in a parallel fan-out — one agent whose judgment is the bottleneck, at an enumerated slot only. Preconditions (all enforced by the resolver): interactive context, stance at `default` or above, and the per-run cap (`frontier-run-cap`, default 3, tallied in the run dir's `frontier-tally.log`; standalone skill invocations get 1 per invocation, enforced by the calling skill). Any miss degrades to Capable with the reason in the resolution's `source`. A harness usage-limit warning observed in-session, or a dispatched agent's own credit/usage-exhaustion failure, is recorded via `record-failure` (see Dispatching above) and degrades that specific model to the next viable tier for the remainder of the session — the *avoidance* is a real mechanism (#763); noticing the failure and recording it remains a best-effort agent step.
+**Frontier is singleton-only.** Profiles govern *dispatches*; inline steps ride the session model by design. Frontier is never valid in a parallel fan-out — one agent whose judgment is the bottleneck, at an enumerated slot only (sole exception: the named fan-out row, under its own limit and step-down rules in `_shared/frontier-exception.md`, not the preconditions below). Preconditions (all enforced by the resolver): interactive context, stance at `default` or above, and the per-run cap (`frontier-run-cap`, default 3, tallied in the run dir's `frontier-tally.log`; standalone skill invocations get 1 per invocation, enforced by the calling skill). Any miss degrades to Capable with the reason in the resolution's `source`. A harness usage-limit warning observed in-session, or a dispatched agent's own credit/usage-exhaustion failure, is recorded via `record-failure` (see Dispatching above) and degrades that specific model to the next viable tier for the remainder of the session — the *avoidance* is a real mechanism (#763); noticing the failure and recording it remains a best-effort agent step.
 
-**The enumerated slots.** Two categories, each a deliberate, singleton-shaped dispatch site — degradation to Capable via the preconditions above is always the fallback, never a separate code path:
+**The enumerated slots.** Two categories of deliberate, singleton-shaped dispatch site, plus the one named fan-out exception — for the two categories, degradation to Capable via the preconditions above is always the fallback, never a separate code path:
 
 | Category | Slot | Shape |
 |---|---|---|
@@ -235,6 +231,7 @@ This table is pinned to `bin/lib/model-profiles/profiles.js` by test — change 
 | Self-improvement (#221) | `/reflect`'s lens procedure, standalone invocations only (`reflect/SKILL.md` Step 2) | Single agent running every lens. Component-invoked runs (a `/review`- or `/wrap-up`-owned run dir, or an explicit `--source`) never dispatch this — main-thread only. |
 | Self-improvement (#221) | `/feedback`'s session-evaluation judge (`feedback/session-evaluation.md`) | Single agent per invocation — the standalone-invocation cap (no `--run-dir` in the common case). The Step 6 scrub this slot previously named now resolves Capable (record #221's entry knowingly superseded). |
 | Self-improvement (#221) | `/init`'s CLAUDE.md generation/patch synthesis (`init/claude-md-template.md`) | Single agent; `--unattended` in headless (scheduled Routine) contexts. |
+| Named fan-out exception (#6351) | `/design`'s readers: `frontier --exception design-reader --session-dir {design folder}` | The one fan-out use of Frontier: up to 22 per design session; any step-down exits 3 and the skill stops and asks, never lowering the tier itself. Full rules: `_shared/frontier-exception.md`. |
 
 **`/challenge` is excluded from the verdict-gate category.** Its `framing-check` mode is inline-only by that skill's own Component-Skill Contract — dispatching it as a Task agent is a named anti-pattern there. Profiles govern dispatches only; an inline step rides the session model by design and has no profile to carry, so `framing-check` is never a candidate for this enumeration regardless of how singleton-shaped its judgment is.
 
@@ -281,7 +278,7 @@ API error: You've hit your session limit` will not succeed on an immediate retry
 transient 5xx/timeout might — the caller's account-level limit, not the agent's own work, caused
 the termination. A dispatch site handling a reproduction-pair partner's death this way retries
 once (to rule out a spurious one-off) and, on a second failure, degrades rather than retrying
-again in a loop — see `review/step3-lens-dispatch.md`'s reproduction-pair section for the
+again in a loop — see `review/step3-tier-variants.md`'s partner-died paragraph for the
 degrade procedure this classification feeds.
 
 **A subagent whose *parent* session was terminated leaves a 0-byte output file — not a readable
@@ -307,7 +304,7 @@ In a Form B blockquote:
 
 ```
 > **Parallel execution:** Dispatch {scope} as parallel Task agents — each runs independently and returns findings in Template A format. Assemble results after all agents complete.
-> **Contract:** Each agent follows the Subagent Contract — minimal input (scope + path + output template, no conversation), Template A, then one of {DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED} as a labeled trailing line — `STATUS: {WORD}`, the reply's last non-empty line, after the output template (WRONG: "Based on my review, DONE" as the first line). Pick the cheapest work profile that fits ({Fast | Standard | Capable} — Frontier never rides a fan-out; singleton slots only, §Model Selection) and resolve it per §Model Selection. Inline the template literally; reject and re-prompt on format violations.
+> **Contract:** Each agent follows the Subagent Contract — minimal input (scope + path + output template, no conversation), Template A, then one of {DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED} as a labeled trailing line — `STATUS: {WORD}`, the reply's last non-empty line, after the output template (WRONG: "Based on my review, DONE" as the first line). Pick the cheapest work profile that fits ({Fast | Standard | Capable} — Frontier only at singleton slots or the one named exception, §Model Selection) and resolve it per §Model Selection. Inline the template literally; reject and re-prompt on format violations.
 ```
 
 In the actual `Task()` call, the prompt body must contain the literal template — not a reference to it. Concrete example:

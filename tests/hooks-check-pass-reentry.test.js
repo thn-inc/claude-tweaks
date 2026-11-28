@@ -10,61 +10,63 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { spawnSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { reentryFixture, reentryGit } = require('./helpers/reentry-fixture');
 const { checkPassReentry } = require('../plugin/bin/lib/flow/consolidated-pass');
 const { USAGE } = require('../plugin/bin/hooks.js');
+const { hookEnv: baseHookEnv } = require('./helpers/git-fixtures');
+const { runCli, spawnCli } = require('./helpers/run-cli');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
-function runCli(args, { cwd, env = {} } = {}) {
-  const r = spawnSync(process.execPath, [HOOKS, ...args], {
-    cwd, encoding: 'utf8',
-    env: { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1', CLAUDE_CODE_SESSION_ID: 'cpr-test', ...env },
-  });
-  return { code: r.status, stdout: r.stdout, stderr: r.stderr };
+// The env is the complete environment the verb sees: the ambient one minus the four repo-pointing git variables.
+const hookEnv = (env = {}) => baseHookEnv({ CT_HOOKS_TEST_MODE: '1', CLAUDE_CODE_SESSION_ID: 'cpr-test', ...env });
+
+function runHook(args, { cwd, env = {} } = {}) {
+  return runCli(HOOKS, args, { cwd, env: hookEnv(env) });
 }
 
 const verdictOf = (r) => JSON.parse(r.stdout.trim());
 
-test('AC1.1: eligible fixture -> stdout is checkPassReentry\'s verdict JSON, exit 0', () => {
+test('AC1.1: eligible fixture -> stdout is checkPassReentry\'s verdict JSON, exit 0', async () => {
   const { root, runDir } = reentryFixture();
   const expected = checkPassReentry(runDir, { sessionId: 'cpr-test' });
   assert.equal(expected.reason, 'eligible'); // fixture really is eligible
-  const r = runCli(['check-pass-reentry', '--run', runDir], { cwd: root });
+  const r = await runHook(['check-pass-reentry', '--run', runDir], { cwd: root });
   assert.equal(r.code, 0, r.stderr);
   assert.equal(r.stderr, '');
   assert.deepStrictEqual(verdictOf(r), expected);
   assert.equal(r.stdout, `${JSON.stringify(expected)}\n`);
 });
 
-test('AC1.1: ineligible fixture (console.json present) -> same verdict JSON as checkPassReentry', () => {
+test('AC1.1: ineligible fixture (console.json present) -> same verdict JSON as checkPassReentry', async () => {
   const { root, runDir } = reentryFixture();
   fs.writeFileSync(path.join(runDir, 'console.json'), '{}');
   const expected = checkPassReentry(runDir, { sessionId: 'cpr-test' });
   assert.equal(expected.reason, 'console-exists');
-  const r = runCli(['check-pass-reentry', '--run', runDir], { cwd: root });
+  const r = await runHook(['check-pass-reentry', '--run', runDir], { cwd: root });
   assert.equal(r.code, 0, r.stderr);
   assert.deepStrictEqual(verdictOf(r), expected);
 });
 
-test('AC1.2: an unanchored --run exits non-zero with no JSON on stdout', () => {
+test('AC1.2: an unanchored --run exits non-zero with no JSON on stdout', async () => {
   const { root } = reentryFixture();
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-cpr-outside-'));
+  const outside = scratchDir('ct-cpr-outside-');
   const runDir2 = path.join(outside, '.claude-tweaks', 'pipelines', '2026-08-01T090000-spec-11-12');
   fs.mkdirSync(runDir2, { recursive: true });
   fs.writeFileSync(path.join(runDir2, 'run-state.json'), JSON.stringify({ status: 'active' }));
   fs.writeFileSync(path.join(runDir2, 'config.yml'), 'mode: auto\n');
-  const r = runCli(['check-pass-reentry', '--run', runDir2], { cwd: root });
+  const r = await runHook(['check-pass-reentry', '--run', runDir2], { cwd: root });
   assert.notEqual(r.code, 0);
   assert.equal(r.stdout, '');
   assert.match(r.stderr, /--run path rejected/);
 });
 
-test('#3553: omitting --run exits non-zero, never guessing a run dir', () => {
+test('#3553: omitting --run exits non-zero, never guessing a run dir', async () => {
   const { root } = reentryFixture();
-  const r = runCli(['check-pass-reentry'], { cwd: root });
+  const r = await runHook(['check-pass-reentry'], { cwd: root });
   assert.notEqual(r.code, 0);
   assert.equal(r.stdout, '');
   assert.match(r.stderr, /requires --run/);
@@ -77,42 +79,65 @@ const gitPath = (() => {
   return w.status === 0 ? w.stdout.trim() : null;
 })();
 
-test('#3553: --online is threaded through (gh absent -> degrade named in detail; absent without --online)', { skip: (!gitPath && 'git not resolvable on PATH') || (process.platform === 'win32' && 'symlink-only PATH fixture is POSIX-only') }, () => {
+test('#3553: --online is threaded through (gh absent -> degrade named in detail; absent without --online)', { skip: (!gitPath && 'git not resolvable on PATH') || (process.platform === 'win32' && 'symlink-only PATH fixture is POSIX-only') }, async () => {
   const { root, runDir } = reentryFixture();
   const statePath = path.join(runDir, 'run-state.json');
   const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
   state.pr = { number: 7, url: 'https://example.test/pr/7', branch: 'feat-branch' };
   fs.writeFileSync(statePath, JSON.stringify(state));
-  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-cpr-bin-'));
+  const bin = scratchDir('ct-cpr-bin-');
   fs.symlinkSync(gitPath, path.join(bin, 'git'));
   const env = { PATH: bin };
-  const online = runCli(['check-pass-reentry', '--run', runDir, '--online'], { cwd: root, env });
-  const offline = runCli(['check-pass-reentry', '--run', runDir], { cwd: root, env });
+  // real process: checkPassReentry takes no env: its gh lookup (and its git children) start on the process environment, so an in-process PATH stub would be skipped
+  const online = spawnCli(HOOKS, ['check-pass-reentry', '--run', runDir, '--online'], { cwd: root, env: hookEnv(env) });
+  // in-process with no PATH stub: the offline path starts no gh, so it needs no stub
+  const offline = await runHook(['check-pass-reentry', '--run', runDir], { cwd: root });
   assert.equal(online.code, 0, online.stderr);
   assert.equal(offline.code, 0, offline.stderr);
   assert.match(verdictOf(online).detail, /online PR check unavailable \(gh-absent\)/);
   assert.doesNotMatch(verdictOf(offline).detail, /online PR check unavailable/);
 });
 
-test('#3553: the caller\'s CLAUDE_CODE_SESSION_ID is passed as sessionId (own run skips the parent-live lock check)', () => {
+// #5376 injected-value proof: fails when check-pass-reentry reads process.env instead of the injected env
+test('#3553: the caller\'s CLAUDE_CODE_SESSION_ID is passed as sessionId (own run skips the parent-live lock check)', async () => {
   const { root, wt, runDir } = reentryFixture();
   // A lock with no pid is a lock whose holder cannot be proven dead, which
   // checkPassReentry reads as parent-live unless the run's recorded sessionId is
   // the caller's own.
   reentryGit(root, 'worktree', 'lock', '--reason', 'held', wt);
   fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active', worktree: wt, sessionId: 'cpr-test' }));
-  const own = runCli(['check-pass-reentry', '--run', runDir], { cwd: root, env: { CLAUDE_CODE_SESSION_ID: 'cpr-test' } });
-  const other = runCli(['check-pass-reentry', '--run', runDir], { cwd: root, env: { CLAUDE_CODE_SESSION_ID: 'someone-else' } });
+  const own = await runHook(['check-pass-reentry', '--run', runDir], { cwd: root, env: { CLAUDE_CODE_SESSION_ID: 'cpr-test' } });
+  const other = await runHook(['check-pass-reentry', '--run', runDir], { cwd: root, env: { CLAUDE_CODE_SESSION_ID: 'someone-else' } });
   assert.equal(own.code, 0, own.stderr);
   assert.equal(other.code, 0, other.stderr);
   assert.equal(verdictOf(own).reason, 'eligible');
   assert.equal(verdictOf(other).reason, 'parent-live');
 });
 
-test('#3553 #4834: an unknown flag exits 1 with the usage line on stderr, never verdict JSON', () => {
+test('#3553 #4834: an unknown flag exits 1 with the usage line on stderr, never verdict JSON', async () => {
   const { root, runDir } = reentryFixture();
-  const r = runCli(['check-pass-reentry', '--run', runDir, '--onlin'], { cwd: root });
+  const r = await runHook(['check-pass-reentry', '--run', runDir, '--onlin'], { cwd: root });
   assert.equal(r.code, 1);
   assert.equal(r.stdout, '');
   assert.equal(r.stderr, `claude-tweaks: check-pass-reentry: unknown flag '--onlin'\nclaude-tweaks: usage: ${USAGE['check-pass-reentry']}\n`);
+});
+
+// real process: the script entry (shebang, process.argv, the exit code) of the check-pass-reentry success path (AC5.1),
+// twinned with the same fixture in-process.
+test('AC5.1: check-pass-reentry on an eligible fixture through runCli and spawnCli prints the same verdict JSON, exit 0', async () => {
+  const a = reentryFixture();
+  const b = reentryFixture();
+  const inProcess = await runHook(['check-pass-reentry', '--run', a.runDir], { cwd: a.root });
+  const spawned = spawnCli(HOOKS, ['check-pass-reentry', '--run', b.runDir], { cwd: b.root, env: hookEnv() });
+  assert.deepStrictEqual(inProcess, spawned);
+  assert.equal(inProcess.code, 0, inProcess.stderr);
+  assert.equal(verdictOf(spawned).reason, 'eligible');
+  assert.equal(spawned.stderr, '');
+});
+
+// real process: the script entry of the check-pass-reentry unknown-flag refusal (AC5.1) — exit code 1 and the stderr lines.
+test('AC5.1: check-pass-reentry with an unknown flag exits 1 with the usage line on stderr through the script entry', () => {
+  const { root, runDir } = reentryFixture();
+  const r = spawnCli(HOOKS, ['check-pass-reentry', '--run', runDir, '--onlin'], { cwd: root, env: hookEnv() });
+  assert.deepStrictEqual(r, { code: 1, stdout: '', stderr: `claude-tweaks: check-pass-reentry: unknown flag '--onlin'\nclaude-tweaks: usage: ${USAGE['check-pass-reentry']}\n` });
 });

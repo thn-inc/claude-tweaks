@@ -10,7 +10,7 @@ const {
   extractDescriptionFields,
   flagQuestionMarks,
   listMarkdownFiles,
-} = require('../../../plugin/bin/lib/skill-audit/option-description.js');
+} = require('../../helpers/option-description.js');
 const { listSkillDirs } = require('../../../plugin/bin/lib/skill-audit/skill-catalog.js');
 const { readText } = require('../../helpers/read-skill');
 

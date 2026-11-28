@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // bin/materialize.js — record-to-build-time-file materialization in one command.
-//   node bin/materialize.js <n> --run-dir <dir> [--repo owner/name] [--ceremony fast-lane|standard] [--multi-record-slug <n>] [--record-json <path>] [--help]
-//   node bin/materialize.js <n> --check [--repo owner/name] [--record-json <path>]
+//   node bin/materialize.js <n> --run-dir <dir> [--repo [host/]owner/name] [--ceremony fast-lane|standard] [--multi-record-slug <n>] [--record-json <path>] [--help]
+//   node bin/materialize.js <n> --check [--repo [host/]owner/name] [--record-json <path>]
 // --check (#4027) runs only Resolution + the Materialization hard gate —
 // /flow Step 1 item 5's pre-flight — with no --run-dir and no write, and
 // prints {record, check: "passed", title, ceremony, surface, bodyBlockedBy}; its exit codes
@@ -23,7 +23,7 @@
 // current linked worktree is anchored-equivalent and accepted, since this
 // CLI only ever writes to that worktree's own work/{n}-spec.md), an
 // unresolved record, an origin host that is not a known GitHub host (refused before any
-// gh call, #4933; `GH_HOST={host}` opts in), or when `gh` is absent. #1210: when cwd is itself
+// gh call, #4933; an exported `GH_HOST` opts in), or when `gh` is absent. #1210: when cwd is itself
 // inside a linked worktree but --run-dir resolves somewhere else — the main
 // checkout (the standard $PIPELINE_RUN_DIR shape every other --run/--run-dir
 // consumer expects, passed unmodified from inside a worktree) or a DIFFERENT
@@ -46,6 +46,8 @@ const { execFileSync } = require('child_process');
 const {
   parseRecordFacets, extractFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, parseDependencies,
 } = require('./lib/issues/record');
+const { parseCrossRepoDependencies } = require('./lib/issues/cross-repo-refs');
+const { riskFromLabels } = require('./lib/model-profiles/implementer-tier');
 const {
   shapeGate, liftMetadata, composeHeader, composeFile, describeDesignIntentError,
 } = require('./lib/issues/materialize-format');
@@ -60,8 +62,8 @@ const { resolveTarget: resolveStageTarget, writeStagedItem } = require('./lib/st
 const { resolvePluginVersion } = require('./lib/plugin-version');
 const { defaultRunner: runPremiseCommand, PREMISE_SELF_CHECK_TIMEOUT_MS } = require('./lib/health-core/premise-self-check');
 
-const USAGE = 'usage: materialize.js <n> --run-dir <dir> [--repo owner/name] [--ceremony fast-lane|standard] [--multi-record-slug <n>] [--record-json <path>] [--help]\n'
-  + '       materialize.js <n> --check [--repo owner/name] [--record-json <path>]\n'
+const USAGE = 'usage: materialize.js <n> --run-dir <dir> [--repo [host/]owner/name] [--ceremony fast-lane|standard] [--multi-record-slug <n>] [--record-json <path>] [--help]\n'
+  + '       materialize.js <n> --check [--repo [host/]owner/name] [--record-json <path>]\n'
   + '  --check: Resolution + the Materialization hard gate only (#4027) — no --run-dir, no write;\n'
   + '           prints {record, check: "passed", title, ceremony, surface, bodyBlockedBy}; exit 0 passed, 1 gate failed, 2 unresolved/malformed\n';
 
@@ -145,19 +147,10 @@ function resolveCheckoutRoot(cwd) {
 // it was read before filing. A non-zero exit is a normal outcome; no exit
 // code at all (ENOENT when no POSIX sh resolves — /bin/sh, or sh from PATH on
 // Windows — or a timeout) re-throws for computePremise's own catch to degrade
-// to null. `env` (optional) is the command's whole environment.
-function runPremiseCheckDefault(command, { cwd, env } = {}) {
-  return runPremiseCommand(command, { cwd, timeoutMs: PREMISE_SELF_CHECK_TIMEOUT_MS, env });
-}
-
-// #4505: the process env minus the GH_HOST this run pinned for an explicit
-// --repo (deps.pinGhHost). The pin is for materialize's own gh calls; the
-// record-authored command gets the env it had before it, where a
-// remote-inferring gh call reaches cwd's host. pinExplicitRepoHost never pins
-// over an exported GH_HOST, so a user's own value is never what is removed.
-function envBeforeGhHostPin() {
-  const { GH_HOST: _pinned, ...env } = process.env;
-  return env;
+// to null. The command inherits the process env as is: the --repo host pin
+// lives only in each gh call's own env (ghOptions), never in process.env (#4795).
+function runPremiseCheckDefault(command, { cwd } = {}) {
+  return runPremiseCommand(command, { cwd, timeoutMs: PREMISE_SELF_CHECK_TIMEOUT_MS });
 }
 
 // command -> { command, exit, satisfiedAtBase } | null. null means "no
@@ -170,15 +163,14 @@ function envBeforeGhHostPin() {
 // contract, the command is written to exit 0 while the premise (the
 // record's Current State claim) still holds, so a non-zero exit means the
 // claim no longer holds at this checkout's base — the record's work may
-// already be done. `pinnedGhHost` (the host deps.pinGhHost exported, or null)
-// keeps that pin out of the command's env.
-function computePremise(command, deps, pinnedGhHost = null) {
+// already be done.
+function computePremise(command, deps) {
   if (!command) return null;
   let exit;
   try {
     const cwd = deps.checkoutRoot(deps.cwd());
     if (!cwd) return null;
-    exit = deps.runPremiseCheck(command, pinnedGhHost ? { cwd, env: envBeforeGhHostPin() } : { cwd });
+    exit = deps.runPremiseCheck(command, { cwd });
   } catch {
     return null;
   }
@@ -290,12 +282,10 @@ const realDeps = {
   // never hit the real filesystem for it either.
   readFile: (file) => fs.readFileSync(file, 'utf8'),
   // #1840: the RUNNING build's own version — CLAUDE_PLUGIN_ROOT/.claude-plugin/
-  // plugin.json, the same read bin/harness-health.js's own resolvePluginVersion
-  // performs (never this repo's own plugin/.claude-plugin/plugin.json, which is
-  // ahead of the installed build during development). Fail-toward-undefined.
-  // #1837 review finding: this was its own third copy of the same
-  // read/parse/extract logic — now shared with bin/harness-health.js and
-  // bin/lib/hooks/session-start.js via bin/lib/plugin-version.js.
+  // plugin.json, read by bin/lib/plugin-version.js's resolvePluginVersion (never
+  // this repo's own plugin/.claude-plugin/plugin.json, which is ahead of the
+  // installed build during development). Fails toward undefined; shared with
+  // bin/harness-health.js and bin/lib/hooks/session-start.js.
   installedPluginVersion: () => resolvePluginVersion(),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
@@ -381,7 +371,6 @@ function run(argv, deps = realDeps) {
   // Populated only on the gh-backed path below — carries owner/repo/host for
   // the author-association lookup the premise-check gate needs further down.
   let repoSpec = null;
-  let pinnedGhHost = null;
   if (opts.recordJson) {
     // #1459: the gh-absent path — deps.ghAvailable()/deps.ghView() are never
     // consulted here, and no owner/repo resolution is needed since nothing
@@ -406,8 +395,8 @@ function run(argv, deps = realDeps) {
       if (gated.refusal) { deps.stderr(`materialize.js: ${gated.refusal}\n`); return 2; }
       repoSpec = gated.spec;
     }
-    if (!repoSpec) { deps.stderr('materialize.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
-    if (opts.repo && deps.pinGhHost) pinnedGhHost = deps.pinGhHost(repoSpec) || null;
+    if (!repoSpec) { deps.stderr('materialize.js: could not resolve owner/repo — pass --repo [host/]owner/name\n'); return 2; }
+    if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
     const { host, owner, repo } = repoSpec;
     // #2538 Deliverable 3 — visible only for a resolved non-github.com host.
     const repoNote = repoResolutionNote(repoSpec);
@@ -445,7 +434,7 @@ function run(argv, deps = realDeps) {
   if (opts.check) {
     deps.stdout(JSON.stringify({
       record: opts.n, check: 'passed', title: record.title, ceremony: parseRecordFacets(record.labels).ceremony || null, surface: meta.surface || null,
-      bodyBlockedBy: parseDependencies(record.body),
+      bodyBlockedBy: [...parseDependencies(record.body), ...parseCrossRepoDependencies(record.body)], // #4793, Decisions Q7: a foreign-only body still runs 2.7b's call
     }) + '\n');
     return 0;
   }
@@ -493,7 +482,7 @@ function run(argv, deps = realDeps) {
       association = record.authorAssociation;
     }
     if (association && TRUSTED_AUTHOR_ASSOCIATIONS.has(association)) {
-      premise = computePremise(premiseCommand, deps, pinnedGhHost);
+      premise = computePremise(premiseCommand, deps);
     } else {
       deps.stderr(
         `materialize.js: Record #${opts.n} has a Premise-check: line but its author's repo `
@@ -633,12 +622,14 @@ function run(argv, deps = realDeps) {
   const header = composeHeader({
     record: opts.n,
     origin: facets.origin || 'human',
-    risk: facets.risk,
+    // Exactly one valid `risk:` label, else none: the implementer-tier CLI starts the standard lane's effort from
+    // this line, and parseRecordFacets' last-wins would let a duplicated label start lower than the driver (#6002).
+    risk: riskFromLabels(labelNames),
     size: facets.size,
     ceremony,
     grants: facets.grants,
     fingerprint: extractFingerprint(record.body),
-    blockedBy: parseDependencies(record.body),
+    blockedBy: [...parseDependencies(record.body), ...parseCrossRepoDependencies(record.body)], // #4793, Decisions Q7: foreign refs as owner/name#N, after this repository's numbers
     surface: meta.surface,
     designIntent: meta.designIntent,
     uiStack: meta.uiStack,

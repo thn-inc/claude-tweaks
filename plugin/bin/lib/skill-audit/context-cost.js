@@ -22,6 +22,7 @@ const {
   stripMarkers, MarkerError, parseMarkers, compose, KEYS, VOCAB, UNRESOLVED,
 } = require('../compose-context/compose');
 const { phaseBundles } = require('../compose-context/phases');
+const { selectSections, SectionError } = require('../compose-context/sections');
 const { toPosix, isPathContained } = require('../shared-primitives');
 
 function skillsDir(repoRoot) {
@@ -148,7 +149,7 @@ function conditionCombinations(keys) {
 // neither `sources` nor a usable one.
 function measureComposed(repoRoot, callSite) {
   if (callSite.unparsed) return { ...callSite, error: callSite.reason, combinations: [] };
-  const { step, file, line, sources: sourcePaths } = callSite;
+  const { step, file, line, sources: sourcePaths, sections } = callSite;
   let sources;
   try {
     sources = sourcePaths.map((p) => ({
@@ -167,8 +168,17 @@ function measureComposed(repoRoot, callSite) {
   }
   let keys;
   try {
+    // A sectioned source (#5668) is measured as the slices it contributes.
+    if (sections) {
+      sources = sources.map((s, i) => (sections[i] ? { ...s, content: selectSections(s.content, sections[i], s.path) } : s));
+    }
     keys = usedConditionKeys(sources);
   } catch (err) {
+    if (err instanceof SectionError) {
+      return {
+        step, file, line, sources: sourcePaths, error: `${err.file}: ${err.message}`, combinations: [],
+      };
+    }
     if (err instanceof MarkerError) {
       return {
         step, file, line, sources: sourcePaths, error: `${err.file}:${err.line}: ${err.message}`, combinations: [],
@@ -229,7 +239,15 @@ function parsePhaseTokens(rest, repoRoot) {
   if (rest.length > 1) return { unparsed: true, reason: `unexpected token after --phase ${name}: ${rest[1]}` };
   const bundles = phaseBundles(name, path.resolve(repoRoot));
   if (!bundles) return { unparsed: true, reason: `unknown phase ${name}` };
-  return { phase: name, bundles: bundles.map(({ step, sources }) => ({ step, sources: sources.map((s) => s.file) })) };
+  return {
+    phase: name,
+    bundles: bundles.map(({ step, sources }) => ({
+      step,
+      sources: sources.map((s) => s.file),
+      // Aligned with `sources`; present only when some source is sectioned (#5668).
+      ...(sources.some((s) => s.sections) && { sections: sources.map((s) => s.sections || null) }),
+    })),
+  };
 }
 
 // One line of skill prose -> `{ step, sources }` (a real call site),
@@ -320,7 +338,9 @@ function findComposeCallSites(repoRoot) {
       // each such row also names its `phase`.
       const phase = parsed.phase ? { phase: parsed.phase } : {};
       for (const site of parsed.bundles || [parsed]) {
-        out.push({ step: site.step, ...phase, file, line: i + 1, sources: site.sources });
+        out.push({
+          step: site.step, ...phase, file, line: i + 1, sources: site.sources, ...(site.sections && { sections: site.sections }),
+        });
       }
     }
   }

@@ -78,7 +78,8 @@ test('#2015: pr-first-merge.md Step 3 defines {issue-list} as complete specs onl
   const text = norm(read(PR_FIRST_MERGE_PATH));
   const step3 = text.split('## Step 3: Attempt auto-merge')[1];
   assert.ok(step3, 'Step 3 must exist');
-  const window = step3.slice(0, 1500);
+  // 1700 (was 1500): Step 3 now opens with the Step 2.9 gate clause (#4615), which pushes this definition down.
+  const window = step3.slice(0, 1700);
   assert.match(window, /the manifest's `complete` specs only/,
     'Step 3 must define {issue-list} as the manifest\'s complete specs only for a bundle');
   assert.match(window, /`never-started:`\/`abandoned:` reason/,

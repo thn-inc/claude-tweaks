@@ -13,26 +13,34 @@ const fs = require('fs');
 const path = require('path');
 const { execFile: execFileCb, execFileSync } = require('child_process');
 const { promisify } = require('util');
-const { resolvePolicyConfig } = require('../policy-schema');
+const { resolvePolicyConfig, parseFlatLines } = require('../policy-schema');
 const { parseManifestYaml } = require('../flow/manifest');
-const { parseDependencies, DEFER_REASONS } = require('../issues/record');
+const { parseDependencies, withoutCrossRepoBlockers, foreignBlockerBlocks, DEFER_REASONS } = require('../issues/record');
+const { parseCrossRepoDependencies, foreignEntries, bodyOnlyForeign, distinctCrossRepoRefs } = require('../issues/cross-repo-refs');
 const { runWithConcurrency } = require('../reconcile/gh-pool');
-const { gateOriginRepo, repoSlug, ghOptions } = require('../repo-resolve');
+const { gateOriginRepo, repoSlug, ghOptions, injectedGhDeps } = require('../repo-resolve');
 const { readRunStateWithParent } = require('../hooks/context');
 const { ownedPlansFiles } = require('./ledger-ownership');
 const { ledgerRowCells } = require('./ledger-cells');
-const { isTimeoutError } = require('../shared-primitives');
+const { isTimeoutError, execTimeoutMsFor } = require('../shared-primitives');
 const { parseWorkBackend } = require('../work-backend');
+const { PIN_PATTERNS } = require('../set-config/write');
+const { listHeaderDirs } = require('../run-header');
 
 const PROBE_NAMES = ['residue', 'state', 'blastRadius', 'pr', 'recordLabels', 'claim', 'ledger', 'unblocked'];
 const BIN = path.join(__dirname, '..', '..');
 
-// Every subprocess this module spawns is bounded the same way: a 32 MB stdout
-// ceiling (a `gh issue list --limit 200` of long bodies overruns Node's 1 MB
-// default and comes back as a truncation error) and a 30 s wall clock, so one
-// hung `gh` can never hold the whole pack open.
+// Every async subprocess this module spawns through execBounded is bounded the
+// same way: a 32 MB stdout ceiling (a `gh issue list --limit 200` of long bodies
+// overruns Node's 1 MB default and comes back as a truncation error) and a
+// per-command wall clock (`execTimeoutMsFor(cmd)`: gh and git follow their policy
+// keys, node stays 30 s), so one hung async `gh` can never hold the whole pack
+// open. The wall clock is added at each call site, not held here, so the message
+// names the bound the call carried. The synchronous runners below (execSync,
+// defaultGit, defaultGhSync, defaultResolvePolicy's git) carry neither bound on
+// purpose: bounding them is #5870's decision, not #5050's.
 // Merged with `cwd` at each call site; never mutated.
-const EXEC_OPTS = { maxBuffer: 32 * 1024 * 1024, timeout: 30000, windowsHide: true };
+const EXEC_OPTS = { maxBuffer: 32 * 1024 * 1024, windowsHide: true };
 
 // The default `wrap` of execBounded and execSync: hands the options through unchanged.
 const keepOptions = (_args, opts) => opts;
@@ -44,18 +52,19 @@ const keepOptions = (_args, opts) => opts;
 // unchanged. `wrap` transforms the options per call: identity by default,
 // ghOptions (#4505's GH_HOST seam) for a gh spawn.
 async function execBounded(deps, cmd, args, cwd, wrap = keepOptions) {
+  const timeout = execTimeoutMsFor(cmd);
   try {
-    return await deps.execFile(cmd, args, wrap(args, { cwd, ...EXEC_OPTS }));
+    return await deps.execFile(cmd, args, wrap(args, { cwd, ...EXEC_OPTS, timeout }));
   } catch (err) {
     if (isTimeoutError(err)) {
       const target = cmd === 'node' ? path.basename(args[0]) : args[0];
-      throw new Error(`timeout after ${EXEC_OPTS.timeout}ms: ${cmd} ${target} (killed by ${err.signal || 'timeout'})`, { cause: err });
+      throw new Error(`timeout after ${timeout}ms: ${cmd} ${target} (killed by ${err.signal || 'timeout'})`, { cause: err });
     }
     throw err;
   }
 }
 
-// The per-probe outer bound, one level above EXEC_OPTS: a probe that makes no
+// The per-probe outer bound, one level above the per-spawn execTimeoutMsFor bound: a probe that makes no
 // subprocess call at all (a module probe spinning, an fs read on a dead mount)
 // is still bounded. Injectable via deps.probeTimeoutMs for tests.
 const PROBE_TIMEOUT_MS = 60000;
@@ -72,8 +81,10 @@ const POLICY_KEYS = ['integration-branch', 'work-links'];
 // `err.stderr` for any consumer module that classifies a failure by message.
 // `wrap` transforms the options, as execBounded's does: identity by default,
 // ghOptions (#4505's GH_HOST seam) for a gh spawn.
-function execSync(bin, args, { cwd } = {}, wrap = keepOptions) {
-  return execFileSync(bin, args, wrap(args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }));
+// `env` (from the opts) is the caller's injected environment (#5379); absent, the child inherits the real one.
+// `stderr` is the caller's injected note sink for ghOptions's repo-resolution note; absent, the note goes to the real stderr.
+function execSync(bin, args, { cwd, env, stderr } = {}, wrap = keepOptions) {
+  return execFileSync(bin, args, wrap(args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, ...(env ? { env } : {}) }, injectedGhDeps({ env, stderr })));
 }
 
 function defaultGit(args, opts) {
@@ -90,12 +101,16 @@ function defaultGhSync(args, opts) {
 // review I8). Same scalar semantics as that CLI's --values mode: an unknown
 // key, an error entry, or a null/absent value all read as ''. One call
 // resolves every key the pack needs.
-function defaultResolvePolicy(keys, cwd) {
+// `env` is the caller's injected environment (#5379); absent, the git child inherits the real one.
+// `cwd` is the repo-root fallback when `git rev-parse --show-toplevel` fails (it replaces
+// `process.cwd()` there, policy-schema.js), so an in-process caller's policy read never falls back
+// to the test runner's cwd.
+function defaultResolvePolicy(keys, cwd, env) {
   const out = {};
-  const git = (args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+  const git = (args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, ...(env ? { env } : {}) });
   const readFile = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
   try {
-    const { result } = resolvePolicyConfig({ git, readFile, keys });
+    const { result } = resolvePolicyConfig({ git, readFile, keys, cwd, ...(env ? { env } : {}) });
     for (const key of keys) {
       const entry = result[key];
       out[key] = !entry || entry.error !== undefined || entry.value === null || entry.value === undefined ? '' : String(entry.value);
@@ -106,16 +121,21 @@ function defaultResolvePolicy(keys, cwd) {
   return out;
 }
 
-function defaultDeps(cwd) {
+// `{ env }` is the caller's injected environment (#5379): it reaches `git`, `ghSync` and `resolvePolicy`'s
+// own git, each of which merges it into the options its caller passes, and the factory-layer read of both
+// policy reads (`resolvePolicy` and `computeBlastRadius`, #6006). Absent, behavior is unchanged.
+// `{ stderr }` is the sink for `ghSync`'s repo-resolution note; absent, the note goes to the real stderr.
+function defaultDeps(cwd, { env, stderr } = {}) {
+  const { computeBlastRadius } = require('../blast-radius-cli');
   return {
     now: () => Date.now(),
-    git: defaultGit,
-    ghSync: defaultGhSync,
+    git: env ? (args, opts) => defaultGit(args, { ...opts, env }) : defaultGit,
+    ghSync: env || stderr ? (args, opts) => defaultGhSync(args, { ...opts, ...(env ? { env } : {}), ...(stderr ? { stderr } : {}) }) : defaultGhSync,
     execFile: promisify(execFileCb),
     readFile: (p) => fs.readFileSync(p, 'utf8'),
     readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
-    resolvePolicy: (keys, policyCwd) => defaultResolvePolicy(keys, policyCwd || cwd),
-    computeBlastRadius: require('../blast-radius-cli').computeBlastRadius,
+    resolvePolicy: (keys, policyCwd) => defaultResolvePolicy(keys, policyCwd || cwd, env),
+    computeBlastRadius: env ? (opts, d) => computeBlastRadius(opts, { ...d, env }) : computeBlastRadius,
     readClaimBlob: require('../issues/claim-store').readClaimBlob,
     classifyClaimBlob: require('../issues/claims').classifyClaimBlob,
     gitRunner: require('../issues/claims-git-cas').defaultRunner,
@@ -181,13 +201,46 @@ function headerRecords(deps, dir) {
   return headerEntries(deps, dir).map((e) => e.record);
 }
 
+// Rungs (a)/(b)'s read: the flat-`work/` headers of one run dir, live and archived
+// (run-header.js), merged by record. A record present in both counts once, the
+// earlier (live) copy winning — its `parkedAtShaping` with it (#3974).
+function flatEntries(deps, runDir) {
+  const byRecord = new Map();
+  // The flat dirs need no `spec-*` listing (`nested: false` skips it: one fewer run-dir read per call).
+  for (const { dir } of listHeaderDirs([runDir], { nested: false })) {
+    for (const entry of headerEntries(deps, dir)) {
+      if (!byRecord.has(entry.record)) byRecord.set(entry.record, entry);
+    }
+  }
+  return [...byRecord.values()].sort((a, b) => a.record - b.record);
+}
+
 // Which resolveRecords rungs may receive a closing keyword (Ruling R1): only
 // the header rungs. Manifest ids include not-run/failed specs, whose PR-body
-// line is `Refs`, not `Fixes`. Decided here once; consumers read the result.
+// line is `Refs`, not `Fixes`. The `config` rung is not closing either: a
+// config.yml `spec:` is the lowest of a run's records, so it names one record
+// of a multi-record run and carries no closing intent (an express run's PR
+// body already carries its own `Fixes`). Decided here once; consumers read the result.
+// Array-or-null (#4108): an array, possibly empty, is the set the run may
+// close; `null` means no records resolved (`unavailable`): no decision, so
+// only then may a reader fall back to Phase 1's identified record.
 const CLOSING_RECORD_SOURCES = new Set(['headers', 'worktree-headers']);
 
 function closingRecords({ records, source }) {
+  if (source === 'unavailable') return null;
   return CLOSING_RECORD_SOURCES.has(source) ? records : [];
+}
+
+// Which rungs may name the unattended console's merge members (Reading A,
+// #5347): the header and manifest rungs. Members are wider than the closing
+// set (a manifest's not-run spec is still a member), but the `config` rung
+// names only a run's lowest record and carries no header-stated intent, so it
+// never grants members. An allowlist, like CLOSING_RECORD_SOURCES, so a new
+// rung grants nothing until it is listed here.
+const MEMBER_RECORD_SOURCES = new Set(['headers', 'worktree-headers', 'manifest', 'worktree-manifest']);
+
+function memberRecords({ records, source }) {
+  return MEMBER_RECORD_SOURCES.has(source) ? records : [];
 }
 
 // The worktree's own mirror of a run dir: everything from the
@@ -215,11 +268,32 @@ function manifestRecords(deps, dir) {
     const n = Number(spec && spec.id);
     if (Number.isInteger(n)) nums.push(n);
   }
-  for (const name of deps.readdir(dir)) {
-    if (!/^spec-/.test(name)) continue;
-    nums.push(...headerRecords(deps, path.join(dir, name, 'work')));
+  for (const { dir: workDir } of listHeaderDirs([dir], { readdir: deps.readdir }).filter((e) => e.specDir !== null)) {
+    nums.push(...headerRecords(deps, workDir));
   }
   return sortedUnique(nums);
+}
+
+// Rung (e)'s read: the run dir's config.yml `spec:` pin as a one-element list,
+// or [] when absent or not a positive integer. parseFlatLines keeps the last
+// occurrence, the same semantics set-config.js's setConfigLever documents.
+// The shape test is the writer's own PIN_PATTERNS.spec, so what set-config
+// accepts and what this rung reads back cannot drift apart.
+function configRecords(deps, dir) {
+  const spec = parseFlatLines(readText(deps, path.join(dir, 'config.yml'))).spec;
+  return typeof spec === 'string' && PIN_PATTERNS.spec.re.test(spec) ? [Number(spec)] : [];
+}
+
+// True only when `dir` provably holds no manifest.yml: a missing file (ENOENT)
+// or a deps.readFile that signals absence by returning null. Any other read
+// error (EACCES, EISDIR, EIO) is a manifest that exists but cannot be read —
+// a possibly broken multi-spec parent — so it is not absent (fail closed).
+function manifestAbsent(deps, dir) {
+  try {
+    return deps.readFile(path.join(dir, 'manifest.yml')) === null;
+  } catch (err) {
+    return Boolean(err) && err.code === 'ENOENT';
+  }
 }
 
 // The record-resolution ladder, in order, reporting which rung won:
@@ -229,7 +303,9 @@ function manifestRecords(deps, dir) {
 // materialize.md commits spec-{n}/work/{n}-spec.md on the feature branch, so
 // on a real pr-first dispatch group it exists only in the worktree, never in
 // the main-checkout run dir --run anchors to, same reason rung (b) mirrors
-// rung (a)); else none.
+// rung (a)); (e) last, the run dir's config.yml `spec:` pin (#5347, the express
+// lane — skipped for a spec-* subdirectory or a run dir holding a manifest.yml);
+// else none.
 function resolveRecords(deps, runDir, worktree) {
   // `parkedAtShaping` (record number -> boolean) is populated for the two
   // header rungs only; the manifest rungs and `unavailable` carry `{}`.
@@ -239,12 +315,12 @@ function resolveRecords(deps, runDir, worktree) {
     parkedAtShaping: Object.fromEntries(entries.map((e) => [e.record, e.parkedAtShaping])),
   });
 
-  const own = headerEntries(deps, path.join(runDir, 'work'));
+  const own = flatEntries(deps, runDir);
   if (own.length) return fromHeaders(own, 'headers');
 
   const mirror = worktreeMirror(runDir, worktree);
   if (mirror && path.resolve(mirror) !== path.resolve(runDir)) {
-    const mirrored = headerEntries(deps, path.join(mirror, 'work'));
+    const mirrored = flatEntries(deps, mirror);
     if (mirrored.length) return fromHeaders(mirrored, 'worktree-headers');
   }
 
@@ -254,6 +330,17 @@ function resolveRecords(deps, runDir, worktree) {
   if (mirror && path.resolve(mirror) !== path.resolve(runDir)) {
     const mirrored2 = manifestRecords(deps, mirror);
     if (mirrored2.length) return { records: mirrored2, source: 'worktree-manifest', parkedAtShaping: {} };
+  }
+
+  // (e) the run dir's config.yml `spec:` pin (#5347) — an express run writes no
+  // header or manifest. Never for a spec-* subdirectory: its config.yml is a
+  // byte copy of the parent's, so `spec:` names the parent's lowest record.
+  // Nor when a manifest.yml is present: an empty or unparseable one is a broken
+  // multi-spec parent, which the pin would hide behind its lowest record — and
+  // an unreadable manifest.yml counts as present, never absent.
+  if (!/^spec-/.test(path.basename(runDir)) && manifestAbsent(deps, runDir)) {
+    const pinned = configRecords(deps, runDir);
+    if (pinned.length) return { records: pinned, source: 'config', parkedAtShaping: {} };
   }
 
   return { records: [], source: 'unavailable', parkedAtShaping: {} };
@@ -403,14 +490,35 @@ const LEDGER_DEFERRED_STAGED_RE = /\bstaged\//;
 const LEDGER_DEFERRED_URL_RE = /\/(?:issues|pull)\/\d+/;
 const LEDGER_DEFERRED_HASH_RE = /#(\d+)/g;
 
+// Whether `text` up to `index` ends in the word `item` and any whitespace — `/\bitem\s*$/i` over
+// `text.slice(0, index)`, walked back by hand: that regex retried at every `item` and rescanned the
+// whole prefix once per `#N` match (quadratic on `'item #1 '.repeat(n)`, .claude/skills/regex-scan-linearity).
+function endsWithItemWord(text, index) {
+  let end = index;
+  while (end > 0 && /\s/.test(text[end - 1])) end -= 1;
+  if (end < 4 || !/^item$/i.test(text.slice(end - 4, end))) return false;
+  return end === 4 || !/\w/.test(text[end - 5]); // the `\b` before `item`
+}
+
 function namesRecordReference(resolution, excludeRecords) {
   if (LEDGER_DEFERRED_URL_RE.test(resolution)) return true;
   for (const m of resolution.matchAll(LEDGER_DEFERRED_HASH_RE)) {
     if (excludeRecords.includes(Number(m[1]))) continue;
-    if (/\bitem\s*$/i.test(resolution.slice(0, m.index))) continue;
+    if (endsWithItemWord(resolution, m.index)) continue;
     return true;
   }
   return false;
+}
+
+// A `deferred` Resolution naming neither a `staged/` path nor a record reference. The one definition
+// behind parseLedger's deferredUnstaged count and stage-item/ledger.js's incomplete-deferral guard.
+// A control-mode console (#4620) settles a row it carried into the acceptance packet with this text;
+// naming the decision fact makes it a complete deferral, like a record reference.
+const LEDGER_CARRIED_RE = /\bcarried to the acceptance packet as decision:\S+/;
+
+function isDeferredUnstaged(resolution, excludeRecords) {
+  if (LEDGER_CARRIED_RE.test(resolution)) return false;
+  return !LEDGER_DEFERRED_STAGED_RE.test(resolution) && !namesRecordReference(resolution, excludeRecords);
 }
 
 // #3004: /build must not park a review minor without a valid `Defer-reason:`
@@ -457,15 +565,14 @@ function parseLedger(text, { excludeRecords = [] } = {}) {
     }
     if (status === 'deferred') {
       const resolution = cells.slice(4).join('|');
-      if (!LEDGER_DEFERRED_STAGED_RE.test(resolution) && !namesRecordReference(resolution, excludeRecords)) {
-        deferredUnstagedItems.push(cells[0]);
-      }
+      if (isDeferredUnstaged(resolution, excludeRecords)) deferredUnstagedItems.push(cells[0]);
     }
     if (phase.toLowerCase() === 'build' && (status === 'deferred' || status === 'open')) {
       const item = cells[2] || '';
       const resolution = cells.slice(4).join('|');
       const reasonLivesElsewhere = LEDGER_DEFERRED_STAGED_RE.test(item) || LEDGER_DEFERRED_STAGED_RE.test(resolution)
-        || LEDGER_SDD_RULING_ITEM_RE.test(item) || namesRecordReference(resolution, excludeRecords);
+        || LEDGER_SDD_RULING_ITEM_RE.test(item) || namesRecordReference(resolution, excludeRecords)
+        || LEDGER_CARRIED_RE.test(resolution); // #4620: the reason lives in the carried decision fact
       if (!reasonLivesElsewhere && !hasValidDeferReason(resolution)) missingDeferReasonItems.push(cells[0]);
     }
   }
@@ -592,6 +699,41 @@ function unblockedLocal(inputs, deps, closed) {
     .map(toSummary);
 }
 
+// #4793: the 'owner/name#N' strings of foreignEntries-shaped entries.
+const foreignRefStrings = (entries) => entries.map((e) => `${e.repository}#${e.number}`);
+
+// A rejected execFile -> its cause, as cross-repo-states.js's failureCause words it:
+// `exit {code}: {first stderr line}` when those fields exist (a promisified execFile error's
+// message is only `Command failed: ...`), else the first message line (a timeout has no code).
+const firstLine = (v) => String(v || '').split('\n').map((l) => l.trim()).find(Boolean) || '';
+function lookupCause(err) {
+  const stderr = firstLine(err && err.stderr);
+  const head = err && typeof err.code === 'number' ? `exit ${err.code}` : firstLine((err && err.message) || err);
+  return stderr ? `${head}: ${stderr}` : head;
+}
+
+// candidates [{ item, refs }] -> the items none of whose foreign refs blocks. ONE
+// resolve-foreign-blockers.js call covers every distinct ref (none, no call). The CLI
+// answers OPEN, CLOSED or null per ref; foreignBlockerBlocks blocks on anything but
+// CLOSED. A failed call or unparseable output throws (a per-ref null state does not:
+// it reads as blocking), so the probe reports ok:false with the cause and nothing is
+// reported unblocked (fail closed, never a silent pass).
+async function dropForeignBlocked(deps, inputs, repoArgs, candidates) {
+  const all = candidates.flatMap((c) => c.refs);
+  if (!all.length) return candidates.map((c) => c.item);
+  const keys = distinctCrossRepoRefs(all).distinct.map(({ key }) => key);
+  let answer;
+  try {
+    const res = await execBounded(deps, 'node', [path.join(BIN, 'resolve-foreign-blockers.js'), keys.join(','), ...repoArgs], inputs.worktree);
+    answer = JSON.parse(String(res.stdout).trim());
+  } catch (err) {
+    throw new Error(`foreign blocker state lookup failed (${lookupCause(err)}) — a body-declared foreign blocker keeps its dependent blocked`);
+  }
+  if (!answer || typeof answer !== 'object' || Array.isArray(answer)) throw new Error('foreign blocker state lookup failed (unparseable output) — a body-declared foreign blocker keeps its dependent blocked');
+  const states = new Map(Object.entries(answer));
+  return candidates.filter((c) => !foreignEntries(c.refs, states).some(foreignBlockerBlocks)).map((c) => c.item);
+}
+
 // The eight probes. Module probes call the exported functions the CLIs already
 // compute from; subprocess probes go through deps.execFile.
 function buildProbes(inputs, deps) {
@@ -633,7 +775,7 @@ function buildProbes(inputs, deps) {
     // --no-suite: a fact pack never re-runs the project's test suite. Suite
     // state belongs to /claude-tweaks:test's verification stamp, which already
     // holds it by the time wrap-up runs; re-running it here costs minutes (on
-    // this repo residue.js's suite probe exceeds both EXEC_OPTS.timeout and
+    // this repo residue.js's suite probe exceeds both the node spawn's 30 s bound and
     // the per-probe race), so every pack-fed residue carries
     // `suite: {ran: false, reason: 'skipped via --no-suite'}` by construction
     // — residue-sweep.md's "Running the sweep" says where the sweep reads
@@ -662,7 +804,7 @@ function buildProbes(inputs, deps) {
       // console shows the PR head's own verdict.
       let ci;
       try {
-        const { stdout: out } = await deps.execFile('node', [path.join(BIN, 'pr-checks.js'), '--pr', String(inputs.pr)], { cwd: inputs.worktree || undefined, ...EXEC_OPTS });
+        const { stdout: out } = await deps.execFile('node', [path.join(BIN, 'pr-checks.js'), '--pr', String(inputs.pr)], { cwd: inputs.worktree || undefined, ...EXEC_OPTS, timeout: execTimeoutMsFor('node') });
         const lines = String(out).split('\n').map((l) => l.trim()).filter(Boolean);
         ci = JSON.parse(lines[lines.length - 1]);
         if (ci === null || typeof ci !== 'object') throw new Error('pr-checks.js output is not a JSON object');
@@ -736,21 +878,40 @@ function buildProbes(inputs, deps) {
         if (!records.length) return [];
         const res = await execBounded(deps, 'node', [path.join(BIN, 'resolve-blockers.js'), records.map((r) => r.number).join(','), ...repoArgs], inputs.worktree);
         const byNumber = JSON.parse(res.stdout.trim());
-        return records.filter((r) => byNumber[r.number] && byNumber[r.number].blockedBy.includes(closed) && !byNumber[r.number].openBlocker).map(toSummary);
+        // #4793 Decisions Q2/Q5: a foreign ref is stripped before the closed
+        // test, and a foreign blocker that is not CLOSED keeps the dependent
+        // blocked. A body-declared foreign blocker (`Blocked by owner/name#N`)
+        // counts under this mode too; a ref already natively linked is not
+        // looked up twice.
+        const candidates = records.filter((r) => {
+          const e = byNumber[r.number];
+          return e && withoutCrossRepoBlockers(e.blockedBy, e.crossRepoBlockers).includes(closed) && !e.openBlocker && !(e.crossRepoBlockers || []).some(foreignBlockerBlocks);
+        }).map((r) => ({
+          item: r,
+          // The empty Map is deliberate: foreignEntries only reshapes the body's refs into entries so
+          // bodyOnlyForeign can drop the natively linked ones; dropForeignBlocked looks up the states.
+          refs: foreignRefStrings(bodyOnlyForeign(byNumber[r.number].crossRepoBlockers || [], foreignEntries(parseCrossRepoDependencies(r.body || ''), new Map()))),
+        }));
+        return (await dropForeignBlocked(deps, inputs, repoArgs, candidates)).map(toSummary);
       }
-      // work-links: body-text — the same two passes unblocked-records.md runs.
+      // work-links: body-text — the same passes unblocked-records.md runs.
       // Pass 1 is `parseDependencies` (the canonical line-anchored `Blocked by
       // #N` parse), pass 2 checks every OTHER blocker is closed too: a
-      // dependent still held by a second open blocker is not unblocked.
+      // dependent still held by a second open blocker is not unblocked, and
+      // pass 3 keeps a dependent blocked while a body-declared foreign
+      // blocker is open or unreadable (#4793). The foreign ref is stripped
+      // before the closed test, because `parseDependencies` only reads
+      // `Blocked by #N`.
       const dependents = records
-        .map((r) => ({ number: r.number, title: r.title, blockedBy: parseDependencies(r.body || '') }))
+        .map((r) => ({ number: r.number, title: r.title, blockedBy: parseDependencies(r.body || ''), foreignRefs: parseCrossRepoDependencies(r.body || '') }))
         .filter((r) => r.blockedBy.includes(closed));
       if (!dependents.length) return [];
       const states = await gh(['issue', 'list', '--state', 'all', '--json', 'number,state', '--limit', '200', ...repoArgs]);
       const stateOf = new Map(JSON.parse(states.stdout).map((i) => [i.number, i.state]));
-      return dependents
+      const candidates = dependents
         .filter((d) => d.blockedBy.every((b) => b === closed || stateOf.get(b) === 'CLOSED'))
-        .map(toSummary);
+        .map((d) => ({ item: d, refs: d.foreignRefs }));
+      return (await dropForeignBlocked(deps, inputs, repoArgs, candidates)).map(toSummary);
     },
   };
 }
@@ -769,6 +930,14 @@ async function gatherPack({ runDir, cwd = process.cwd(), only = null, deps: over
   return pack;
 }
 
+// The run's own record numbers — the `excludeRecords` input the ledger
+// predicates above take (`stage-item/ledger.js`'s checkLedgerStatus/settleRow):
+// the resolveRecords ladder's records, empty when it is `unavailable`.
+function ownRecordNumbers(runDir, worktree) {
+  return resolveRecords(defaultDeps(worktree || process.cwd()), runDir, worktree).records;
+}
+
 module.exports = {
-  gatherPack, resolveInputs, resolveWorktreeBase, wrapProbe, withTimeout, parseLedger, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, worktreeMirror,
+  gatherPack, resolveInputs, resolveWorktreeBase, wrapProbe, withTimeout, parseLedger, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, memberRecords, worktreeMirror,
+  LEDGER_DEFERRED_STAGED_RE, LEDGER_CARRIED_RE, namesRecordReference, isDeferredUnstaged, hasValidDeferReason, ownRecordNumbers, defaultDeps,
 };

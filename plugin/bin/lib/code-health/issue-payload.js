@@ -5,43 +5,7 @@
 const { recordPayload, specShapedBody, isRepoRelativeKeyFilePath } = require('../issues/record');
 const { buildRelatedBlocks } = require('../issues/related-blocks');
 
-// legacy: v1, frozen. Not called by bin/code-health.js (which uses toIssuePayloadV2
-// exclusively) — kept only so its own test file can assert this historical shape
-// never regresses. Do not update this function's footer/labels/marker to match v2.
-function toIssuePayload(finding) {
-  const marker = `<!-- code-health-fingerprint: ${finding.id} -->`;
-  const files = finding.files || [];
-  const filesLine = files.length > 0 ? files.join(', ') : '(no specific file)';
-  const body = [
-    marker,
-    '',
-    `**Lens:** ${finding.lens} | **Severity:** ${finding.severity} | **Confidence:** ${finding.confidence} | **Area:** ${finding.area}`,
-    '',
-    '## Current State',
-    '',
-    `Files: ${filesLine}`,
-    '',
-    finding.evidence,
-    '',
-    '## Deliverables',
-    '',
-    finding.suggestion,
-    '',
-    '## Acceptance Criteria',
-    '',
-    finding.acceptance,
-    '',
-    '_Filed by `/code-health`. Close to resolve; label `wontfix` to suppress future reports of this finding._',
-  ].join('\n');
-
-  return {
-    title: finding.title,
-    body,
-    labels: ['code-health', `code-health:${finding.severity}`],
-  };
-}
-
-// v2: body uses anchor (Current State), suggestedApproach (Deliverables), acceptance (Acceptance Criteria).
+// Body uses anchor (Current State), suggestedApproach (Deliverables), acceptance (Acceptance Criteria).
 // The criterion is not a label — it's already in the body's header line; nothing reads
 // it back off a label, and per-criterion labels are the class that hit GitHub's 100-char cap.
 // Label/marker/type assembly delegates to recordPayload (bin/lib/issues/record.js) — the
@@ -102,4 +66,4 @@ function toIssuePayloadV2(finding, verifiedAsOf) {
   });
 }
 
-module.exports = { toIssuePayload, toIssuePayloadV2 };
+module.exports = { toIssuePayloadV2 };

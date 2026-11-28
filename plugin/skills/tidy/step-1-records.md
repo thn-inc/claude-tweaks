@@ -169,9 +169,9 @@ Release Note are the main thread's (`release-note-repair.md`), never this agent'
 
 ### Shape 5 — `bot:blocked` needing re-triage
 
-`isBotBlocked(record)` (`bin/lib/issues/record-buckets.js`; `work-backend: github-issues` only — the local driver's `facets.bot.blocked` is always `false`, per `facet-shape.js`'s shared defaults, so this predicate never fires there). The record hit its retry ceiling (`_shared/issue-claims.md`, `dispatch/SKILL.md`'s Settle step), or a plan-review question awaits an answer (`<!-- plan-review-question -->` comment, `build/plan-review.md`) — answer on the record body first — and needs a human's renewed judgment at `/claude-tweaks:backlog refine` before it can re-enter the autonomous queue.
+`isBotBlocked(record)` (`bin/lib/issues/record-buckets.js`; `work-backend: github-issues` only — the local driver's `facets.bot.blocked` is always `false`, per `facet-shape.js`'s shared defaults, so this predicate never fires there). The record hit its retry ceiling (`_shared/issue-claims.md`, `dispatch/SKILL.md`'s Settle step) and needs a human's renewed judgment at `/claude-tweaks:backlog refine` before it can re-enter the autonomous queue. A plan-review question is `needs:answer`, not this shape.
 
-→ Collect each as: `[blocked] {title} — {hit its retry ceiling | plan-review question awaits an answer} — re-authorize at /claude-tweaks:backlog refine`
+→ Collect each as: `[blocked] {title} — hit its retry ceiling — re-authorize at /claude-tweaks:backlog refine`
 
 ### Shape 5.5 — record carries a retired taxonomy label
 
@@ -216,7 +216,7 @@ aggressiveness tier (`step-6-auto.md`'s **Legacy taxonomy** row), exactly like S
 
 ### Shape 6 — flagged code demonstrably gone
 
-Not scanned here. This is Step 4.8's code-health/harness-health/journey-health/docs-health issue judgment (`_shared/github-pr-scan.md`'s `repo-wide` scope, items 3/5/6/7) — unchanged by this merge. It's listed in this file only so the finding shapes the record-scan design replaces (former Steps 1 and 2, plus former Step 4.8's backlog-issue item) stay documented in one place; the mechanics that actually judge "is the flagged code gone" continue to live where they already did.
+Not scanned here. This is Step 4.8's code-health/harness-health/journey-health/docs-health/ci-health issue judgment (`_shared/github-pr-scan.md`'s `repo-wide` scope, items 3/5/6/7) — unchanged by this merge. It's listed in this file only so the finding shapes the record-scan design replaces (former Steps 1 and 2, plus former Step 4.8's backlog-issue item) stay documented in one place; the mechanics that actually judge "is the flagged code gone" continue to live where they already did.
 
 ### Shape 7 — decomposition parent gate due
 
@@ -312,13 +312,13 @@ node -e "
     .forEach((f) => {
       if (f.closed) {
         const v = closedParentGap({ parentLabels: f.parentLabels, stateReason: f.notPlanned ? 'NOT_PLANNED' : undefined, belowFloorClose: f.belowFloorClose, subIssues: f.subIssues, riskFloor });
-        if (v === 'gap') console.log(f.path + '\t[acceptance-gap] ' + f.id + ': ' + f.title + ' — closed with no acceptance disposition — recommend /claude-tweaks:demo ' + f.id);
+        if (v === 'gap') console.log(f.path + '\t[acceptance-gap] ' + f.id + ': ' + f.title + ' — closed with no acceptance disposition — recommend /claude-tweaks:accept ' + f.id);
         else if (v !== 'none') bad[v] = (bad[v] || 0) + 1;
         return;
       }
       if (parentGateState({ subIssues: f.subIssues, parentLabels: f.parentLabels }) !== 'due') return;
       console.log(f.path + '\t[parent-gate] ' + f.id + ': ' + f.title + (exceedsOversightFloor({ risk: maxRiskTier(f.subIssues) }, { riskFloor, sizeFloor: null }).exceeds
-        ? ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo ' + f.id
+        ? ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:accept ' + f.id
         : ' — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)'));
     });
   for (const v in bad) console.error('WARNING: ' + bad[v] + ' closed parent(s) print no [acceptance-gap] row (' + v + ') — risk unreadable; check the sub-issue records\' parent facet, then re-run.');
@@ -333,20 +333,20 @@ The `queryRecords` shapes are deliberate. `{ isParentIssue: true }` returns **op
 (closed records are excluded unless the filter names `closed`), and mirrors the `github-issues`
 scope's `--state open` fetch. `{ isParentIssue: true, closed: true }` adds the parents closed in the
 last 30 days, keeping one whose `closedAt` is missing or unparseable: a parent closed by hand never
-passed through `/claude-tweaks:demo` or **Close the parent below the floor**, so `closedParentGap`
+passed through `/claude-tweaks:accept` or **Close the parent below the floor**, so `closedParentGap`
 (`acceptance.js`, which holds the reasoning) judges it. The parent's `## Closed below the oversight
 floor` body section is #4466's marker. The sub-issue listing is the open+closed two-call
 merge: one call alone drops every closed sub-issue, exactly the ones that make
 a gate due. No fetch-limit or truncation warning applies, unlike the API-paging twin —
 `queryRecords` reads the whole `specs/` directory every call.
 
-→ Collect each as: `[parent-gate] {id}: {title} — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo {id}`, or below the floor: `[parent-gate] {id}: {title} — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)`, or, for a hand-closed parent above the floor: `[acceptance-gap] {id}: {title} — closed with no acceptance disposition — recommend /claude-tweaks:demo {id}`
+→ Collect each as: `[parent-gate] {id}: {title} — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:accept {id}`, or below the floor: `[parent-gate] {id}: {title} — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)`, or, for a hand-closed parent above the floor: `[acceptance-gap] {id}: {title} — closed with no acceptance disposition — recommend /claude-tweaks:accept {id}`
 
 Severity `info` — with several open decompositions this is a standing backlog, not a defect
 count, and tidy reads a row's severity as recommendation urgency, so any tier above `info` would
 overstate it (the same tier and reason as its `github-issues` twin). The recommendation is the `Open parent gate` action, staged at every
 aggressiveness tier and never writing `demo:approved`/`demo:changes-requested`, which is why an
-above-floor row still ends with `/claude-tweaks:demo {id}`; `actions-local-files.md`'s `## Open parent gate`
+above-floor row still ends with `/claude-tweaks:accept {id}`; `actions-local-files.md`'s `## Open parent gate`
 and `step-6-auto.md`'s row carry that action's execution, its staging reasoning, and what it
 does not cover.
 
@@ -423,7 +423,7 @@ node -e "
       // spine), so it maps onto NOT_PLANNED only; there is no local-files DUPLICATE case.
       stateReason: r.facets.notPlanned ? 'NOT_PLANNED' : undefined,
     }))
-    .forEach((r) => console.log(r.path + '\t[acceptance-gap] ' + r.id + ': ' + r.title + ' — closed with no acceptance disposition — recommend /claude-tweaks:demo ' + r.id));
+    .forEach((r) => console.log(r.path + '\t[acceptance-gap] ' + r.id + ': ' + r.title + ' — closed with no acceptance disposition — recommend /claude-tweaks:accept ' + r.id));
 " -- "$RISK_FLOOR" "$SIZE_FLOOR"
 ```
 
@@ -451,13 +451,13 @@ counterpart cannot. The population this shape actually catches skews toward exac
 untimestamped set — `closeRecord`-closed records (the common path) always get a timestamp and so
 are excluded past 30 days like the other driver.
 
-→ Collect each as: `[acceptance-gap] {id}: {title} — closed with no acceptance disposition — recommend /claude-tweaks:demo {id}`
+→ Collect each as: `[acceptance-gap] {id}: {title} — closed with no acceptance disposition — recommend /claude-tweaks:accept {id}`
 
 Severity `info` — the same tier and the same reason as its `github-issues` twin: on a project that
 closes records ad hoc this is a standing backlog rather than a defect count, and tidy reads a
 row's severity as recommendation urgency, so any tier above `info` would overstate a standing
 backlog. Unlike Shape 7, the recommendation is **not** one of the Action Vocabulary's atomic actions —
-this shape mutates nothing at all, on either driver. It recommends `/claude-tweaks:demo {id}` and
+this shape mutates nothing at all, on either driver. It recommends `/claude-tweaks:accept {id}` and
 stops there, because disposing a closed record is a human judgment about whether shipped work
 solved the problem. It is staged at every aggressiveness tier for that reason (`step-6-auto.md`'s
 Acceptance-gap row, which covers both drivers), the auto-mode contract keeping that judgment off

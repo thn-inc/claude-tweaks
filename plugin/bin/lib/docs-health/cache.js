@@ -22,7 +22,18 @@ const core = createCache('docs-health');
 // here (not just the local gitignored cache), so it survives a scheduled
 // Routine's fresh, stateless container. See bin/lib/health-core/mark.js's
 // own header comment and bin/docs-health.js's cmdMark wiring.
-const durable = createDurableState('docs-health', { includeRemembered: true, includeDeclined: true });
+// createDurable({ env, stderr }) builds the durable-state accessors with an
+// injected child-git environment and stderr sink (#5381) — an in-process caller
+// passes its own; the module-level exports below are bound to createDurable()
+// (inherited env, process.stderr).
+function createDurable({ env, stderr } = {}) {
+  const state = createDurableState('docs-health', {
+    includeRemembered: true, includeDeclined: true, env, stderr,
+  });
+  return { readDurableState: state.readState, writeDurableState: state.writeState };
+}
+
+const durable = createDurable();
 
 // Pure: computes the next durable-state object for a validate-findings run.
 // current: { cursors, remembered, retryQueue, runs } — the current durable
@@ -67,7 +78,8 @@ module.exports = {
   cachePath: core.cachePath,
   readCache: core.readCache,
   writeCache: core.writeCache,
-  readDurableState: durable.readState,
-  writeDurableState: durable.writeState,
+  createDurable,
+  readDurableState: durable.readDurableState,
+  writeDurableState: durable.writeDurableState,
   buildValidateFindingsUpdate,
 };

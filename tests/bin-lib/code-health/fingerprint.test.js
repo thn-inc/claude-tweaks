@@ -1,46 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { fingerprint, normalizeSignature } = require('../../../plugin/bin/lib/code-health/fingerprint');
+const { fingerprint, normalizeAnchor } = require('../../../plugin/bin/lib/code-health/fingerprint');
 const { fingerprintFromBasis } = require('../../../plugin/bin/lib/health-core/fingerprint');
-
-test('fingerprint returns a codehealth-<8hex> id', () => {
-  const id = fingerprint({ lens: 'todo-comments', areaId: '.', signature: 'TODO x', file: 'a.js:12' });
-  assert.match(id, /^codehealth-[0-9a-f]{8}$/);
-});
-
-// REGRESSION (PORT.md delta #1): a cosmetic line move must NOT mint a new id.
-test('fingerprint is stable when the finding moves lines or columns', () => {
-  const a = fingerprint({ lens: 'todo-comments', areaId: '.', signature: 'TODO wire it up', file: 'src/a.js:12' });
-  const b = fingerprint({ lens: 'todo-comments', areaId: '.', signature: 'TODO wire it up', file: 'src/a.js:480:6' });
-  assert.strictEqual(a, b, 'line/col in file must be stripped before hashing');
-});
-
-// REGRESSION: signature whitespace/case/line refs are normalized.
-test('fingerprint is stable across whitespace, case, and embedded line refs in signature', () => {
-  const a = fingerprint({ lens: 'oversized-file', areaId: 'apps/web', signature: 'src/Foo.ts:12  has 900 lines' });
-  const b = fingerprint({ lens: 'oversized-file', areaId: 'apps/web', signature: 'SRC/FOO.TS:401 HAS   900 LINES' });
-  assert.strictEqual(a, b);
-});
-
-test('fingerprint differs when lens or area differs', () => {
-  const base = { areaId: '.', signature: 'TODO x', file: 'a.js:1' };
-  assert.notStrictEqual(
-    fingerprint({ ...base, lens: 'todo-comments' }),
-    fingerprint({ ...base, lens: 'dead-export' }),
-  );
-  assert.notStrictEqual(
-    fingerprint({ lens: 'todo-comments', areaId: 'a', signature: 'TODO x' }),
-    fingerprint({ lens: 'todo-comments', areaId: 'b', signature: 'TODO x' }),
-  );
-});
-
-test('normalizeSignature strips line refs, collapses whitespace, lowercases', () => {
-  assert.strictEqual(normalizeSignature('Foo.ts:12:3  Bar   BAZ'), 'foo.ts bar baz');
-});
-
-// ── v2 fingerprint ─────────────────────────────────────────────────────────
-
-const { normalizeAnchor } = require('../../../plugin/bin/lib/code-health/fingerprint');
 
 test('normalizeAnchor lowercases path, strips :line and :line:col on either side of #', () => {
   // symbol side must not be stripped — only :line(:col) artifacts
@@ -93,28 +54,31 @@ test('v2 fingerprint differs when criterion, areaId, or anchor differs', () => {
   );
 });
 
-// REGRESSION: both v1 and v2 branches must delegate to health-core's shared
+// REGRESSION: fingerprint must delegate to health-core's shared
 // fingerprintFromBasis primitive (the same one harness-health/journey-health/
 // docs-health use), not a hand-rolled inline sha1 — so a future change to the
 // id format lands in one place instead of code-health's copy silently
 // drifting out of sync.
-test('v1 fingerprint is byte-identical to fingerprintFromBasis(\'codehealth\', [lens, areaId, normFile, normalizeSignature(signature)])', () => {
-  const args = { lens: 'todo-comments', areaId: 'src', signature: 'TODO fix this', file: 'src/a.js:12' };
-  const expected = fingerprintFromBasis('codehealth', ['todo-comments', 'src', 'src/a.js', normalizeSignature('TODO fix this')]);
-  assert.strictEqual(fingerprint(args), expected);
-});
-
 test('v2 fingerprint is byte-identical to fingerprintFromBasis(\'codehealth\', [criterion, areaId, normalizeAnchor(anchor)])', () => {
   const args = { criterion: 'simplification', areaId: 'src/api', anchor: 'src/api/user.js#getUser' };
   const expected = fingerprintFromBasis('codehealth', ['simplification', 'src/api', normalizeAnchor('src/api/user.js#getUser')]);
   assert.strictEqual(fingerprint(args), expected);
 });
 
-test('v1 and v2 forms coexist — same module, both callable', () => {
-  const v1 = fingerprint({ lens: 'todo-comments', areaId: '.', signature: 'TODO x', file: 'a.js:1' });
-  const v2 = fingerprint({ criterion: 'bad-practice', areaId: '.', anchor: 'a.js#TODO x' });
-  assert.match(v1, /^codehealth-[0-9a-f]{8}$/);
-  assert.match(v2, /^codehealth-[0-9a-f]{8}$/);
-  // They hash different inputs, so they should differ (unless astronomically unlucky).
-  assert.notStrictEqual(v1, v2);
+// The id is persisted in filed issue markers and dedup keys on it, so these
+// literals were captured before the v1 branch was deleted (#5536) and must
+// never be recomputed to follow a change — a change here forks dedup.
+test('fingerprint v2 ids are pinned literals — the id is persisted in issue markers and dedup keys on it (#5536)', () => {
+  assert.strictEqual(
+    fingerprint({ criterion: 'simplification', areaId: 'src/api', anchor: 'src/api/user.js#getUser' }),
+    'codehealth-a7f87202',
+  );
+  assert.strictEqual(
+    fingerprint({ criterion: 'dead-code', areaId: 'src', anchor: 'src/util.js:42#trimPath' }),
+    'codehealth-a46a4581',
+  );
+  assert.strictEqual(
+    fingerprint({ criterion: 'bad-practice', areaId: '.', anchor: 'a.js#TODO x' }),
+    'codehealth-678965af',
+  );
 });

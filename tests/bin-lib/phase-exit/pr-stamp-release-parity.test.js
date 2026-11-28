@@ -107,7 +107,7 @@ function scenarioFixture(s) {
 }
 
 const gatePush = (wt, branch, runDir, state) => pre.run(
-  { input: { tool_name: 'Bash', tool_input: { command: `git push origin ${branch}` }, cwd: wt }, runDir, runState: state, cwd: wt },
+  { env: process.env, input: { tool_name: 'Bash', tool_input: { command: `git push origin ${branch}` }, cwd: wt }, runDir, runState: state, cwd: wt },
   { resolveIntegrationModel: () => 'pr-first' },
 );
 const isDenied = (out) => Boolean(out.json && out.json.hookSpecificOutput && out.json.hookSpecificOutput.permissionDecision === 'deny');

@@ -2,6 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync, spawnSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -13,7 +14,7 @@ const { readText } = require('../../helpers/read-skill');
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'harness-health-override-scan.js');
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'harness-health-override-bypass-')); }
+function tmp() { return scratchDir('harness-health-override-bypass-'); }
 
 function writeEvents(runDir, events) {
   fs.mkdirSync(runDir, { recursive: true });

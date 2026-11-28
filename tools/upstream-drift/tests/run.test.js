@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const { scratchDir } = require('../../../tests/helpers/tmp-dir');
 const path = require('node:path');
 const os = require('node:os');
 
@@ -20,7 +21,7 @@ const {
 } = require('../run');
 
 function tmpDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'upstream-drift-run-'));
+  return scratchDir('upstream-drift-run-');
 }
 
 // A fully-green evaluation, used as the base that individual tests break in

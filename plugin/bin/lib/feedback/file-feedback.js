@@ -50,8 +50,21 @@ function errorText(err) {
 // lifecycle file's Step 2 note) — a bare 403/429 here is never retried.
 const TRANSIENT_RE = /\b5\d\d\b|timeout|ETIMEDOUT|ECONNRESET|econnreset|socket hang up|could not connect|network error/i;
 
+// The classifier never reads the argv. execFileSync's message is `Command failed: {argv}` with
+// stderr appended, and the argv carries the caller's `--title`, so a title naming "HTTP 500" or
+// "timeout" would turn a deterministic refusal into a retry. Drop that first line and keep the
+// rest, plus stderr, stdout and the error code (ETIMEDOUT on a timeout kill). An injected runner's
+// own message, with no such prefix, is read whole. A title holding a newline would leave its tail
+// in the kept text: a residual this classifier accepts.
+function classifierText(err) {
+  if (!err || typeof err !== 'object') return String(err);
+  const message = typeof err.message === 'string' ? err.message.replace(/^Command failed:[^\n]*\n?/, '') : '';
+  const parts = [message, err.stderr, err.stdout, err.code].filter(Boolean).map(String);
+  return parts.join(' ');
+}
+
 function isTransientFailure(err) {
-  return TRANSIENT_RE.test(errorText(err));
+  return TRANSIENT_RE.test(classifierText(err));
 }
 
 // Same synchronous-sleep trick as bin/lib/file-lock.js's sleepSync.

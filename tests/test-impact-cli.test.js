@@ -114,8 +114,9 @@ test('buildMap counts a .lost marker and names its test, and still counts one wh
 // ---- fakes ----
 
 // A fake git answering the calls the CLI makes from `root`; `ancestors` are the shas that are
-// ancestors of HEAD, `status` is `git status --porcelain` output. Records every call.
-function fakeGit({ root, commonDir = path.join(root, '.git'), head = SHA_C, ancestors = [], status = '' }) {
+// ancestors of HEAD, `status` is `git status --porcelain` output, `pairs` are "{older} {newer}" strings for
+// which `merge-base --is-ancestor older newer` succeeds (any newer other than HEAD). Records every call.
+function fakeGit({ root, commonDir = path.join(root, '.git'), head = SHA_C, ancestors = [], pairs = [], status = '' }) {
   const calls = [];
   const git = (args, opts) => {
     calls.push({ args, cwd: opts && opts.cwd });
@@ -125,7 +126,8 @@ function fakeGit({ root, commonDir = path.join(root, '.git'), head = SHA_C, ance
     if (a === 'rev-parse --verify HEAD^{commit}') return `${head}\n`;
     if (args.includes('status')) return status;
     if (args[0] === 'merge-base') {
-      if (ancestors.includes(args[args.length - 2])) return '';
+      const [older, newer] = args.slice(-2);
+      if (newer !== 'HEAD' ? pairs.includes(`${older} ${newer}`) : ancestors.includes(older)) return '';
       throw Object.assign(new Error('not an ancestor'), { status: 1 });
     }
     throw new Error(`unexpected git ${a}`);
@@ -209,7 +211,7 @@ test('trace runs the suite under the tracer env and writes the map, recording a 
     assert.strictEqual(listenerTotal(signals), 0, 'a finished run leaves no signal handler');
     const req = requireOption(path.join(dir, 'tools', 'test-impact', 'tracer.js'));
     assert.strictEqual(seen.cmd, process.execPath);
-    assert.deepStrictEqual(seen.args, [path.join(dir, 'tools', 'run-tests.js')]);
+    assert.deepStrictEqual(seen.args, [path.join(dir, 'tools', 'run-tests.js'), '--full']);
     assert.strictEqual(seen.opts.cwd, dir);
     assert.strictEqual(seen.opts.env.NODE_OPTIONS, `--max-old-space-size=4096 ${req}`);
     assert.strictEqual(seen.opts.env.CT_TRACE_REQUIRE, req);
@@ -514,6 +516,83 @@ test('fetch replaces a cached dirty map at the chosen commit', async () => {
   });
 });
 
+// A cached map at SHA_B that descends from the chosen CI commit SHA_A (HEAD is SHA_C).
+async function fetchWithCached({ cached, ancestors = [SHA_A, SHA_B], pairs = [`${SHA_A} ${SHA_B}`], wrapGit }) {
+  return withTempDirAsync(async (dir) => {
+    const base = fakeGit({ root: dir, ancestors, pairs });
+    const git = wrapGit ? wrapGit(base) : base;
+    const gh = fakeGh({ runs: [{ databaseId: 6, headSha: SHA_A }], download: { 6: mapText(SHA_A) } });
+    const out = path.join(dir, 'map.json');
+    fs.writeFileSync(out, cached);
+    const { deps, out: lines, errs } = makeDeps({ git, gh, cwd: dir });
+    const code = await run({ argv: ['fetch', '--out', out], deps });
+    return { code, git: base, gh, lines, errs, text: fs.readFileSync(out, 'utf8'), out };
+  });
+}
+const downloads = (r) => r.gh.calls.filter((c) => c[1] === 'download').length;
+
+test('fetch keeps a clean passing cached map that descends from the CI commit and is an ancestor of HEAD', async () => {
+  const r = await fetchWithCached({ cached: mapText(SHA_B) });
+  assert.strictEqual(r.code, 0);
+  assert.strictEqual(downloads(r), 0, 'no gh run download');
+  assert.strictEqual(r.text, mapText(SHA_B));
+  assert.strictEqual(r.lines.length, 1);
+  assert.strictEqual(r.lines[0], `fetch: cached map at ${SHA_B} descends from CI map ${SHA_A}, kept → ${r.out}`);
+  assert.deepStrictEqual(r.git.calls.filter((c) => c.args[0] === 'merge-base').slice(-2).map((c) => c.args), [
+    ['merge-base', '--is-ancestor', '--end-of-options', SHA_A, SHA_B],
+    ['merge-base', '--is-ancestor', '--end-of-options', SHA_B, 'HEAD'],
+  ]);
+});
+
+test('fetch replaces a descending cached map that is dirty', async () => {
+  const r = await fetchWithCached({ cached: mapText(SHA_B, 0, true) });
+  assert.strictEqual(r.code, 0);
+  assert.strictEqual(downloads(r), 1);
+  assert.strictEqual(r.text, mapText(SHA_A));
+});
+
+test('fetch replaces a descending cached map from a failing suite', async () => {
+  const r = await fetchWithCached({ cached: mapText(SHA_B, 1) });
+  assert.strictEqual(r.code, 0);
+  assert.strictEqual(downloads(r), 1);
+  assert.strictEqual(r.text, mapText(SHA_A));
+});
+
+test('fetch replaces an unparseable cached map instead of throwing on its missing map', async () => {
+  const r = await fetchWithCached({ cached: 'not a map' });
+  assert.strictEqual(r.code, 0);
+  assert.strictEqual(downloads(r), 1);
+  assert.strictEqual(r.text, mapText(SHA_A));
+});
+
+test('fetch replaces a cached map on a diverged line (the CI commit is not its ancestor)', async () => {
+  const r = await fetchWithCached({ cached: mapText(SHA_B), pairs: [] });
+  assert.strictEqual(r.code, 0);
+  assert.strictEqual(downloads(r), 1);
+  assert.strictEqual(r.text, mapText(SHA_A));
+});
+
+test('fetch replaces a descending cached map that is not an ancestor of HEAD', async () => {
+  const r = await fetchWithCached({ cached: mapText(SHA_B), ancestors: [SHA_A] });
+  assert.strictEqual(r.code, 0);
+  assert.strictEqual(downloads(r), 1);
+  assert.strictEqual(r.text, mapText(SHA_A));
+});
+
+test('fetch replaces a cached map whose ancestry check makes git error, without exiting non-zero', async () => {
+  for (const failing of [(a) => a[a.length - 1] === SHA_B, (a) => a[a.length - 2] === SHA_B]) {
+    const wrapGit = (base) => (args, opts) => {
+      if (args[0] === 'merge-base' && failing(args)) throw new Error('fatal: bad object');
+      return base(args, opts);
+    };
+    const r = await fetchWithCached({ cached: mapText(SHA_B), wrapGit });
+    assert.strictEqual(r.code, 0);
+    assert.strictEqual(downloads(r), 1);
+    assert.strictEqual(r.text, mapText(SHA_A));
+    assert.deepStrictEqual(r.errs, []);
+  }
+});
+
 test('fetch exits 1 on a downloaded map traced from a dirty tree, leaving the cache alone', async () => {
   await withTempDirAsync(async (dir) => {
     const git = fakeGit({ root: dir, ancestors: [SHA_A] });
@@ -617,6 +696,9 @@ function traceFixture(tmp, runTests) {
   for (const dir of ['tests', 'lib', path.join('tools', 'test-impact')]) fs.mkdirSync(path.join(root, dir), { recursive: true });
   for (const dir of ['slots', 'tmp']) fs.mkdirSync(path.join(tmp, dir));
   fs.copyFileSync(path.join(ROOT, 'tools', 'run-tests.js'), path.join(root, 'tools', 'run-tests.js'));
+  // run-tests.js requires the slot-lock module relative to itself, so the fixture carries it too.
+  fs.mkdirSync(path.join(root, 'plugin', 'bin', 'lib'), { recursive: true });
+  fs.copyFileSync(path.join(ROOT, 'plugin', 'bin', 'lib', 'suite-slot.js'), path.join(root, 'plugin', 'bin', 'lib', 'suite-slot.js'));
   if (runTests) fs.writeFileSync(path.join(root, 'tools', 'run-tests.js'), runTests);
   fs.copyFileSync(path.join(ROOT, 'tools', 'test-impact', 'tracer.js'), path.join(root, 'tools', 'test-impact', 'tracer.js'));
   const fixture = path.join(ROOT, 'tests', 'fixtures', 'test-impact');
@@ -742,7 +824,7 @@ test('the test-impact-map workflow uploads the artifact fetch downloads, traced 
   assert.deepStrictEqual(missingWorkflowFacts(text), []);
   assert.doesNotMatch(text, /^\s*run:.*--allow-dirty/m, 'CI traces a fresh checkout; --allow-dirty would hide a dirtied tree');
   // The exit-code check runs after the upload, so a red-suite map is still uploaded for inspection.
-  assert.ok(text.indexOf('uses: actions/upload-artifact@v4') < text.indexOf('- name: Fail the run when the traced suite failed'),
+  assert.ok(text.indexOf('uses: actions/upload-artifact@v7') < text.indexOf('- name: Fail the run when the traced suite failed'),
     'the exit-code check must follow the upload');
   // Run the check's own command line: exit 0 for a green map, 1 for a red one.
   const line = text.split('\n').find((l) => /^ {10}node -e "const m = require/.test(l)).trim();

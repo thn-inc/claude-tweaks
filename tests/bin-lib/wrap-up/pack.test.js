@@ -1,18 +1,19 @@
 'use strict';
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('node:os');
 const { readText } = require('../../helpers/read-skill');
 
 const {
-  gatherPack, resolveInputs, resolveWorktreeBase, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, parseLedger,
+  gatherPack, resolveInputs, resolveWorktreeBase, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, memberRecords, parseLedger, namesRecordReference, isDeferredUnstaged,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'wrap-up', 'pack.js'));
 
 // A fixture run dir: run-state.json (pr + worktree), one materialized header, config.yml.
 function fixtureRunDir({ withPr = true, records = [1535] } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-'));
+  const dir = scratchDir('wrap-up-pack-');
   const state = { worktree: '/w/tree', status: 'active', sessionId: 's' };
   if (withPr) state.pr = { number: 1901, url: 'https://x/pull/1901', branch: 'b' };
   fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify(state));
@@ -26,8 +27,8 @@ function fixtureRunDir({ withPr = true, records = [1535] } = {}) {
 // worktree's mirror of the same `.claude-tweaks/pipelines/{run}` path — the
 // real pr-first shape, where the headers are committed on the feature branch.
 function mirrorFixture({ records = [1930], runName = '2026-09-06T000000-record-1930', alsoInMain = false } = {}) {
-  const main = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-main-'));
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
+  const main = scratchDir('wrap-up-pack-main-');
+  const tree = scratchDir('wrap-up-pack-tree-');
   const rel = path.join('.claude-tweaks', 'pipelines', runName);
   const runDir = path.join(main, rel);
   fs.mkdirSync(runDir, { recursive: true });
@@ -119,7 +120,7 @@ const OPEN_REVIEW_LEDGER = `${LEDGER_HEAD}| 1 | review | a | open | — |`;
 // A worktree whose docs/plans/ holds the given {name: text} ledgers, plus a
 // run dir whose run-state.json points at that worktree.
 function treeWithLedgers(files, { records = [1535] } = {}) {
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
+  const tree = scratchDir('wrap-up-pack-tree-');
   fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
   for (const [name, text] of Object.entries(files)) fs.writeFileSync(path.join(tree, 'docs', 'plans', name), text);
   const runDir = fixtureRunDir({ records });
@@ -275,7 +276,7 @@ test('resolveInputs (a): the run dir\'s own headers win over the worktree mirror
 });
 
 test('resolveInputs (c): a parent multi-spec run dir resolves records from manifest.yml plus spec-*/work headers, and record stays null (#1930 review C1)', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-multi-'));
+  const dir = scratchDir('wrap-up-pack-multi-');
   fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ worktree: '/w/tree' }));
   fs.writeFileSync(path.join(dir, 'manifest.yml'), [
     'multispec:', '  parent: 1904', '  specs:',
@@ -297,8 +298,8 @@ test('resolveRecords rung (c) worktree-mirrors spec-*/work headers when the main
   // feature branch, so it exists only inside the worktree's own working tree —
   // never in the main-checkout run dir --run anchors to. Observed live on
   // run 2026-09-14T000308-record-2283-2338 (#2391's Current State).
-  const main = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-rungc-main-'));
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-rungc-tree-'));
+  const main = scratchDir('wrap-up-pack-rungc-main-');
+  const tree = scratchDir('wrap-up-pack-rungc-tree-');
   const rel = path.join('.claude-tweaks', 'pipelines', '2026-09-14T000308-record-2283-2338');
   const runDir = path.join(main, rel);
   fs.mkdirSync(runDir, { recursive: true });
@@ -322,7 +323,7 @@ test('resolveRecords rung (c) worktree-mirrors spec-*/work headers when the main
 });
 
 test('resolveRecords rung (c): the main-checkout run dir\'s own spec-*/work headers still win over the worktree mirror (#2391 — preserves the existing single-record/no-worktree case)', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-rungc-own-'));
+  const dir = scratchDir('wrap-up-pack-rungc-own-');
   fs.mkdirSync(path.join(dir, 'spec-1', 'work'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'spec-1', 'work', '1-spec.md'), '---\nrecord: 1\n---\n');
   const deps = { readFile: (p) => fs.readFileSync(p, 'utf8'), readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } } };
@@ -334,7 +335,7 @@ test('resolveRecords rung (c): the main-checkout run dir\'s own spec-*/work head
 test('pack.js exports resolveRecords (and headerRecords) so console/resolve.js can share the ladder instead of copying it (#2028)', () => {
   assert.strictEqual(typeof resolveRecords, 'function');
   assert.strictEqual(typeof headerRecords, 'function');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-export-'));
+  const dir = scratchDir('wrap-up-pack-export-');
   fs.writeFileSync(path.join(dir, 'manifest.yml'), [
     'multispec:', '  parent: 1904', '  specs:',
     '    - id: 1930', '      status: complete', '      subdir: spec-1930',
@@ -348,16 +349,122 @@ test('pack.js exports resolveRecords (and headerRecords) so console/resolve.js c
 });
 
 test('resolveInputs: no headers anywhere and no manifest → records [] and sources.records unavailable (#1930 review C1)', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-bare-'));
+  const dir = scratchDir('wrap-up-pack-bare-');
   fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ worktree: '/w/tree' }));
   const inputs = resolveInputs({ runDir: dir, cwd: '/w/tree', deps: okDeps() });
   assert.deepStrictEqual(inputs.records, []);
   assert.strictEqual(inputs.record, null);
   assert.strictEqual(inputs.sources.records, 'unavailable');
+  assert.strictEqual(inputs.closingRecords, null, '#4108: no records resolved is no decision, not an empty closing set');
+});
+
+// #5347: an express run writes no materialized header or manifest; its record
+// is the `spec:` line the lane's step 7 pins into the run dir's config.yml.
+function configOnlyRunDir(configText, name = 'wrap-up-pack-config-') {
+  const dir = scratchDir(name);
+  fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ worktree: '/w/tree' }));
+  if (configText !== null) fs.writeFileSync(path.join(dir, 'config.yml'), configText);
+  return dir;
+}
+
+test('AC2.1: an express run dir (config.yml spec:, no header or manifest) resolves its record from the config rung and the claim probe is ok', async () => {
+  const runDir = configOnlyRunDir('spec: 5338\nceremony-profile: fast-lane\nintegration-model: pr-first\n');
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps: okDeps() });
+  assert.deepStrictEqual(inputs.records, [5338]);
+  assert.strictEqual(inputs.sources.records, 'config');
+  assert.deepStrictEqual(inputs.closingRecords, []);
+  const pack = await gatherPack({ runDir, cwd: '/w/tree', only: ['claim'], deps: okDeps() });
+  assert.strictEqual(pack.claim.ok, true);
+  assert.deepStrictEqual(pack.claim.value, { 5338: { state: 'live', reclaimable: false, via: 'git' } });
+});
+
+test('AC3.1: a config.yml with no valid spec: still leaves records unresolved', async () => {
+  for (const config of ['', 'spec: 0\n', 'spec: abc\n', 'spec: 12x\n']) {
+    const runDir = configOnlyRunDir(config);
+    const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps: okDeps() });
+    assert.strictEqual(inputs.sources.records, 'unavailable', JSON.stringify(config));
+    assert.deepStrictEqual(inputs.records, [], JSON.stringify(config));
+    const pack = await gatherPack({ runDir, cwd: '/w/tree', only: ['claim'], deps: okDeps() });
+    assert.strictEqual(pack.claim.ok, false, JSON.stringify(config));
+    assert.match(pack.claim.error, /^records unresolved — no materialized header or manifest found$/, JSON.stringify(config));
+  }
+});
+
+test('the config rung is last: a header wins over config.yml spec:', () => {
+  const runDir = fixtureRunDir();
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'spec: 9999\n');
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps: okDeps() });
+  assert.deepStrictEqual(inputs.records, [1535]);
+  assert.strictEqual(inputs.sources.records, 'headers');
+});
+
+test('the config rung is last: a worktree-mirror header wins over config.yml spec:', () => {
+  const { runDir } = mirrorFixture();
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'spec: 9999\n');
+  const inputs = resolveInputs({ runDir, cwd: '/nowhere', deps: okDeps() });
+  assert.deepStrictEqual(inputs.records, [1930]);
+  assert.strictEqual(inputs.sources.records, 'worktree-headers');
+});
+
+test('the config rung never runs when the run dir holds a manifest.yml, even an empty one', () => {
+  const runDir = configOnlyRunDir('spec: 1930\n');
+  fs.writeFileSync(path.join(runDir, 'manifest.yml'), '');
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps: okDeps() });
+  assert.strictEqual(inputs.sources.records, 'unavailable');
+  assert.deepStrictEqual(inputs.records, []);
+});
+
+test('the config rung is last: a manifest wins and closingRecords stays empty', () => {
+  const runDir = configOnlyRunDir('spec: 1930\n');
+  fs.writeFileSync(path.join(runDir, 'manifest.yml'), 'multispec:\n  parent: 1904\n  specs:\n    - id: 1930\n      status: complete\n      subdir: spec-1930\n    - id: 1931\n      status: pending\n      subdir: spec-1931\n');
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps: okDeps() });
+  assert.strictEqual(inputs.sources.records, 'manifest');
+  assert.deepStrictEqual(inputs.records, [1930, 1931]);
+  assert.deepStrictEqual(inputs.closingRecords, []);
+});
+
+test('the config rung reads a CRLF config.yml', () => {
+  const runDir = configOnlyRunDir('spec: 5338\r\nmode: auto\r\n');
+  const inputs = resolveInputs({ runDir, cwd: '/w/tree', deps: okDeps() });
+  assert.deepStrictEqual(inputs.records, [5338]);
+  assert.strictEqual(inputs.sources.records, 'config');
+});
+
+test('the config rung never runs for a multi-spec spec-{N} subdirectory', () => {
+  const parent = scratchDir('wrap-up-pack-config-parent-');
+  const child = path.join(parent, 'spec-1931');
+  fs.mkdirSync(child);
+  fs.writeFileSync(path.join(child, 'config.yml'), 'spec: 1930\n');
+  fs.writeFileSync(path.join(child, 'run-state.json'), JSON.stringify({ status: 'active' }));
+  const inputs = resolveInputs({ runDir: child, cwd: '/w/tree', deps: okDeps() });
+  assert.strictEqual(inputs.sources.records, 'unavailable');
+  assert.deepStrictEqual(inputs.records, []);
+});
+
+test('the config rung never runs when manifest.yml exists but cannot be read (unreadable is not absent)', () => {
+  const runDir = configOnlyRunDir('spec: 1930\n');
+  const realFs = (p) => fs.readFileSync(p, 'utf8');
+  const unreadable = (p) => {
+    if (path.basename(p) === 'manifest.yml') { const e = new Error('EACCES: permission denied'); e.code = 'EACCES'; throw e; }
+    return realFs(p);
+  };
+  const deps = { readFile: unreadable, readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } } };
+  assert.deepStrictEqual(resolveRecords(deps, runDir, null), { records: [], source: 'unavailable', parkedAtShaping: {} });
+  const absent = { ...deps, readFile: realFs };
+  assert.deepStrictEqual(resolveRecords(absent, runDir, null).source, 'config');
+});
+
+test('memberRecords: header and manifest rungs name members; the config rung and an unknown rung never do (Reading A, #5347)', () => {
+  for (const source of ['headers', 'worktree-headers', 'manifest', 'worktree-manifest']) {
+    assert.deepStrictEqual(memberRecords({ records: [7, 8], source }), [7, 8], source);
+  }
+  for (const source of ['config', 'unavailable', 'some-future-rung']) {
+    assert.deepStrictEqual(memberRecords({ records: [7], source }), [], source);
+  }
 });
 
 test('resolveInputs: a spec-* subdirectory whose own run-state.json lacks worktree/pr falls back to the parent run\'s (#1930 review C1)', () => {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-parent-'));
+  const parent = scratchDir('wrap-up-pack-parent-');
   fs.writeFileSync(path.join(parent, 'run-state.json'), JSON.stringify({ worktree: '/w/tree', pr: { number: 1901 } }));
   const child = path.join(parent, 'spec-1930');
   fs.mkdirSync(path.join(child, 'work'), { recursive: true });
@@ -371,7 +478,7 @@ test('resolveInputs: a spec-* subdirectory whose own run-state.json lacks worktr
 });
 
 test('resolveInputs (#2858): a per-spec worktree wins over the parent\'s while a null per-spec pr is filled from it', () => {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-precedence-'));
+  const parent = scratchDir('wrap-up-pack-precedence-');
   fs.writeFileSync(path.join(parent, 'run-state.json'), JSON.stringify({ worktree: '/parent/tree', pr: { number: 1901 } }));
   const child = path.join(parent, 'spec-1930');
   fs.mkdirSync(child, { recursive: true });
@@ -383,7 +490,7 @@ test('resolveInputs (#2858): a per-spec worktree wins over the parent\'s while a
 });
 
 test('resolveInputs (#2858): a non-spec run dir never borrows a parent directory\'s run-state.json, and a parent that contributes nothing is not the source', () => {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-gate-'));
+  const parent = scratchDir('wrap-up-pack-gate-');
   fs.writeFileSync(path.join(parent, 'run-state.json'), JSON.stringify({ worktree: '/parent/tree', pr: { number: 1901 } }));
   const plain = path.join(parent, '2026-10-04T000000-record-1');
   fs.mkdirSync(plain, { recursive: true });
@@ -393,7 +500,7 @@ test('resolveInputs (#2858): a non-spec run dir never borrows a parent directory
   assert.strictEqual(inputs.pr, null);
   assert.strictEqual(inputs.sources.state, 'run-state.json');
 
-  const emptyParent = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-emptyparent-'));
+  const emptyParent = scratchDir('wrap-up-pack-emptyparent-');
   fs.writeFileSync(path.join(emptyParent, 'run-state.json'), JSON.stringify({ status: 'active' }));
   const child = path.join(emptyParent, 'spec-1930');
   fs.mkdirSync(child, { recursive: true });
@@ -401,12 +508,12 @@ test('resolveInputs (#2858): a non-spec run dir never borrows a parent directory
   assert.strictEqual(resolveInputs({ runDir: child, cwd: '/elsewhere', deps: okDeps() }).sources.state, 'run-state.json');
 
   // No per-spec file at all: the only state there is came from the parent.
-  const exemptParent = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-exemptparent-'));
+  const exemptParent = scratchDir('wrap-up-pack-exemptparent-');
   fs.writeFileSync(path.join(exemptParent, 'run-state.json'), JSON.stringify({ prExempt: 'initial-publish' }));
   const bare = path.join(exemptParent, 'spec-1930');
   fs.mkdirSync(bare, { recursive: true });
   assert.strictEqual(resolveInputs({ runDir: bare, cwd: '/elsewhere', deps: okDeps() }).sources.state, 'parent');
-  const noParent = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-noparent-')), 'spec-1930');
+  const noParent = path.join(scratchDir('wrap-up-pack-noparent-'), 'spec-1930');
   fs.mkdirSync(noParent, { recursive: true });
   assert.strictEqual(resolveInputs({ runDir: noParent, cwd: '/elsewhere', deps: okDeps() }).sources.state, 'unavailable');
 });
@@ -479,6 +586,35 @@ test('recordLabels: gh issue view calls are concurrency-capped, not fired all at
   assert.strictEqual(pack.recordLabels.ok, true);
   assert.ok(peak < records.length, `peak concurrency (${peak}) should be bounded below the full record count (${records.length})`);
   assert.ok(peak > 0, 'sanity: calls actually happened');
+});
+
+// #4793: resolve-blockers.js entries carry `crossRepoBlockers` ([{number,
+// repository, state}]) for a native blocker linked from another repository. Its
+// number is only another repository's issue number, never this repository's.
+function unblockedWithResolved(entry) {
+  const deps = okDeps({
+    execFile: async (cmd, args) => {
+      if (cmd === 'node' && String(args[0]).endsWith('resolve-blockers.js')) return { stdout: JSON.stringify({ 1600: entry }), stderr: '' };
+      return okDeps().execFile(cmd, args);
+    },
+  });
+  return gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['unblocked'], deps });
+}
+
+test('#4793 Q2: a dependent blocked only by another repository\'s #1535 is not reported unblocked when this repository closes #1535', async () => {
+  const pack = await unblockedWithResolved({ blockedBy: [1535], openBlocker: false, openBlockerIds: [], crossRepoBlockers: [{ number: 1535, repository: 'other/repo', state: 'CLOSED' }] });
+  assert.strictEqual(pack.unblocked.ok, true);
+  assert.deepStrictEqual(pack.unblocked.value, []);
+});
+
+test('#4793 Q2: this repository\'s #1535 beside another repository\'s #1535 still reports the dependent unblocked', async () => {
+  const pack = await unblockedWithResolved({ blockedBy: [1535, 1535], openBlocker: false, openBlockerIds: [], crossRepoBlockers: [{ number: 1535, repository: 'other/repo', state: 'CLOSED' }] });
+  assert.deepStrictEqual(pack.unblocked.value, [{ number: 1600, title: 'Dependent' }]);
+});
+
+test('#4793 Q5: a foreign blocker with no readable state keeps the dependent blocked', async () => {
+  const pack = await unblockedWithResolved({ blockedBy: [1535, 7], openBlocker: false, openBlockerIds: [], crossRepoBlockers: [{ number: 7, repository: 'other/repo', state: null }] });
+  assert.deepStrictEqual(pack.unblocked.value, []);
 });
 
 test('#2425: unblocked (work-links: native) passes --repo, resolved from `origin`, to resolve-blockers.js — including on a GitHub Enterprise remote', async () => {
@@ -580,6 +716,127 @@ test('#2538: unblocked (work-links: body-text) passes --repo to BOTH of its dire
     assert.notStrictEqual(repoIdx, -1, `every gh issue list call must carry --repo on a GHE remote: ${JSON.stringify(call)}`);
     assert.strictEqual(call[repoIdx + 1], 'ghe.example.com/acme/widgets');
   }
+});
+
+// #4793 Plan Review Clarifications: a body-declared `Blocked by owner/name#N`
+// foreign blocker keeps the dependent blocked while it is OPEN or unreadable,
+// under either work-links value. One batched resolve-foreign-blockers.js call.
+function foreignBodyDeps({ links, body, nativeEntry, foreign, remote, gateDeps, calls = [] }) {
+  return okDeps({
+    ...(remote ? { git: (args) => (args[0] === 'remote' ? remote : okDeps().git(args)) } : {}),
+    ...(gateDeps ? { gateDeps } : {}),
+    resolvePolicy: policyFake({ 'integration-branch': 'main', 'work-links': links }),
+    execFile: async (cmd, args) => {
+      if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'list' && args.includes('open')) {
+        return { stdout: JSON.stringify([{ number: 1600, title: 'Dependent', body }]), stderr: '' };
+      }
+      if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'list' && args.includes('all')) {
+        return { stdout: JSON.stringify([{ number: 1535, state: 'CLOSED' }]), stderr: '' };
+      }
+      if (cmd === 'node' && String(args[0]).endsWith('resolve-blockers.js')) return { stdout: JSON.stringify({ 1600: nativeEntry }), stderr: '' };
+      if (cmd === 'node' && String(args[0]).endsWith('resolve-foreign-blockers.js')) {
+        calls.push(args);
+        if (foreign instanceof Error) throw foreign;
+        return { stdout: foreign, stderr: '' };
+      }
+      return okDeps().execFile(cmd, args);
+    },
+  });
+}
+const runUnblocked = (deps) => gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['unblocked'], deps });
+const BODY_TEXT_BODY = 'Blocked by #1535\nBlocked by other/repo#7\n';
+
+test('#4793 Plan Review Clarifications: a body-declared OPEN foreign blocker keeps the dependent blocked (body-text)', async () => {
+  const calls = [];
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'body-text', body: BODY_TEXT_BODY, foreign: '{"other/repo#7":"OPEN"}', calls }));
+  assert.strictEqual(pack.unblocked.ok, true);
+  assert.deepStrictEqual(pack.unblocked.value, []);
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0][1], 'other/repo#7');
+});
+
+test('#4793 Plan Review Clarifications: a body-declared CLOSED foreign blocker lets the dependent report unblocked (body-text)', async () => {
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'body-text', body: BODY_TEXT_BODY, foreign: '{"other/repo#7":"CLOSED"}' }));
+  assert.deepStrictEqual(pack.unblocked.value, [{ number: 1600, title: 'Dependent' }]);
+});
+
+test('#4793 Q5: a body-declared foreign blocker whose state is null (unreadable) keeps the dependent blocked (body-text)', async () => {
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'body-text', body: BODY_TEXT_BODY, foreign: '{"other/repo#7":null}' }));
+  assert.deepStrictEqual(pack.unblocked.value, []);
+});
+
+// A promisified execFile rejection: the message is only `Command failed: ...` plus the stderr
+// text; the exit code and the CLI's own stderr live on `code` and `stderr`.
+const execFileFailure = (code, stderr) => Object.assign(new Error(`Command failed: node /bin/resolve-foreign-blockers.js other/repo#7\n${stderr}`), { code, stderr });
+
+test('#4793 Q5: a failed foreign lookup reports the probe failed with the exit code and stderr cause and no dependent unblocked (fail closed, body-text)', async () => {
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'body-text', body: BODY_TEXT_BODY, foreign: execFileFailure(3, 'Warning: boom\nstack\n') }));
+  assert.strictEqual(pack.unblocked.ok, false);
+  assert.strictEqual(pack.unblocked.value, undefined);
+  assert.match(pack.unblocked.error, /foreign blocker state lookup failed \(exit 3: Warning: boom\)/);
+  assert.doesNotMatch(pack.unblocked.error, /stack/);
+});
+
+test('#4793 Q5: a message-only failure (a timeout, no code or stderr) keeps its first message line as the cause (body-text)', async () => {
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'body-text', body: BODY_TEXT_BODY, foreign: new Error('timeout after 30000ms: node resolve-foreign-blockers.js (killed by SIGTERM)\nmore') }));
+  assert.strictEqual(pack.unblocked.ok, false);
+  assert.match(pack.unblocked.error, /foreign blocker state lookup failed \(timeout after 30000ms: node resolve-foreign-blockers\.js \(killed by SIGTERM\)\)/);
+  assert.doesNotMatch(pack.unblocked.error, /more/);
+});
+
+test('#4793 Q5: unparseable foreign lookup output also fails the probe closed (body-text)', async () => {
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'body-text', body: BODY_TEXT_BODY, foreign: 'not json' }));
+  assert.strictEqual(pack.unblocked.ok, false);
+  assert.match(pack.unblocked.error, /foreign blocker state lookup failed/);
+});
+
+test('#4793: a dependent with no body-declared foreign blocker makes no foreign lookup (body-text)', async () => {
+  const calls = [];
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'body-text', body: 'Blocked by #1535\n', foreign: '{}', calls }));
+  assert.deepStrictEqual(pack.unblocked.value, [{ number: 1600, title: 'Dependent' }]);
+  assert.strictEqual(calls.length, 0);
+});
+
+test('#4793: the foreign lookup carries --repo on a GitHub Enterprise remote (body-text)', async () => {
+  const calls = [];
+  const pack = await runUnblocked(foreignBodyDeps({
+    links: 'body-text', body: BODY_TEXT_BODY, foreign: '{"other/repo#7":"CLOSED"}', calls,
+    remote: 'git@ghe.example.com:acme/widgets.git\n', gateDeps: { env: { GH_HOST: 'ghe.example.com' } },
+  }));
+  assert.strictEqual(pack.unblocked.ok, true);
+  assert.strictEqual(calls.length, 1);
+  const repoIdx = calls[0].indexOf('--repo');
+  assert.notStrictEqual(repoIdx, -1, `the foreign lookup must carry --repo: ${JSON.stringify(calls[0])}`);
+  assert.strictEqual(calls[0][repoIdx + 1], 'ghe.example.com/acme/widgets');
+});
+
+const NATIVE_CLEAR = { blockedBy: [1535], openBlocker: false, openBlockerIds: [] };
+
+test('#4793 Plan Review Clarifications: a body-declared OPEN foreign blocker keeps the dependent blocked (native)', async () => {
+  const calls = [];
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'native', body: 'Blocked by other/repo#7\n', nativeEntry: NATIVE_CLEAR, foreign: '{"other/repo#7":"OPEN"}', calls }));
+  assert.strictEqual(pack.unblocked.ok, true);
+  assert.deepStrictEqual(pack.unblocked.value, []);
+  assert.strictEqual(calls.length, 1);
+});
+
+test('#4793 Plan Review Clarifications: a body-declared CLOSED foreign blocker lets the dependent report unblocked (native)', async () => {
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'native', body: 'Blocked by other/repo#7\n', nativeEntry: NATIVE_CLEAR, foreign: '{"other/repo#7":"CLOSED"}' }));
+  assert.deepStrictEqual(pack.unblocked.value, [{ number: 1600, title: 'Dependent' }]);
+});
+
+test('#4793 Q5: a failed foreign lookup fails the probe closed (native)', async () => {
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'native', body: 'Blocked by other/repo#7\n', nativeEntry: NATIVE_CLEAR, foreign: execFileFailure(3, 'Warning: boom\n') }));
+  assert.strictEqual(pack.unblocked.ok, false);
+  assert.match(pack.unblocked.error, /foreign blocker state lookup failed \(exit 3: Warning: boom\)/);
+});
+
+test('#4793: a ref both natively linked and declared in the body makes no extra foreign lookup (native)', async () => {
+  const calls = [];
+  const nativeEntry = { ...NATIVE_CLEAR, crossRepoBlockers: [{ number: 7, repository: 'Other/Repo', state: 'CLOSED' }] };
+  const pack = await runUnblocked(foreignBodyDeps({ links: 'native', body: 'Blocked by other/repo#7\n', nativeEntry, foreign: '{"other/repo#7":"OPEN"}', calls }));
+  assert.strictEqual(calls.length, 0);
+  assert.deepStrictEqual(pack.unblocked.value, [{ number: 1600, title: 'Dependent' }]);
 });
 
 test('#2425: no resolvable `origin` remote falls back to calling resolve-blockers.js without --repo (additive, never a hard failure)', async () => {
@@ -687,7 +944,8 @@ test('gatherPack: a gh call killed by the exec timeout names gh and the timeout 
     if (cmd === 'gh') { const e = new Error('Command failed: gh pr view'); e.killed = true; e.signal = 'SIGTERM'; throw e; }
     return okDeps().execFile(cmd, args);
   } });
-  const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['pr'], deps });
+  // The gh bound follows CLAUDE_TWEAKS_GH_TIMEOUT_MS (#5050), so pin the environment: an ambient raised value must not leak in.
+  const pack = await withExecBounds({}, (mod) => mod.gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['pr'], deps }));
   assert.match(pack.pr.error, /^timeout after 30000ms: gh pr \(killed by SIGTERM\)$/);
 });
 
@@ -723,7 +981,7 @@ test('gatherPack: a probe that never settles is bounded by deps.probeTimeoutMs r
 });
 
 test('gatherPack: the ledger probe counts rows by status and phase from the worktree ledgers naming a record (#1930)', async () => {
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
+  const tree = scratchDir('wrap-up-pack-tree-');
   fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
   fs.writeFileSync(path.join(tree, 'docs', 'plans', '2026-09-05-spec-1535-ledger.md'), [
     '| # | Phase | Item | Status | Resolution |', '|---|---|---|---|---|',
@@ -754,7 +1012,7 @@ test('gatherPack: the ledger probe counts rows by status and phase from the work
 // `open` (blocking) and a legitimate terminal status — never silently folded
 // into "terminal" the way it was before this fix.
 test('gatherPack: the ledger probe counts an out-of-enum status as unrecognized, not silently terminal (#2080)', async () => {
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
+  const tree = scratchDir('wrap-up-pack-tree-');
   fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
   fs.writeFileSync(path.join(tree, 'docs', 'plans', '2026-09-05-spec-1535-ledger.md'), [
     '| # | Phase | Item | Status | Resolution |', '|---|---|---|---|---|',
@@ -778,7 +1036,7 @@ test('gatherPack: the ledger probe counts an out-of-enum status as unrecognized,
 });
 
 test('gatherPack: the ledger probe reports zero unrecognized rows when every status is in the closed enum (#2080)', async () => {
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
+  const tree = scratchDir('wrap-up-pack-tree-');
   fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
   fs.writeFileSync(path.join(tree, 'docs', 'plans', '2026-09-05-spec-1535-ledger.md'), [
     '| # | Phase | Item | Status | Resolution |', '|---|---|---|---|---|',
@@ -796,7 +1054,7 @@ test('gatherPack: the ledger probe reports zero unrecognized rows when every sta
 // Helper for the #3327 tests: a worktree whose docs/plans holds the
 // given ledger files, wired into a fixture run dir, probed with only: ['ledger'].
 async function probeLedgers(files, { records = [1535] } = {}) {
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
+  const tree = scratchDir('wrap-up-pack-tree-');
   fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
   for (const [name, rows] of Object.entries(files)) {
     fs.writeFileSync(path.join(tree, 'docs', 'plans', name), ['| # | Phase | Item | Status | Resolution |', '|---|---|---|---|---|', ...rows].join('\n'));
@@ -1013,7 +1271,7 @@ test('AC2.1: the run-dir ledger.md branch reports missingDeferReasonItems with l
 });
 
 test('gatherPack: a ledger whose DATE prefix contains the record number is not this record\'s ledger (#1930 review M5)', async () => {
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
+  const tree = scratchDir('wrap-up-pack-tree-');
   fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
   // Record 26 must NOT match the '2026-' date prefix of a stranger's ledger…
   fs.writeFileSync(path.join(tree, 'docs', 'plans', '2026-09-05-spec-99-ledger.md'), '| # | Phase | Item | Status | Resolution |\n| 1 | review | a | open | — |');
@@ -1035,7 +1293,7 @@ test('gatherPack: a ledger whose DATE prefix contains the record number is not t
 // filter silently excluded it and reported 0 items even though the file held
 // genuinely open rows.
 test('gatherPack: the ledger probe locates a topic-slug-named ledger with no record number in the filename (#2563 AC1)', async () => {
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
+  const tree = scratchDir('wrap-up-pack-tree-');
   fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
   fs.writeFileSync(path.join(tree, 'docs', 'plans', '2026-09-05-ledger-probe-slug-fix-ledger.md'), [
     '| # | Phase | Item | Status | Resolution |', '|---|---|---|---|---|',
@@ -1056,7 +1314,7 @@ test('gatherPack: the ledger probe locates a topic-slug-named ledger with no rec
 // names the record at a boundary. Name matching cannot tell them apart, so
 // ownership by branch diff decides: only the ledger this branch added counts.
 test('AC2.1: one ledger added on the branch plus inherited ledgers counts only the added ledger\'s items', async () => {
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
+  const tree = scratchDir('wrap-up-pack-tree-');
   fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
   // A fully-resolved stray ledger from an unrelated, already-merged run.
   fs.writeFileSync(path.join(tree, 'docs', 'plans', '2026-09-30-flow-spec-2704-2709-ledger.md'), [
@@ -1158,7 +1416,7 @@ test('no docs/plans ledgers reports zeros without consulting git', async () => {
 // and the docs/plans/ glob is never consulted, even when a stray docs/plans
 // ledger is also present.
 test('gatherPack: {run-dir}/ledger.md is authoritative over the docs/plans/ glob when it exists (#2563 AC4)', async () => {
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-tree-'));
+  const tree = scratchDir('wrap-up-pack-tree-');
   fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
   fs.writeFileSync(path.join(tree, 'docs', 'plans', '2026-09-05-spec-1535-ledger.md'), '| # | Phase | Item | Status | Resolution |\n| 1 | review | a | open | — |');
   const runDir = fixtureRunDir({ records: [1535] });
@@ -1198,7 +1456,7 @@ test('gatherPack: a work-backend that is neither github-issues nor local-files m
 });
 
 test('gatherPack: work-backend local-files reads the local store, keeping only records whose every other blocker is closed (#1930 review I2)', async () => {
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-local-'));
+  const tree = scratchDir('wrap-up-pack-local-');
   fs.mkdirSync(path.join(tree, 'specs'), { recursive: true });
   for (const f of ['1600-dependent.md', '1601-still-held.md', '9-open-blocker.md', '8-closed-blocker.md']) {
     fs.writeFileSync(path.join(tree, 'specs', f), '# x\n');
@@ -1225,7 +1483,7 @@ test('gatherPack: work-backend local-files reads the local store, keeping only r
 });
 
 test('gatherPack: local-files — a dependent\'s blocker file pruned between readdir and read counts as already gone, not a probe failure (#1930 review lens 3c)', async () => {
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-local-race-'));
+  const tree = scratchDir('wrap-up-pack-local-race-');
   fs.mkdirSync(path.join(tree, 'specs'), { recursive: true });
   for (const f of ['1600-dependent.md', '8-vanishing-blocker.md']) fs.writeFileSync(path.join(tree, 'specs', f), '# x\n');
   const store = { 1600: { id: 1600, title: 'Dependent', facets: { blockedBy: [1535, 8], closed: false } } };
@@ -1250,7 +1508,7 @@ test('gatherPack: local-files — a dependent\'s blocker file pruned between rea
 });
 
 test('gatherPack: a ledger file archived between readdir and read is skipped, not a whole-probe failure (#1930 review lens 3c)', async () => {
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-ledger-race-'));
+  const tree = scratchDir('wrap-up-pack-ledger-race-');
   fs.mkdirSync(path.join(tree, 'docs', 'plans'), { recursive: true });
   const kept = '2026-09-05-spec-1535-ledger.md';
   const gone = '2026-09-04-spec-1535-old-ledger.md';
@@ -1274,7 +1532,7 @@ test('gatherPack: a ledger file archived between readdir and read is skipped, no
 });
 
 test('gatherPack: the record-scoped probes refuse an unresolved record set instead of returning a clean empty (#1930 review C2)', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-norecords-'));
+  const dir = scratchDir('wrap-up-pack-norecords-');
   fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ worktree: '/w/tree', pr: { number: 1901 } }));
   const execCalls = [];
   const gitCalls = [];
@@ -1379,7 +1637,8 @@ test('gatherPack: body-text work-links skips the second state query entirely whe
 test('gatherPack: every subprocess call is bounded by maxBuffer and a timeout (#1930 review I3)', async () => {
   const opts = [];
   const deps = okDeps({ execFile: async (cmd, args, o) => { opts.push(o); return okDeps().execFile(cmd, args); } });
-  await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', deps });
+  // gh's bound follows CLAUDE_TWEAKS_GH_TIMEOUT_MS (#5050), so pin the environment: an ambient raised value must not leak in.
+  await withExecBounds({}, (mod) => mod.gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', deps }));
   assert.ok(opts.length > 0);
   for (const o of opts) {
     assert.strictEqual(o.maxBuffer, 32 * 1024 * 1024, JSON.stringify(o));
@@ -1449,7 +1708,7 @@ function mirrorWithHeader(headerText) {
 }
 
 test('AC1.1: a pack built from a manifest-only parent run dir has inputs.records non-empty and inputs.closingRecords empty', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-closing-manifest-'));
+  const dir = scratchDir('wrap-up-pack-closing-manifest-');
   fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ worktree: '/w/tree' }));
   fs.writeFileSync(path.join(dir, 'manifest.yml'), [
     'multispec:', '  parent: 1904', '  specs:',
@@ -1479,13 +1738,20 @@ test('AC1.2: a header-resolved pack has inputs.closingRecords equal to inputs.re
 
 test('closingRecords keeps records only for the two header rungs (Ruling R1, decided once)', () => {
   for (const source of ['headers', 'worktree-headers']) assert.deepStrictEqual(closingRecords({ records: [7, 8], source }), [7, 8]);
-  for (const source of ['manifest', 'worktree-manifest', 'unavailable']) assert.deepStrictEqual(closingRecords({ records: [7, 8], source }), []);
+  for (const source of ['manifest', 'worktree-manifest', 'config']) assert.deepStrictEqual(closingRecords({ records: [7, 8], source }), []);
+});
+
+test('#4108: closingRecords is array-or-null: [] on a manifest rung (decided: none), null only when unavailable (no decision)', () => {
+  assert.deepStrictEqual(closingRecords({ records: [41, 42], source: 'manifest' }), []);
+  assert.strictEqual(closingRecords({ records: [], source: 'unavailable' }), null);
+  assert.deepStrictEqual(closingRecords({ records: [41], source: 'headers' }), [41]);
+  assert.deepStrictEqual(closingRecords({ records: [41], source: 'worktree-headers' }), [41]);
 });
 
 test('#3399: a worktree-manifest rung yields an empty closing set', () => {
   // The #2391 fixture shape: spec-2283/spec-2338 headers exist only in the worktree mirror.
-  const main = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-closing-wm-main-'));
-  const tree = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-closing-wm-tree-'));
+  const main = scratchDir('wrap-up-pack-closing-wm-main-');
+  const tree = scratchDir('wrap-up-pack-closing-wm-tree-');
   const rel = path.join('.claude-tweaks', 'pipelines', '2026-09-14T000308-record-2283-2338');
   const runDir = path.join(main, rel);
   fs.mkdirSync(runDir, { recursive: true });
@@ -1523,7 +1789,7 @@ test('#4814 AC1.1: a record: line below the frontmatter never beats the filename
 });
 
 test('#3399: parkedAtShaping is true for a record when any of its header files carries the flag, one entry per record', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-closing-dup-'));
+  const dir = scratchDir('wrap-up-pack-closing-dup-');
   fs.mkdirSync(path.join(dir, 'work'));
   // The flagged file sorts first (CRLF frontmatter), so a last-file-wins read would lose it; the `record:` line wins over the filename, so 6-spec.md is record 5 too.
   fs.writeFileSync(path.join(dir, 'work', '5-spec.md'), '---\r\nrecord: 5\r\nparked-at-shaping: true\r\n---\r\n');
@@ -1610,6 +1876,44 @@ test('resolveWorktreeBase returns null when git fails (#3686)', () => {
   assert.strictEqual(resolveWorktreeBase('/w/tree', deps), null);
 });
 
+// #4439: namesRecordReference's `item` lookback was `/\bitem\s*$/i.test(resolution.slice(0, m.index))`, quadratic on
+// 'item #1 '.repeat(n); it is now a hand walk back over whitespace. The oracle below is the old body verbatim.
+function oldNamesRecordReference(resolution, excludeRecords) {
+  if (/\/(?:issues|pull)\/\d+/.test(resolution)) return true;
+  for (const m of resolution.matchAll(/#(\d+)/g)) {
+    if (excludeRecords.includes(Number(m[1]))) continue;
+    if (/\bitem\s*$/i.test(resolution.slice(0, m.index))) continue;
+    return true;
+  }
+  return false;
+}
+
+test('namesRecordReference: the hand-walked `item` lookback agrees with the old regex on every edge input', () => {
+  const edges = [
+    '#7', 'item #7', 'Item #7', 'ITEM #7', 'item#7', 'item\t#7', 'item \n #7', 'item #7', 'item #7', 'item﻿#7',
+    'items #7', 'subitem #7', 'sub item #7', '_item #7', '9item #7', 'item_ #7', 'ıtem #7', 'İtem #7', 'item', ' item #7', 'tem #7',
+    'item #7 #8', 'item #7, then #8', 'ledger item #1 and item #2', 'see item #1, item #2', 'itemitem #7', 'item  item #7',
+    'xitem #7', 'x item #7', '-item #7', '/item #7', '\nitem #7', 'item #5 and #7', '#7 item #8', 'item #1 '.repeat(50), 'item #1 x'.repeat(50),
+    'https://github.com/o/r/issues/7', 'item https://github.com/o/r/pull/7', '', '   ', '#', '# 7', 'item #', 'item #x',
+  ];
+  for (const text of edges) {
+    for (const exclude of [[], [7], [1], [1, 2, 5, 7, 8]]) {
+      assert.strictEqual(namesRecordReference(text, exclude), oldNamesRecordReference(text, exclude), `${JSON.stringify(text)} excluding ${JSON.stringify(exclude)}`);
+    }
+  }
+  // Seeded fuzz over the alphabet the lookback reads (xorshift32, so a failure replays).
+  let seed = 0x4439;
+  const next = () => { seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5; return (seed >>> 0) / 4294967296; };
+  const pieces = ['item', 'Item', 'ITEM', 'it', 'em', 'x', '_', '9', ' ', '  ', '\t', '\n', ' ', ' ', '#', '#1', '#7', '#12', '-', '/'];
+  for (let n = 0; n < 4000; n += 1) {
+    let text = '';
+    for (let k = Math.floor(next() * 9); k >= 0; k -= 1) text += pieces[Math.floor(next() * pieces.length)];
+    for (const exclude of [[], [7]]) {
+      assert.strictEqual(namesRecordReference(text, exclude), oldNamesRecordReference(text, exclude), `${JSON.stringify(text)} excluding ${JSON.stringify(exclude)}`);
+    }
+  }
+});
+
 test('resolveWorktreeBase returns null when the policy read throws (#3686)', () => {
   const deps = {
     resolvePolicy: () => { throw new Error('policy unreadable'); },
@@ -1617,4 +1921,314 @@ test('resolveWorktreeBase returns null when the policy read throws (#3686)', () 
     ghSync: () => { throw new Error('no gh'); },
   };
   assert.strictEqual(resolveWorktreeBase('/w/tree', deps), null);
+});
+
+test('isDeferredUnstaged: the one definition parseLedger counts and the ledger-row terminal-row guard reuses (#4439)', () => {
+  assert.strictEqual(isDeferredUnstaged('later', []), true);
+  assert.strictEqual(isDeferredUnstaged('Defer-reason: tangential', []), true);
+  assert.strictEqual(isDeferredUnstaged('staged/ledger-record-a.md', []), false);
+  assert.strictEqual(isDeferredUnstaged('see #77', []), false);
+  assert.strictEqual(isDeferredUnstaged('see #5', [5]), true);
+});
+
+// #5379: defaultDeps(cwd, { env }) hands the injected environment to the git children resolveWorktreeBase
+// runs. B alone carries `origin/HEAD` at its base commit (plus one more commit); A has no remote, so a
+// child that answers B's base ran under `GIT_DIR=B/.git`.
+const packDefaultDeps = () => require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'wrap-up', 'pack.js')).defaultDeps;
+
+// Repos A (no remote) and B (the env-only one), removed after `fn(a, b)`.
+function withTwoRepos(fn) {
+  const { committedRepo } = require('../../helpers/git-fixtures');
+  const a = committedRepo({ prefix: 'pack-env-a-', branch: 'main' });
+  const b = committedRepo({ prefix: 'pack-env-b-', branch: 'main' });
+  try {
+    return fn(a, b);
+  } finally {
+    fs.rmSync(a.dir, { recursive: true, force: true });
+    fs.rmSync(b.dir, { recursive: true, force: true });
+  }
+}
+
+function commitFile(repo, name, text) {
+  fs.mkdirSync(path.dirname(path.join(repo.dir, name)), { recursive: true });
+  fs.writeFileSync(path.join(repo.dir, name), text);
+  repo.git('add', '.');
+  repo.git('commit', '-q', '-m', name);
+  return repo.git('rev-parse', 'HEAD');
+}
+
+// #5379: when `git rev-parse --show-toplevel` fails, defaultResolvePolicy reads the policy under the injected
+// cwd, not the ambient process.cwd() (whose own policy.yml would answer otherwise).
+test('defaultDeps(cwd): resolvePolicy falls back to the injected cwd when the toplevel lookup fails (#5379)', () => {
+  const { cleanGitEnv } = require('../../helpers/git-fixtures');
+  const dir = scratchDir('pack-policy-cwd-');
+  try {
+    fs.mkdirSync(path.join(dir, '.claude-tweaks'));
+    fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'integration-branch: injected-cwd-branch\n');
+    const deps = packDefaultDeps()(dir, { env: { ...cleanGitEnv(), GIT_CEILING_DIRECTORIES: path.dirname(dir) } });
+    assert.deepStrictEqual(deps.resolvePolicy(['integration-branch']), { 'integration-branch': 'injected-cwd-branch' });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('defaultDeps(cwd, { env }): resolveWorktreeBase reads the env-only repo (#5379)', () => {
+  const { cleanGitEnv } = require('../../helpers/git-fixtures');
+  withTwoRepos((a, b) => {
+    const bBase = b.head;
+    b.git('remote', 'add', 'origin', path.join(os.tmpdir(), 'pack-env-no-such-remote'));
+    b.git('update-ref', 'refs/remotes/origin/main', bBase);
+    b.git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    commitFile(b, 'more.txt', 'more\n');
+    const env = { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git') };
+    assert.strictEqual(resolveWorktreeBase(a.dir, packDefaultDeps()(a.dir, { env })), bBase);
+    assert.notStrictEqual(resolveWorktreeBase(a.dir, packDefaultDeps()(a.dir)), bBase, 'no env: the children read A');
+  });
+});
+
+// The `integration-branch` policy read is resolveWorktreeBase's first git child. B's policy.yml names a
+// branch at a commit distinct from origin/HEAD's, so the result moves only when defaultResolvePolicy's git
+// ran under env (GIT_WORK_TREE makes B the policy root while cwd stays A, which has no policy).
+test('defaultDeps(cwd, { env }): the integration-branch policy is read through the injected env (#5379)', () => {
+  const { cleanGitEnv } = require('../../helpers/git-fixtures');
+  withTwoRepos((a, b) => {
+    const originMain = commitFile(b, path.join('.claude-tweaks', 'policy.yml'), 'integration-branch: pbranch\n');
+    b.git('remote', 'add', 'origin', path.join(os.tmpdir(), 'pack-env-no-such-remote'));
+    b.git('update-ref', 'refs/remotes/origin/main', originMain);
+    b.git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    const policyBase = commitFile(b, 'p.txt', 'p\n');
+    b.git('branch', 'pbranch');
+    commitFile(b, 'q.txt', 'q\n');
+    assert.notStrictEqual(policyBase, originMain);
+    const env = { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git'), GIT_WORK_TREE: b.dir };
+    assert.strictEqual(resolveWorktreeBase(a.dir, packDefaultDeps()(a.dir, { env })), policyBase);
+    assert.notStrictEqual(resolveWorktreeBase(a.dir, packDefaultDeps()(a.dir)), policyBase, 'no env: the policy is read from A, which has none');
+  });
+});
+
+// ghSync wraps its options in ghOptions with the injected env: with GH_HOST unset, B's origin (read under
+// GIT_DIR while cwd is A) decides the GH_HOST the stub `gh` prints.
+test('defaultDeps(cwd, { env }): ghSync resolves GH_HOST from the origin read under env (#5379)', { skip: process.platform === 'win32' && 'sh stub' }, () => {
+  const { cleanGitEnv } = require('../../helpers/git-fixtures');
+  const { _resetGhHostCache } = require('../../../plugin/bin/lib/repo-resolve');
+  const stubDir = scratchDir('pack-env-stub-');
+  fs.writeFileSync(path.join(stubDir, 'gh'), '#!/bin/sh\necho "$GH_HOST"\n', { mode: 0o755 });
+  _resetGhHostCache();
+  try {
+    withTwoRepos((a, b) => {
+      b.git('remote', 'add', 'origin', 'https://acme.ghe.com/o/r.git');
+      const env = { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git'), PATH: stubDir + path.delimiter + process.env.PATH };
+      delete env.GH_HOST;
+      delete env.GH_REPO;
+      assert.strictEqual(packDefaultDeps()(a.dir, { env, stderr: () => {} }).ghSync(['--version'], { cwd: a.dir }).trim(), 'acme.ghe.com');
+    });
+  } finally {
+    _resetGhHostCache();
+    fs.rmSync(stubDir, { recursive: true, force: true });
+  }
+});
+
+// #6006: the factory layer is read from the injected env, never the runner's. HOME is an empty scratch dir,
+// so the variable is the only factory source; the dir is no repository (GIT_CEILING_DIRECTORIES), so no
+// policy.yml outranks it.
+function factoryEnv(dir, factoryText) {
+  const { cleanGitEnv } = require('../../helpers/git-fixtures');
+  return { ...cleanGitEnv(), GIT_CEILING_DIRECTORIES: path.dirname(dir), HOME: scratchDir('pack-factory-home-'), CLAUDE_TWEAKS_FACTORY_POLICY: factoryText };
+}
+
+test('gatherPack: a pack gathered with an injected env resolves that env\'s factory value (#6006)', async () => {
+  const dir = scratchDir('pack-factory-cwd-');
+  const runDir = scratchDir('pack-factory-run-');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ worktree: dir, status: 'active', sessionId: 's' }));
+  const env = factoryEnv(dir, 'integration-branch: factory-branch\n');
+  const pack = await gatherPack({ runDir, cwd: dir, only: [], deps: packDefaultDeps()(dir, { env }) });
+  assert.strictEqual(pack.inputs.policy.integrationBranch, 'factory-branch');
+  assert.strictEqual(pack.inputs.integrationBranch, 'factory-branch');
+});
+
+test('defaultDeps(cwd, { env }): the blast-radius policy read resolves the injected env\'s factory value (#6006)', () => {
+  const dir = scratchDir('pack-factory-br-');
+  const git = (args) => {
+    if (args[0] === 'rev-parse' && args[1] === '--show-toplevel') return `${dir}\n`;
+    return args[0] === 'diff' ? '' : 'abc123\n';
+  };
+  const env = factoryEnv(dir, 'auto-merge-max-lines: 7\nmerge-sensitive-paths: secrets/**\n');
+  const out = packDefaultDeps()(dir, { env }).computeBlastRadius({ base: 'abc123' }, { git });
+  assert.deepStrictEqual([out.config.autoMergeMaxLines, out.config.mergeSensitivePaths], [7, ['secrets/**']]);
+});
+
+// #3974: the record ladder reads a header at its live or its archived location.
+const archTmpRoots = [];
+after(() => { for (const r of archTmpRoots) fs.rmSync(r, { recursive: true, force: true }); });
+function runTree(files) {
+  const root = scratchDir('wrap-up-pack-archived-');
+  archTmpRoots.push(root);
+  const pipelines = path.join(root, '.claude-tweaks', 'pipelines');
+  for (const [rel, text] of Object.entries(files)) {
+    const file = path.join(pipelines, ...rel.split('/'));
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, text);
+  }
+  return { root, pipelines };
+}
+const fsDeps = () => ({ readFile: (p) => fs.readFileSync(p, 'utf8'), readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } } });
+const ARCH_RUN_ID = '2026-11-16T000000-record-7';
+const archHeader = (n, extra = '') => `---\nrecord: ${n}\n${extra}---\n`;
+
+test('AC1.1 resolveRecords: an archived-only flat header resolves the same record and source as live', () => {
+  const live = runTree({ [`${ARCH_RUN_ID}/work/7-spec.md`]: archHeader(7) });
+  const arch = runTree({ [`archive/${ARCH_RUN_ID}/work/7-spec.md`]: archHeader(7) });
+  const a = resolveRecords(fsDeps(), path.join(live.pipelines, ARCH_RUN_ID), null);
+  const b = resolveRecords(fsDeps(), path.join(arch.pipelines, ARCH_RUN_ID), null);
+  assert.deepStrictEqual(b, a);
+  assert.strictEqual(b.source, 'headers');
+  assert.deepStrictEqual(closingRecords(b), [7]);
+});
+
+test('AC1.1 resolveRecords: an archived-only header in the worktree mirror resolves as worktree-headers', () => {
+  const main = scratchDir('wrap-up-pack-archived-main-');
+  archTmpRoots.push(main);
+  const liveTree = runTree({ [`${ARCH_RUN_ID}/work/7-spec.md`]: archHeader(7) });
+  const archTree = runTree({ [`archive/${ARCH_RUN_ID}/work/7-spec.md`]: archHeader(7) });
+  const runDir = path.join(main, '.claude-tweaks', 'pipelines', ARCH_RUN_ID);
+  fs.mkdirSync(runDir, { recursive: true });
+  const a = resolveRecords(fsDeps(), runDir, liveTree.root);
+  const b = resolveRecords(fsDeps(), runDir, archTree.root);
+  assert.deepStrictEqual(b, a);
+  assert.strictEqual(b.source, 'worktree-headers');
+  assert.deepStrictEqual(closingRecords(b), [7]);
+});
+
+test('enumerating merge: live work/8 and archived work/7 resolve [7, 8] from rung (a)', () => {
+  const t = runTree({ [`${ARCH_RUN_ID}/work/8-spec.md`]: archHeader(8), [`archive/${ARCH_RUN_ID}/work/7-spec.md`]: archHeader(7) });
+  const res = resolveRecords(fsDeps(), path.join(t.pipelines, ARCH_RUN_ID), null);
+  assert.deepStrictEqual(res.records, [7, 8]);
+  assert.strictEqual(res.source, 'headers');
+  assert.deepStrictEqual(Object.keys(res.parkedAtShaping), ['7', '8']);
+});
+
+test('AC2.1 resolveRecords: archived-only spec-{N} headers resolve through rung (c) like live, manifest kept live', () => {
+  const manifest = 'multispec:\n  parent: 1\n  specs:\n    - id: 9\n      status: complete\n      subdir: spec-9\n';
+  const live = runTree({ [`${ARCH_RUN_ID}/manifest.yml`]: manifest, [`${ARCH_RUN_ID}/spec-9/work/9-spec.md`]: archHeader(9) });
+  const arch = runTree({ [`${ARCH_RUN_ID}/manifest.yml`]: manifest, [`archive/${ARCH_RUN_ID}/spec-9/work/9-spec.md`]: archHeader(9) });
+  const a = resolveRecords(fsDeps(), path.join(live.pipelines, ARCH_RUN_ID), null);
+  const b = resolveRecords(fsDeps(), path.join(arch.pipelines, ARCH_RUN_ID), null);
+  assert.deepStrictEqual(b, a);
+  assert.deepStrictEqual(b.records, [9]);
+  assert.strictEqual(b.source, 'manifest');
+});
+
+test('AC2.1 resolveRecords: manifest-free archived-only spec-{N} headers resolve like live', () => {
+  const live = runTree({ [`${ARCH_RUN_ID}/spec-9/work/9-spec.md`]: archHeader(9), [`${ARCH_RUN_ID}/spec-11/work/11-spec.md`]: archHeader(11) });
+  const arch = runTree({ [`archive/${ARCH_RUN_ID}/spec-9/work/9-spec.md`]: archHeader(9), [`archive/${ARCH_RUN_ID}/spec-11/work/11-spec.md`]: archHeader(11) });
+  const a = resolveRecords(fsDeps(), path.join(live.pipelines, ARCH_RUN_ID), null);
+  const b = resolveRecords(fsDeps(), path.join(arch.pipelines, ARCH_RUN_ID), null);
+  assert.deepStrictEqual(b, a);
+  assert.deepStrictEqual(b.records, [9, 11]);
+  assert.strictEqual(b.source, 'manifest');
+});
+
+test('manifestRecords keeps scanning a non-numeric spec- directory, live or archived (today\'s /^spec-/ filter)', () => {
+  const t = runTree({ [`${ARCH_RUN_ID}/spec-alpha/work/5-spec.md`]: archHeader(5), [`archive/${ARCH_RUN_ID}/spec-beta/work/6-spec.md`]: archHeader(6) });
+  assert.deepStrictEqual(resolveRecords(fsDeps(), path.join(t.pipelines, ARCH_RUN_ID), null).records, [5, 6]);
+});
+
+test('AC7.1 a record present at both locations is counted once, the live copy\'s parked flag wins', () => {
+  const t = runTree({
+    [`${ARCH_RUN_ID}/work/7-spec.md`]: archHeader(7),
+    [`archive/${ARCH_RUN_ID}/work/7-spec.md`]: archHeader(7, 'parked-at-shaping: true\n'),
+  });
+  const res = resolveRecords(fsDeps(), path.join(t.pipelines, ARCH_RUN_ID), null);
+  assert.deepStrictEqual(res.records, [7]);
+  assert.deepStrictEqual(res.parkedAtShaping, { 7: false });
+  const t2 = runTree({
+    [`${ARCH_RUN_ID}/work/7-spec.md`]: archHeader(7, 'parked-at-shaping: true\n'),
+    [`archive/${ARCH_RUN_ID}/work/7-spec.md`]: archHeader(7),
+  });
+  assert.deepStrictEqual(resolveRecords(fsDeps(), path.join(t2.pipelines, ARCH_RUN_ID), null).parkedAtShaping, { 7: true });
+});
+
+test('AC2.1 resolveRecords: an archived spec-{N} header the manifest does not list still counts — manifest 9, archived spec-11 → [9, 11]', () => {
+  const manifest = 'multispec:\n  parent: 1\n  specs:\n    - id: 9\n      status: complete\n      subdir: spec-9\n';
+  const t = runTree({ [`${ARCH_RUN_ID}/manifest.yml`]: manifest, [`archive/${ARCH_RUN_ID}/spec-11/work/11-spec.md`]: archHeader(11) });
+  const res = resolveRecords(fsDeps(), path.join(t.pipelines, ARCH_RUN_ID), null);
+  assert.deepStrictEqual(res.records, [9, 11]);
+  assert.strictEqual(res.source, 'manifest');
+});
+
+test('AC9.4 an unreadable archived header is skipped as absent, a readable archived sibling still resolves', () => {
+  const t = runTree({ [`archive/${ARCH_RUN_ID}/work/7-spec.md`]: archHeader(7), [`archive/${ARCH_RUN_ID}/work/8-spec.md`]: archHeader(8) });
+  const deps = fsDeps();
+  const unreadable = path.join('archive', ARCH_RUN_ID, 'work', '7-spec.md');
+  const readFile = (p) => { if (p.endsWith(unreadable)) throw new Error('EACCES'); return deps.readFile(p); };
+  const res = resolveRecords({ ...deps, readFile }, path.join(t.pipelines, ARCH_RUN_ID), null);
+  assert.deepStrictEqual(res.records, [8]);
+  assert.strictEqual(res.source, 'headers');
+});
+
+// exec bounds (#5050): each spawn carries the bound its command resolves (execTimeoutMsFor) and the
+// timeout message names that same bound. pack.js and shared-primitives are re-required under the env so
+// the memoized getters resolve fresh; both bound env vars are cleared first and restored afterwards.
+const PACK_MODULE_PATH = require.resolve('../../../plugin/bin/lib/wrap-up/pack.js');
+async function withExecBounds(env, fn) {
+  const { evictModules, isolateExecBounds } = require('../../helpers/gh-timeout-probe');
+  // isolateExecBounds clears both bound env vars and runs from an empty temp cwd (the getters read the cwd's policy.yml).
+  return isolateExecBounds(Object.keys(env), async () => {
+    try {
+      for (const [k, v] of Object.entries(env)) process.env[k] = v;
+      evictModules([PACK_MODULE_PATH]);
+      return await fn(require(PACK_MODULE_PATH));
+    } finally {
+      evictModules([PACK_MODULE_PATH]);
+    }
+  });
+}
+
+async function spawnTimeouts(env) {
+  const seen = { gh: [], node: [] };
+  const deps = okDeps({ execFile: async (cmd, args, o) => { if (seen[cmd]) seen[cmd].push(o.timeout); return okDeps().execFile(cmd, args); } });
+  await withExecBounds(env, (mod) => mod.gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', deps }));
+  return seen;
+}
+
+const BOTH_HIGH = { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '45000', CLAUDE_TWEAKS_GIT_TIMEOUT_MS: '90000' };
+
+test('exec bounds (#5050): the gh spawn follows CLAUDE_TWEAKS_GH_TIMEOUT_MS above the floor', async () => {
+  const seen = await spawnTimeouts({ CLAUDE_TWEAKS_GH_TIMEOUT_MS: '45000' });
+  assert.ok(seen.gh.length > 0);
+  for (const t of seen.gh) assert.strictEqual(t, 45000);
+});
+
+test('exec bounds (#5050): the gh spawn keeps 30000 when the env is unset or below the floor', async () => {
+  const unset = await spawnTimeouts({});
+  assert.ok(unset.gh.length > 0);
+  for (const t of unset.gh) assert.strictEqual(t, 30000, 'unset');
+  const low = await spawnTimeouts({ CLAUDE_TWEAKS_GH_TIMEOUT_MS: '10000' });
+  assert.ok(low.gh.length > 0);
+  for (const t of low.gh) assert.strictEqual(t, 30000, '10000');
+});
+
+test('exec bounds (#5050): every node spawn, the direct pr-checks.js one included, stays 30000 with both keys high', async () => {
+  const seen = await spawnTimeouts(BOTH_HIGH);
+  // state, residue and the unblocked probe's resolve-blockers.js, plus pr-checks.js (the direct spawn).
+  assert.ok(seen.node.length >= 4, `node spawns: ${seen.node.length}`);
+  for (const t of seen.node) assert.strictEqual(t, 30000);
+});
+
+test('exec bounds (#5050): a gh kill reads the raised bound the call carried', async () => {
+  const deps = okDeps({ execFile: async (cmd, args) => {
+    if (cmd === 'gh') throw Object.assign(new Error('Command failed: gh pr view'), { killed: true, signal: 'SIGTERM' });
+    return okDeps().execFile(cmd, args);
+  } });
+  const pack = await withExecBounds({ CLAUDE_TWEAKS_GH_TIMEOUT_MS: '45000' }, (mod) => mod.gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['pr'], deps }));
+  assert.match(pack.pr.error, /^timeout after 45000ms: gh pr \(killed by SIGTERM\)$/);
+});
+
+test('exec bounds (#5050): a node kill reads 30000 with both keys high', async () => {
+  const deps = okDeps({ execFile: async (cmd, args) => {
+    if (cmd === 'node' && String(args[0]).endsWith('residue.js')) throw Object.assign(new Error('Command failed: node residue.js'), { killed: true, signal: 'SIGTERM' });
+    return okDeps().execFile(cmd, args);
+  } });
+  const pack = await withExecBounds(BOTH_HIGH, (mod) => mod.gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['residue'], deps }));
+  assert.match(pack.residue.error, /^timeout after 30000ms: node residue\.js \(killed by SIGTERM\)$/);
 });

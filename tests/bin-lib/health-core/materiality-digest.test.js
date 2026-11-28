@@ -351,6 +351,17 @@ test('AC8.1 (marker half): a tombstone keeps a consolebackfill-item marker', () 
   assert.ok(!all.includes('materiality-first-seen'), all);
 });
 
+test('materiality-digest: a rollover carries and tombstones the console-finding marker', () => {
+  const item = '<!-- console-finding: consolefinding-0a1b2c3d -->';
+  const marked = `${materialityEntryLine(ENTRY)} ${item} → expired`;
+  const live = `${materialityEntryLine({ ...ENTRY, finding: 'live finding' })} ${item.replace('0a1b2c3d', '4e5f6a7b')}`;
+  const p = planOf([posted(`${marked}\n${live}`)]);
+  assert.strictEqual(p.tombstones, 1);
+  assert.deepStrictEqual(tombstoneLines(p.bodies), [`<!-- materiality-fingerprint: ${materialityFingerprint(ENTRY)} --> ${item}`]);
+  const carried = selectCarryOverEntries(postBodies(p)).entries.map((e) => e.line);
+  assert.ok(carried.some((l) => l.includes('consolefinding-4e5f6a7b')), carried.join('\n'));
+});
+
 test('a tombstone has no entry line and fits under the comment-size cap', () => {
   const rows = Array.from({ length: 20 }, (_, i) => `${findingLine(i)} → expired`);
   const p = planOf([posted(rows.join('\n'))], [], { maxChars: 200 });

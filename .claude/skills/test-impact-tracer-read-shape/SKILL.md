@@ -49,6 +49,7 @@ macOS's BSD `env` has no `-C`, `--chdir` or `--unset=`, so `h.fixture.js` and `k
 - A map traced with `trace --allow-dirty` on a tree with tracked changes records `dirty: true`, and `verify.js` refuses it as `map-dirty` (#4131); use that command to inspect the traced volume, never to build a map you expect to select tests. Untracked files never make a tree dirty.
 - A new optional map key stays under `version: 1`: `parseImpactMap` ignores keys it does not know, and `tests/fixtures/test-impact/parse-impact-map-v1.js` is the frozen pre-`dirty` reader that proves an older reader still parses the new map.
 - A rule that makes `impact.js` refuse a cached map needs a matching "not current, replace it" rule in `tools/test-impact.js`'s `fetch`, or `fetch` skips the download as "already current" and the refusal can never heal (#4131: `fetch` replaces a cached dirty map and refuses a dirty artifact).
+- `fetch` skips the download on two paths, not one: the cached map is at the chosen CI commit, or it is a fresher local trace that descends from that commit and is an ancestor of HEAD (#4128). The second path keeps the map on its own checks (parses, `exitCode === 0`, not `dirty`) without asking `impact.js`, so a new refusal rule must also disqualify the cached map there, or `fetch` keeps a map `verify.js` refuses.
 
 ## Common Operations
 

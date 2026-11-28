@@ -3,10 +3,12 @@ files:
   - plugin/bin/hooks.js
   - plugin/bin/lib/reconcile/index.js
   - plugin/bin/lib/reconcile/cache.js
+  - plugin/bin/lib/reconcile/escalate-residue.js
   - plugin/bin/lib/reconcile/archive-merged.js
   - plugin/bin/lib/reconcile/origin-head.js
   - plugin/bin/lib/reconcile/residue-summary.js
   - plugin/bin/lib/reconcile/format-summary.js
+  - plugin/bin/lib/run-liveness/disposition.js
   - plugin/bin/lib/hooks/session-start.js
   - docs/reconcile-checks.md
 ---
@@ -49,14 +51,16 @@ files:
 - **Action:** Read each `{ reason, path, op, error, at }`:
   - `op: 'escalate'` means filing, appending or reopening the backlog record failed.
   - `op: 'resolve'` means closing it, or removing the path from it, failed. Examples are an HTTP 502 or a rate limit.
-  - `at: null` marks a failure from this pass's prune of a path that no longer exists. That entry is already dropped from the cache, so this JSON is its only record.
+  - `at: null` marks a prune failure whose entry this pass dropped at the 5th failed prune retry (`RESIDUE_RETRY_LIMIT`), so this JSON is its only record. A kept entry's prune failure is reported once, from its `lastResidueError`, with a numeric `at` (#4209).
 - **Should feel:** Diagnosable. A stuck resolve that retries every pass now names its reason instead of leaving an entry with nothing to show why.
 - **Should understand:**
   - Tracked failures live on the cache entry as `lastResidueError` and survive later failing passes on the same path.
-  - They disappear only when the entry itself is dropped: the path recovered or got archived, or a later resolve succeeded.
+  - They disappear only when the entry itself is dropped: the path recovered or got archived, a later resolve succeeded, or its 5th failed prune retry (`RESIDUE_RETRY_LIMIT`) landed.
   - `residueErrors` is filled on every pass that resolved a repo root, over-budget passes included.
+  - A failed `gh` call's `error` leads with what `gh` said, then a short form of the command: `HTTP 403: secondary rate limit (gh issue comment 2724)`. With no stderr it reads `Command failed: gh issue comment 2724`; a timeout or buffer overflow keeps its cause (`warning: … (spawnSync gh ETIMEDOUT)`). It never carries the command's flags or a `--body` text (#5393).
 - **Red flags:**
   - `residueErrors` is `[]` while an issue you expected to close is still open with its path listed. Check whether the resolve ran at all.
+  - An `error` that starts `Command failed: gh … --repo …` or quotes comment text. That is the pre-#5393 argv echo, cut at 200 characters before `gh`'s answer: an entry recorded by an older build, or a call site that bypasses `residueErrorText`.
 
 ### 4. See it without running anything
 - **URL:** the residue summary line (`node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" reconcile-summary`, `/claude-tweaks:flow`'s closing report) and the next session's start-up context
@@ -67,9 +71,21 @@ files:
   - The background status file carries a count and the latest error, not the full list. Run step 3 for the list.
 - **Red flags:** The same error repeats session after session. The underlying `gh` problem (auth, rate limit, a deleted issue) needs a human. Escalation is one-shot, so a failed escalate is not retried on its own.
 
+### 5. Read which runs reconcile would close (report-only, #3977)
+- **URL:** the same dry run's `runDispositions` key (`--json`), or its compact lines: `would close {run} ({reason}, evidence: ...)`, `orphaned: N run dirs`, `unknown liveness: N run dirs`
+- **Action:** Check every `would close` line on a formal run against what you know about that run. Read `orphaned` for runs whose session is gone but which hold something a human must settle (an open PR, unpushed commits, a non-review staged item).
+- **Should feel:** Like a dry run of a cleanup you have not yet allowed. Nothing in this release closes a run.
+- **Should understand:**
+  - A run whose session is provably `live` is in neither list and is skipped by every archive path (`skipped` reason `live`). An `unknown` verdict, or any fact that could not be read (no PR state without `gh`, an unknown branch or worktree state), is left alone and only counted.
+  - A real pass writes `wouldClose`, `orphaned` and `reportOnlyPassAt` to `reconcile-cache.json`; a dry run writes none of them. The SessionStart banner lists only the cached orphans whose session still reads `dead`.
+- **Red flags:** A `would close` line for a run you are still driving, or for a run with an open PR. That is a false positive: report it through `/claude-tweaks:feedback` before #3978 turns closing on.
+
 ## Origin
 - Created during build of #4180 (reconcile: make `--dry-run` write nothing, and record why an escalate or resolve failed).
 - All steps were built in this session.
+- Updated by #3977: step 5 reads the report-only run-disposition lines.
+- Updated by #5393: step 3's `error` text leads with `gh`'s stderr and a short command, and never carries a flag value.
+- Updated by #4209: step 3's prune failures keep their entry for up to 5 failed retries (`RESIDUE_RETRY_LIMIT`), and each is reported once per pass.
 - Related records:
   - #2724 (first dry-run guard on the exempt clear)
   - #4202 (checkout-scoped gone-path predicate)

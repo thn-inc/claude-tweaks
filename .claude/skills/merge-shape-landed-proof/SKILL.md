@@ -229,5 +229,6 @@ on `origin`?
 - **Name the substitution at the call site.** §6 says never to override its guard on a non-zero
   result, so a site that discards on this proof instead states it as the `discard_changes: true`
   reason and says why §6's check cannot apply.
-- **Instance.** `plugin/skills/wrap-up/verification-brief.md` Step 4's evidence-PR route (#4039),
-  which lands demo screenshots on `demo-evidence/{record}` after the run's own PR merged.
+- **Instance (retired).** `plugin/skills/wrap-up/verification-brief.md` Step 4's evidence-PR route
+  (#4039) landed demo screenshots on `demo-evidence/{record}` after the run's own PR merged; #4612
+  retired it, and the rule above is what that site taught.

@@ -8,7 +8,7 @@ const path = require('node:path');
 const { readText, crlfCheckoutRead } = require('../../helpers/read-skill');
 const {
   REFUSAL_REASONS, runIdFromPrBody, claimRunId, openPrLine, selectResumePr, resumeEligibility, resumeContext,
-  worktreeNameForHead, closeRedispatchRemedy, refusalDetail,
+  worktreeNameForHead, closeRedispatchRemedy, refusalDetail, worktreePathForHead, isObject, nonEmptyString,
 } = require('../../../plugin/bin/lib/dispatch/resume-eligibility');
 const { claimPayload, releasePayload } = require('../../../plugin/bin/lib/issues/claims');
 
@@ -317,6 +317,8 @@ const REFUSALS = [
     '#4589 is closed — not resumable; reopen it first if the work is still wanted, or close PR #4604', 'close'],
   ['open blockers', { openBlockers: [4500, 4501] }, 'blocked-by',
     '#4589 is blocked by open #4500, #4501 — not resumable until they close; then run /claude-tweaks:dispatch resume #4589', 'resume'],
+  ['open blockers with a foreign one', { openBlockers: [4500, 'other/repo#5', 'other/repo#6 (state unreadable)'] }, 'blocked-by',
+    '#4589 is blocked by open #4500, other/repo#5, other/repo#6 (state unreadable) — not resumable until they close; then run /claude-tweaks:dispatch resume #4589', 'resume'],
   ['bot:blocked', { labels: ['auto:build', 'bot:blocked'] }, 'not-granted',
     '#4589 carries bot:blocked — re-grant it with /claude-tweaks:backlog refine #4589, then run /claude-tweaks:dispatch resume #4589', 'resume'],
   ['no auto:build', { labels: ['ready', 'type:task'] }, 'not-granted',
@@ -409,6 +411,60 @@ test('carries bot:blocked wins over lacks auto:build', () => {
   const v = verdict({ labels: ['bot:blocked'] });
   assert.equal(v.reason, 'not-granted');
   assert.ok(v.line.startsWith('#4589 carries bot:blocked'), v.line);
+});
+
+// #5584 AC10: the build-authority fact the gatherer derives. Omitted, the label decides (the
+// 'no auto:build' table row above pins that line unchanged).
+test('#5584 AC10: an ungranted record resumes when buildAuthority is typed', () => {
+  const v = verdict({ labels: ['ready', 'type:task'], buildAuthority: 'typed', authorityReasons: [] });
+  assert.equal(v.eligible, true, v.line);
+});
+
+test('#5584 AC10: an ungranted record is refused not-granted when buildAuthority is none, naming the reasons', () => {
+  const v = verdict({ labels: ['ready', 'type:task'], buildAuthority: 'none', authorityReasons: ['expired', 'not-typed'] });
+  assert.equal(v.reason, 'not-granted');
+  // The remedy is the first word's (build-authority.js's REMEDIES), as the queue pull's line names it.
+  assert.equal(v.line, '#4589 lacks auto:build (typed command not accepted: expired, not-typed) — grant it with /claude-tweaks:backlog refine #4589, or type the command again, then run /claude-tweaks:dispatch resume #4589');
+  const bare = verdict({ labels: ['ready', 'type:task'], buildAuthority: 'none' });
+  assert.equal(bare.reason, 'not-granted');
+  assert.equal(bare.line, '#4589 lacks auto:build — re-grant it with /claude-tweaks:backlog refine #4589, then run /claude-tweaks:dispatch resume #4589');
+  assert.equal(verdict({ labels: ['ready'], buildAuthority: 'none', authorityReasons: [] }).line, bare.line);
+});
+
+test('#5584: a refused typed command names the first reason word\'s remedy, with the record number in place of #N', () => {
+  const { REMEDIES } = require('../../../plugin/bin/lib/issues/build-authority');
+  const rows = [
+    ['not-ready', 'run /claude-tweaks:specify #4589'],
+    ['held', 'clear bot:blocked, bot:parked or parked on #4589 once its trigger has fired, then type the command again'],
+    ['launcher', 'the launcher must export CC_LAUNCHED_BY=user (thn-inc/claude-user-config#50)'],
+    ['not-named', 'grant it with /claude-tweaks:backlog refine #4589'],
+  ];
+  for (const [word, remedy] of rows) {
+    assert.equal(REMEDIES[word].split('#N').join('#4589'), remedy, word);
+    const v = verdict({ labels: ['ready', 'type:task'], buildAuthority: 'none', authorityReasons: [word, 'ci'] });
+    assert.equal(v.reason, 'not-granted', word);
+    assert.equal(v.line, `#4589 lacks auto:build (typed command not accepted: ${word}, ci) — ${remedy}, then run /claude-tweaks:dispatch resume #4589`, word);
+  }
+  // bot:blocked keeps its own line, whatever the words.
+  const blocked = verdict({ labels: ['bot:blocked'], buildAuthority: 'none', authorityReasons: ['held'] });
+  assert.equal(blocked.line, '#4589 carries bot:blocked — re-grant it with /claude-tweaks:backlog refine #4589, then run /claude-tweaks:dispatch resume #4589');
+});
+
+test('#5584 AC10: buildAuthority none refuses even a record carrying auto:build', () => {
+  assert.equal(verdict({ buildAuthority: 'none', authorityReasons: ['labels-unreadable'] }).reason, 'not-granted');
+});
+
+test('#5584 AC10: bot:blocked is refused not-granted with buildAuthority typed and with none', () => {
+  for (const buildAuthority of ['typed', 'none', 'label']) {
+    const v = verdict({ labels: ['ready', 'bot:blocked'], buildAuthority, authorityReasons: ['held'] });
+    assert.equal(v.reason, 'not-granted', buildAuthority);
+    assert.ok(v.line.startsWith('#4589 carries bot:blocked — '), v.line);
+  }
+});
+
+test('#5584 AC10: a typed record still meets the gates after the grant check', () => {
+  assert.equal(verdict({ labels: ['ready', 'bot:in-progress'], buildAuthority: 'typed' }).reason, 'label-drift');
+  assert.equal(verdict({ labels: ['ready', 'bot:zeta'], buildAuthority: 'typed' }).reason, 'unlisted-label');
 });
 
 test('branch-diverged does not fire when the worktree exists, nor when the tips match', () => {
@@ -665,6 +721,12 @@ test('closeRedispatchRemedy prints no command for a head that is unsafe to paste
   assert.match(s, /close PR #70 \(gh pr close 70\)/);
   assert.match(s, /then run \/claude-tweaks:dispatch #7$/);
 });
+test('#4815: closeRedispatchRemedy takes the by-hand wording for a worktree- head that is unsafe to compose', () => {
+  const s = closeRedispatchRemedy({ issue: 7, prNumber: 70, headRefName: 'worktree-a$(x)', mainRoot: '/repo' });
+  assert.ok(s.includes('remove any worktree holding its branch and delete the local and remote branch by hand'), s);
+  assert.ok(!s.includes('git branch -D'), s);
+  assert.ok(!s.includes('"null"'), s);
+});
 test('closeRedispatchRemedy prints no branch-delete command for a bare head, only for a worktree- head', () => {
   for (const head of ['develop', 'release/2.0', 'fix/thing']) {
     const s = closeRedispatchRemedy({ issue: 7, prNumber: 70, headRefName: head, mainRoot: '/repo' });
@@ -875,4 +937,17 @@ test('resumeContext: no pipeline entries -> null lastPhase and no defects; non-s
   assert.deepStrictEqual(resumeContext('## /build\n'), empty);
   assert.deepStrictEqual(resumeContext(null), empty);
   assert.deepStrictEqual(resumeContext(undefined), empty);
+});
+
+test('#4815 AC1.1: worktreePathForHead builds the worktree path, and the exported nonEmptyString and isObject guards hold their contracts', () => {
+  assert.equal(worktreePathForHead('/m', HEAD), path.join('/m', '.claude', 'worktrees', 'dispatch-record-4589'));
+  assert.equal(worktreePathForHead('/m', 'fix/thing'), path.join('/m', '.claude', 'worktrees', 'fix', 'thing'));
+  assert.equal(worktreePathForHead('/m', 'a$(x)'), null);
+  assert.equal(nonEmptyString('x'), 'x');
+  assert.equal(nonEmptyString(''), null);
+  assert.equal(nonEmptyString(3), null);
+  assert.equal(isObject({}), true);
+  assert.equal(isObject([]), false);
+  assert.equal(isObject(null), false);
+  assert.equal(isObject('s'), false);
 });

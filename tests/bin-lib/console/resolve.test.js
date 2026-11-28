@@ -1,14 +1,15 @@
 'use strict';
-const { test } = require('node:test');
+const { test, describe } = require('node:test');
 const assert = require('node:assert');
 const crypto = require('crypto');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
 const MOD = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'resolve');
 const { FINDING_PATH } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'finding-path'));
-const { classifyStagedItem, resolveAll, renderTable, findingItems, renderStoredTable, parseTiebreakLine, approveAllDefault, readSnapshot, SECTION_STANCES, SECTION_MAP, ENGINE_ROW_SECTIONS, CANONICAL_PREFIXES, nearestCanonicalPrefixes, SDD_RULING_REASONS, sddRulingDeferralReason, STAGING_EXEMPTIONS, stagingExemption, RATIFY_FILES_RECORD_REASON } = require(MOD);
+const { UNATTENDED_SHADOWED_DROP_REASON, classifyStagedItem, resolveAll, renderTable, findingItems, renderStoredTable, parseTiebreakLine, approveAllDefault, readSnapshot, SECTION_STANCES, SECTION_MAP, ENGINE_ROW_SECTIONS, CANONICAL_PREFIXES, nearestCanonicalPrefixes, SDD_RULING_REASONS, sddRulingDeferralReason, STAGING_EXEMPTIONS, stagingExemption, RATIFY_FILES_RECORD_REASON } = require(MOD);
 const ROOT = path.join(__dirname, '..', '..', '..');
 const { unresolvedItems, readRunResidue, formatResidueLines } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'residue'));
 const { resolveTiebreak } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'tiebreak'));
@@ -19,9 +20,9 @@ const { DEFER_REASONS } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'issue
 const { stagedDiffPaths, referenceRepairFloorReason, referenceRepairFloorHits, REFERENCE_REPAIR_REASONS } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'reference-repair'));
 
 function fixture({
-  decisions = '', staged = {}, engineState = null, pack = null, headers = [], manifest = null, specHeaders = {},
+  decisions = '', staged = {}, engineState = null, pack = null, headers = [], manifest = null, specHeaders = {}, config = null,
 } = {}) {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-'));
+  const runDir = scratchDir('console-resolve-');
   fs.mkdirSync(path.join(runDir, 'staged'), { recursive: true });
   fs.mkdirSync(path.join(runDir, 'work'), { recursive: true });
   fs.writeFileSync(path.join(runDir, 'decisions.md'), decisions);
@@ -30,6 +31,7 @@ function fixture({
   if (pack) fs.writeFileSync(path.join(runDir, 'wrap-up-pack.json'), JSON.stringify(pack));
   for (const n of headers) fs.writeFileSync(path.join(runDir, 'work', `${n}-spec.md`), `---\nrecord: ${n}\n---\n`);
   if (manifest) fs.writeFileSync(path.join(runDir, 'manifest.yml'), manifest);
+  if (config) fs.writeFileSync(path.join(runDir, 'config.yml'), config);
   for (const [specId, nums] of Object.entries(specHeaders)) {
     const specWork = path.join(runDir, `spec-${specId}`, 'work');
     fs.mkdirSync(specWork, { recursive: true });
@@ -45,7 +47,7 @@ function deps(overrides = {}) {
     readFile: (p) => fs.readFileSync(p, 'utf8'),
     readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
     gitApplyCheck: () => ({ ok: true }),
-    readGrants: (numbers) => Object.fromEntries(numbers.map((n) => [n, { labels: ['auto:merge'], pendingSince: null }])),
+    readGrants: (numbers) => Object.fromEntries(numbers.map((n) => [n, { labels: ['auto:build', 'auto:merge'], pendingSince: null }])),
     now: () => Date.parse('2026-09-06T12:00:00Z'),
     sensitivePaths: [],
     ...overrides,
@@ -75,7 +77,7 @@ test('classifyStagedItem maps every known prefix to its console section and unkn
   const expect = {
     'review-2.patch': 'Pending review', 'test-fix-1.patch': 'Pending review', 'deepen-collapse-1.patch': 'Pending review', 'simplify-1.patch': 'Pending review',
     'review-unconfirmed-3.md': 'Low-confidence findings', 'review-contested-4.md': 'Contested findings', 'review-debate-1.md': 'Contested findings',
-    'polish-suggestion-1.md': 'Pending review', 'visual-review-skipped.md': 'Pending review', 'design-decision-2.md': 'Pending review', 'build-deviation-1.md': 'Pending review', 'sdd-ruling-1.md': 'Pending review',
+    'polish-suggestion-1.md': 'Pending review', 'visual-review-skipped.md': 'Pending review', 'build-deviation-1.md': 'Pending review', 'sdd-ruling-1.md': 'Pending review',
     'wrap-up-skill-1.md': 'Skill updates', 'wrap-up-skill-new-auth.md': 'Skill updates', 'wrap-up-skill-restructure.md': 'Skill updates',
     'wrap-up-doc-1.md': 'Documentation updates', 'tidy-doc-1.md': 'Documentation updates',
     'wrap-up-claude-md-1.md': 'Configuration updates', 'wrap-up-adr-1.md': 'Configuration updates',
@@ -86,6 +88,7 @@ test('classifyStagedItem maps every known prefix to its console section and unkn
     'upstream-unfiled-1.md': 'Queue writes', 'red-team-1.md': 'Queue writes', 'specify-overlap-1.md': 'Queue writes', 'flaky-allowlist-x.md': 'Queue writes',
     'tidy-parked-1.md': 'Queue writes', 'plan-retention-1.md': 'Queue writes', 'feedback-drafts.md': 'Queue writes',
     'efficiency-budget-2026-10-24T193455-record-4029.md': 'Queue writes',
+    'bundle-1.md': 'Queue writes',
     'wrap-up-memory-1.md': 'Memory updates', 'wrap-up-upstream-1.md': 'Upstream feedback',
     'wrap-up-reflect-insights.md': 'Reflection insights',
   };
@@ -125,7 +128,7 @@ test('resolveAll resolves one item per section per the short-circuit stances and
   assert.strictEqual(by['wrap-up-reflect-insights.md'].reason, SECTION_STANCES['Reflection insights'].reason);
   assert.deepStrictEqual({ resolution: by['mystery-9.md'].resolution, reason: by['mystery-9.md'].reason }, { resolution: 'pending', reason: 'unmapped-prefix' });
   assert.strictEqual(r.sections.cleanup.resolution, 'approve');
-  assert.deepStrictEqual(r.merge, { resolution: 'merge', reason: 'every member carries auto:merge or a matured auto:merge-pending; no needs-human verdict' });
+  assert.deepStrictEqual(r.merge, { resolution: 'merge', reason: 'every member carries auto:build with auto:merge or a matured auto:merge-pending; no needs-human verdict' });
   assert.strictEqual(r.items.length, Object.keys(EVERY_SECTION).length);
   assert.strictEqual(r.ceiling, 'unattended');
 });
@@ -720,6 +723,18 @@ test('renderTable escapes a pipe in the item id, not only in the reason (#1932 M
   assert.match(table, /reflect-a\\\|b\.md/);
 });
 
+test('renderTable counts each AUTO decisions.md line as an auto-applied entry, and no other status', () => {
+  const decisions = '## /build\n- AUTO 12:00:00 — Common Step 3: simplified a.js. Reversibility: high.\n- SKIP 12:00:01 — x (skipped): condition: c → fallback: f. Reversibility: n/a.\n## /review\n- AUTO 12:01:00 — Fix: b.js. Reversibility: high.\n';
+  const r = resolveAll({ runDir: fixture({ decisions, staged: { 'reflect-1.md': 'x' }, headers: [7] }), policy: 'console-auto', deps: deps() });
+  assert.match(renderTable(r), /Auto-applied entries in decisions\.md: 2 \(already in commits/);
+});
+
+test('#6143: renderTable does not count a Phase exit record as an auto-applied entry', () => {
+  const decisions = '## /build\n- AUTO 12:00:00 — Phase exit: build phase exited at abc1234. Reversibility: n/a.\n- AUTO 12:00:01 — Common Step 3: simplified a.js. Reversibility: high.\n## /test\n- AUTO 12:05:00 — Phase exit: test phase exited at abc1234. Reversibility: n/a.\n';
+  const r = resolveAll({ runDir: fixture({ decisions, staged: { 'reflect-1.md': 'x' }, headers: [7] }), policy: 'console-auto', deps: deps() });
+  assert.match(renderTable(r), /Auto-applied entries in decisions\.md: 1 \(already in commits/);
+});
+
 test('a needs-human merge-check verdict in decisions.md resolves the merge half to leave-open (#1932 AC3)', () => {
   const decisions = '## /wrap-up\n- AUTO 12:00:00 — Auto-merge short-circuit: #7 assess-agent-autonomy verdict needs-human — Review Console renders normally. Reversibility: n/a.\n';
   const r = resolveAll({ runDir: fixture({ decisions, staged: { 'reflect-1.md': 'x' }, headers: [7] }), policy: 'console-auto', deps: deps() });
@@ -728,7 +743,7 @@ test('a needs-human merge-check verdict in decisions.md resolves the merge half 
 });
 
 test('an ungranted member (no auto:merge, no matured auto:merge-pending) resolves the merge half to leave-open (#1932 AC3)', () => {
-  const grants = { 7: { labels: ['auto:merge'], pendingSince: null }, 8: { labels: ['auto:merge-pending'], pendingSince: new Date('2026-09-06T11:00:00Z') } };
+  const grants = { 7: { labels: ['auto:build', 'auto:merge'], pendingSince: null }, 8: { labels: ['auto:build', 'auto:merge-pending'], pendingSince: new Date('2026-09-06T11:00:00Z') } };
   const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [7, 8] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });
   assert.strictEqual(r.merge.resolution, 'leave-open');
   assert.match(r.merge.reason, /#8/);
@@ -737,7 +752,7 @@ test('an ungranted member (no auto:merge, no matured auto:merge-pending) resolve
 
 test('an unmatured grant names the untrusted marker comments ghReadGrants passed over in the merge reason (#3358)', () => {
   const note = 'skipped marker comment https://x/issues/7#c1 by eve (NONE) — not an owner, member, or collaborator';
-  const grants = { 7: { labels: ['auto:merge-pending'], pendingSince: null, skippedUntrusted: [note] } };
+  const grants = { 7: { labels: ['auto:build', 'auto:merge-pending'], pendingSince: null, skippedUntrusted: [note] } };
   const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [7] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });
   assert.strictEqual(r.merge.resolution, 'leave-open');
   assert.ok(r.merge.reason.endsWith(` — ${note}`), r.merge.reason);
@@ -745,15 +760,38 @@ test('an unmatured grant names the untrusted marker comments ghReadGrants passed
 });
 
 test('an unmatured grant with no passed-over comment keeps the merge reason unchanged (#3358 characterization)', () => {
-  const grants = { 7: { labels: ['auto:merge-pending'], pendingSince: null, skippedUntrusted: [] } };
+  const grants = { 7: { labels: ['auto:build', 'auto:merge-pending'], pendingSince: null, skippedUntrusted: [] } };
   const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [7] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });
   assert.ok(r.merge.reason.endsWith('treated as not yet matured)'), r.merge.reason);
 });
 
 test('a matured auto:merge-pending counts as granted (#1932 AC3)', () => {
-  const grants = { 7: { labels: ['auto:merge-pending'], pendingSince: new Date('2026-09-01T00:00:00Z') } };
+  const grants = { 7: { labels: ['auto:build', 'auto:merge-pending'], pendingSince: new Date('2026-09-01T00:00:00Z') } };
   const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [7] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });
   assert.strictEqual(r.merge.resolution, 'merge');
+});
+
+const NO_BUILD_REASON = 'no auto:build label present — a merge grant counts only together with a live auto:build';
+
+test('AC5.1, AC5.3: a member carrying auto:merge without auto:build resolves the merge half to leave-open naming the member', () => {
+  const grants = { 7: { labels: ['auto:build', 'auto:merge'], pendingSince: null }, 8: { labels: ['auto:merge'], pendingSince: null } };
+  const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [7, 8] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });
+  assert.strictEqual(r.merge.resolution, 'leave-open');
+  assert.strictEqual(r.merge.reason, `#8: ${NO_BUILD_REASON}`);
+});
+
+test('AC5.1: a no-build member with passed-over untrusted notes carries the passedOver suffix in the no-build-grant reason', () => {
+  const note = 'skipped marker comment https://x/issues/8#c1 by eve (NONE) — not an owner, member, or collaborator';
+  const grants = { 8: { labels: ['auto:merge'], pendingSince: null, skippedUntrusted: [note] } };
+  const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [8] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });
+  assert.strictEqual(r.merge.reason, `#8: ${NO_BUILD_REASON} — ${note}`);
+});
+
+test('AC5.1: a member with no grant labels at all keeps the lacks auto:merge reason, not the build one', () => {
+  const grants = { 8: { labels: [], pendingSince: null } };
+  const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [8] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });
+  assert.strictEqual(r.merge.resolution, 'leave-open');
+  assert.strictEqual(r.merge.reason, '#8 lacks auto:merge and a matured auto:merge-pending (no auto:merge or auto:merge-pending label present)');
 });
 
 test('readGrants throwing resolves the merge half to leave-open with reason grants-unreadable (#1932 AC3)', () => {
@@ -782,7 +820,7 @@ test('a drain-overlap hold whose PR has since merged self-heals: falls through t
     policy: 'console-auto',
     deps: deps({ checkPrState: () => 'MERGED' }),
   });
-  assert.deepStrictEqual(r.merge, { resolution: 'merge', reason: 'every member carries auto:merge or a matured auto:merge-pending; no needs-human verdict' });
+  assert.deepStrictEqual(r.merge, { resolution: 'merge', reason: 'every member carries auto:build with auto:merge or a matured auto:merge-pending; no needs-human verdict' });
 });
 
 test('a drain-overlap hold whose PR has since closed self-heals the same as merged (#2299)', () => {
@@ -871,7 +909,7 @@ test('a group held by two distinct overlapping drain PRs falls through to merge 
     deps: deps({ checkPrState: (n) => { calls.push(n); return states[n]; } }),
   });
   assert.deepStrictEqual(calls, [4001, 4002]);
-  assert.deepStrictEqual(r.merge, { resolution: 'merge', reason: 'every member carries auto:merge or a matured auto:merge-pending; no needs-human verdict' });
+  assert.deepStrictEqual(r.merge, { resolution: 'merge', reason: 'every member carries auto:build with auto:merge or a matured auto:merge-pending; no needs-human verdict' });
 });
 
 test('the regex matches PR number extraction from drain-pr-overlap.md\'s own Step 6 log-line template, instantiated with concrete values (final review Minor #4 — producer/consumer coupling)', () => {
@@ -920,10 +958,26 @@ test('no resolvable members resolves the merge half to leave-open with reason me
   assert.deepStrictEqual(r.merge, { resolution: 'leave-open', reason: 'members-unresolved' });
 });
 
+test('a run dir holding only config.yml spec: N resolves the merge half to leave-open members-unresolved, never a config-rung member (Reading A, #5347)', () => {
+  const calls = [];
+  const runDir = fixture({ staged: { 'reflect-1.md': 'x' }, config: 'spec: 7\n' });
+  const r = resolveAll({ runDir, policy: 'console-auto', deps: deps({ readGrants: (n) => { calls.push(n); return deps().readGrants(n); } }) });
+  assert.deepStrictEqual(r.merge, { resolution: 'leave-open', reason: 'members-unresolved' });
+  assert.deepStrictEqual(calls, []);
+});
+
+test('a wrap-up-pack.json whose records came from the config rung yields no members, same members-unresolved (Reading A, #5347)', () => {
+  const calls = [];
+  const runDir = fixture({ staged: { 'reflect-1.md': 'x' }, config: 'spec: 7\n', pack: { inputs: { records: [7], sources: { records: 'config' } } } });
+  const r = resolveAll({ runDir, policy: 'console-auto', deps: deps({ readGrants: (n) => { calls.push(n); return deps().readGrants(n); } }) });
+  assert.deepStrictEqual(r.merge, { resolution: 'leave-open', reason: 'members-unresolved' });
+  assert.deepStrictEqual(calls, []);
+});
+
 test('members come from wrap-up-pack.json inputs.records when present (#1932 decision 2)', () => {
   const calls = [];
   const runDir = fixture({ staged: { 'reflect-1.md': 'x' }, pack: { inputs: { records: [41, 42] } }, headers: [7] });
-  resolveAll({ runDir, policy: 'console-auto', deps: deps({ readGrants: (n) => { calls.push(n); return Object.fromEntries(n.map((x) => [x, { labels: ['auto:merge'], pendingSince: null }])); } }) });
+  resolveAll({ runDir, policy: 'console-auto', deps: deps({ readGrants: (n) => { calls.push(n); return Object.fromEntries(n.map((x) => [x, { labels: ['auto:build', 'auto:merge'], pendingSince: null }])); } }) });
   assert.deepStrictEqual(calls, [[41, 42]]);
 });
 
@@ -946,7 +1000,7 @@ test('a multi-spec parent run dir with no wrap-up-pack.json resolves members via
     manifest,
     specHeaders: { 41: [41], 42: [42] },
   });
-  const r = resolveAll({ runDir, policy: 'console-auto', deps: deps({ readGrants: (n) => { calls.push(n); return Object.fromEntries(n.map((x) => [x, { labels: ['auto:merge'], pendingSince: null }])); } }) });
+  const r = resolveAll({ runDir, policy: 'console-auto', deps: deps({ readGrants: (n) => { calls.push(n); return Object.fromEntries(n.map((x) => [x, { labels: ['auto:build', 'auto:merge'], pendingSince: null }])); } }) });
   assert.deepStrictEqual(calls, [[41, 42]]);
   assert.notDeepStrictEqual(r.merge, { resolution: 'leave-open', reason: 'members-unresolved' });
 });
@@ -1072,7 +1126,7 @@ test('AC2.1: a console.json written with the old 58-character id shape still rea
 });
 
 test('AC2.1: old-shape and new-shape decision ids coexist in one console.json — residue counts both and points both at decisions.md (#3816)', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-'));
+  const dir = scratchDir('console-resolve-');
   fs.writeFileSync(path.join(dir, 'decisions.md'), SAME_PREFIX);
   const line = SUPERSEDED.split('\n')[1];
   const oldId = `decision:${line.slice(2, 60)}`;
@@ -1137,7 +1191,7 @@ test('approve-all: a console verdict with Recommendation file resolves filed, dr
   assert.deepStrictEqual(items[0].tiebreak, { id: v1.r.id, key: '3a|src/a.js:9', lens: '3a', path: 'src/a.js', line: 9, severity: 'medium', recommendation: 'file', reason: 'verdict:cant-tell' });
   assert.strictEqual(items[1].tiebreak.recommendation, 'drop');
   const viaResolveAll = resolveAll({ runDir: fixture({ decisions: `${decisions}\n`, headers: [7] }), policy: 'console-auto', deps: deps() }).items;
-  assert.deepStrictEqual(viaResolveAll.map((i) => [i.id, i.resolution]), [[`tiebreak:${v1.r.id}`, 'filed'], [`tiebreak:${v2.r.id}`, 'filed']], 'resolveAll (always unattended) files both, the drop recommendation included');
+  assert.deepStrictEqual(viaResolveAll.map((i) => [i.id, i.resolution]), [[`tiebreak:${v1.r.id}`, 'filed'], [`tiebreak:${v2.r.id}`, 'digested']], 'resolveAll (always unattended) routes by recommendation: file files, drop digests (#4679)');
 });
 
 test('a console verdict with Recommendation none resolves filed, never dropped (#3949)', () => {
@@ -1326,18 +1380,61 @@ test('AC5: at unattended N can\'t-tell items including a drop recommendation pla
   const result = resolveAll({ runDir, policy: 'console-auto', deps: deps() });
   const tb = result.items.filter((i) => i.tiebreak);
   assert.strictEqual(tb.length, 4);
-  assert.deepStrictEqual(tb.map((i) => i.resolution), ['filed', 'filed', 'filed', 'filed']);
-  assert.ok(tb.every((i) => /an agent that could not tell is not licensed to drop/.test(i.reason)));
-  assert.strictEqual(result.filings.length, 4);
-  assert.deepStrictEqual(result.filings.map((p) => p.item), tb.map((i) => i.id));
-  assert.strictEqual(new Set(result.filings.map((p) => p.fingerprint)).size, 4);
-  assert.ok(result.filings.every((p) => p.proposal.includes('Labels: needs:definition') && /claim \d/.test(p.proposal)));
+  assert.deepStrictEqual(tb.map((i) => i.resolution), ['filed', 'digested', 'filed', 'digested']);
+  assert.ok(tb.filter((i) => i.resolution === 'filed').every((i) => /filed as a verification task \(needs-verification\)/.test(i.reason)));
+  assert.ok(tb.filter((i) => i.resolution === 'digested').every((i) => /logged to the materiality digest \(tiebreak-cant-tell\), nothing filed/.test(i.reason)));
+  assert.strictEqual(result.filings.length, 2);
+  assert.deepStrictEqual(result.filings.map((p) => p.item), [tb[0].id, tb[2].id]);
+  assert.strictEqual(new Set(result.filings.map((p) => p.fingerprint)).size, 2);
+  assert.ok(result.filings.every((p) => !p.proposal.includes('needs:definition') && /claim \d/.test(p.proposal)));
   assert.ok(result.filings.some((p) => p.proposal.includes(path.basename(runDir))), 'the run id is in the body');
+  assert.strictEqual(result.digests.length, 2);
+  assert.deepStrictEqual(result.digests.map((d) => d.item), [tb[1].id, tb[3].id]);
+  assert.ok(result.digests.every((d) => d.line.includes('tiebreak-cant-tell') && /^consolefinding-[0-9a-f]{8}$/.test(d.fingerprint)));
+});
+
+test('two can\'t-tell items sharing a fingerprint, one file and one drop, resolve both filed with no digest entry (#4679)', () => {
+  const same = { path: 'src/same.js', claim: 'same claim' };
+  const fFile = tbFinding({ ...same, line: 4 });
+  const fDrop = tbFinding({ ...same, line: 40 });
+  const vFile = tbVerdict(fFile, { recommendation: 'file' });
+  const vDrop = tbVerdict(fDrop, { recommendation: 'drop' });
+  const decisions = [tbStaged(fFile), tbStaged(fDrop), vFile.entry, vDrop.entry].join('\n');
+  const runDir = fixture({ decisions: `${decisions}\n`, headers: [7] });
+  fs.writeFileSync(path.join(runDir, 'review-findings.json'), JSON.stringify([[fFile, vFile], [fDrop, vDrop]].map(([f, v]) => ({ id: v.r.id, lens: f.lens, path: f.path, line: f.line, claim: f.claim, reporterSeverity: f.reporterSeverity, kind: f.kind }))));
+  const result = resolveAll({ runDir, policy: 'console-auto', deps: deps() });
+  const tb = result.items.filter((i) => i.tiebreak);
+  assert.deepStrictEqual(tb.map((i) => i.resolution), ['filed', 'filed'], 'the record wins over the digest line');
+  assert.strictEqual(tb[1].reason, UNATTENDED_SHADOWED_DROP_REASON);
+  assert.match(UNATTENDED_SHADOWED_DROP_REASON, /recommended dropping.*covered by another item/);
+  assert.strictEqual(result.filings.length, 1);
+  assert.deepStrictEqual(result.digests, []);
+});
+
+test('AC1 (#4679): one medium can\'t-tell drop and one medium can\'t-tell file item → a digest entry and a filing', () => {
+  const fDrop = tbFinding({ path: 'src/drop.js', claim: 'drop claim' });
+  const fFile = tbFinding({ path: 'src/file.js', claim: 'file claim' });
+  const vDrop = tbVerdict(fDrop, { recommendation: 'drop' });
+  const vFile = tbVerdict(fFile, { recommendation: 'file' });
+  const decisions = [tbStaged(fDrop), tbStaged(fFile), vDrop.entry, vFile.entry].join('\n');
+  const result = resolveWith(decisions);
+  assert.deepStrictEqual(result.digests.map((d) => d.item), [`tiebreak:${vDrop.r.id}`]);
+  assert.deepStrictEqual(result.filings.map((p) => p.item), [`tiebreak:${vFile.r.id}`]);
+  assert.ok(!result.filings[0].proposal.includes('## Open Question'));
+});
+
+test('Approve-all (findingItems) is unchanged (#4679 AC5)', () => {
+  const fDrop = tbFinding({ path: 'src/drop.js', claim: 'drop claim' });
+  const fFile = tbFinding({ path: 'src/file.js', claim: 'file claim' });
+  const vDrop = tbVerdict(fDrop, { recommendation: 'drop' });
+  const vFile = tbVerdict(fFile, { recommendation: 'file' });
+  const items = findings([tbStaged(fDrop), tbStaged(fFile), vDrop.entry, vFile.entry].join('\n'));
+  assert.deepStrictEqual(items.map((i) => [i.id, i.resolution]), [[`tiebreak:${vDrop.r.id}`, 'dropped'], [`tiebreak:${vFile.r.id}`, 'filed']]);
 });
 
 test('AC5: a run without review-findings.json still plans a filing per can\'t-tell item, keyed on the tiebreak id', () => {
   const f = tbFinding();
-  const v = tbVerdict(f, { recommendation: 'drop' });
+  const v = tbVerdict(f, { recommendation: 'file' });
   const result = resolveWith([tbStaged(f), v.entry].join('\n'));
   assert.strictEqual(result.filings.length, 1);
   assert.ok(result.filings[0].title.endsWith(`tiebreak:${v.r.id}`));
@@ -1367,8 +1464,9 @@ test('AC1 at unattended: every outcome fixture resolves with zero pending and ze
   const decisions = [...all.map(({ f }) => tbStaged(f)), ...all.map(({ v }) => v.entry)].join('\n');
   const result = resolveWith(decisions);
   assert.deepStrictEqual(result.items.filter((i) => OPEN.includes(i.resolution)), []);
-  assert.deepStrictEqual(result.items.filter((i) => /Low-confidence|Contested/.test(i.section)).map((i) => i.resolution), ['filed', 'filed']);
-  assert.strictEqual(result.filings.length, 2, 'only the two can\'t-tell console items are filed; the refuted drop and the digest are not');
+  assert.deepStrictEqual(result.items.filter((i) => /Low-confidence|Contested/.test(i.section)).map((i) => i.resolution), ['filed', 'digested']);
+  assert.strictEqual(result.filings.length, 1, 'only the file-recommended can\'t-tell item is filed; the refuted drop, the digest and the drop-recommended item are not');
+  assert.strictEqual(result.digests.length, 1);
 });
 
 test('a staged file settled by a dropped verdict (no tiebreak field) stays dropped and plans no filing', () => {
@@ -2076,6 +2174,13 @@ test('defers-yes-valid-reason-names-file-record: a deferral ruling resolves appl
   assert.notStrictEqual(resolveStaged('sdd-ruling-1.md', RULING('Defers: no\n')).reason, RATIFY_FILES_RECORD_REASON);
 });
 
+test('AC6.1: followup-recheck- resolves pending with reason followup-recheck-human-call under console-auto — resolveAll applies no tier, so the stance is the same at every tier (#6284)', () => {
+  const item = resolveStaged('followup-recheck-12.md', 'Title: close #12\n\nbody');
+  assert.strictEqual(item.section, 'Queue writes');
+  assert.strictEqual(item.resolution, 'pending');
+  assert.strictEqual(item.reason, 'followup-recheck-human-call');
+});
+
 test('defers-yes-no-reason-pending: Defers: yes with no Defer-reason resolves pending (#3880 AC3)', () => {
   const item = resolveStaged('sdd-ruling-1.md', RULING('Defers: yes\n'));
   assert.strictEqual(item.resolution, 'pending');
@@ -2266,6 +2371,7 @@ test('stagingExemption matches with or without the extension and returns null ot
 test('#3488 newly mapped producer prefixes classify to their section and reason', () => {
   assert.deepStrictEqual(classifyStagedItem('upstream-draft-1.md'), { section: 'Upstream feedback', reason: 'hand-off-draft' });
   assert.deepStrictEqual(classifyStagedItem('premise-satisfied-7.md'), { section: 'Queue writes', reason: 'premise-satisfied-close-proposal' });
+  assert.deepStrictEqual(classifyStagedItem('followup-recheck-12.md'), { section: 'Queue writes', reason: 'followup-recheck-human-call' });
   assert.deepStrictEqual(classifyStagedItem('sibling-premise-disproof-7.md'), { section: 'Pending review', reason: 'sibling-premise-disproof-note' });
   // #3926 owns this id: its own Reflection insights section, executed by
   // review-console.md "On approval" step 10, so no pending reason.
@@ -2293,6 +2399,32 @@ test('#3488: resolveAll never auto-applies a plan-citation or translation propos
   }
 });
 
+test('#4038: every design-decision item, the nudge included, classifies pending with the human-remedy reason', () => {
+  for (const id of ['design-decision-1.md', 'design-decision-nudge.md']) {
+    assert.deepStrictEqual(classifyStagedItem(id), { section: 'Pending review', reason: 'design-decision-human-remedy' }, id);
+  }
+});
+
+test('#4038: resolveAll never applies a design-decision item — it resolves pending, not "patch validated"', () => {
+  const body = 'Kind: decisions\nMessage: DESIGN.md is silent on the new card\nRemedy: /impeccable:impeccable document\n';
+  const runDir = fixture({ staged: { 'design-decision-1.md': body, 'polish-suggestion-1.md': 'polish' } });
+  const items = resolveAll({ runDir, policy: 'console-auto', deps: deps() }).items;
+  const item = items.find((i) => i.id === 'design-decision-1.md');
+  assert.ok(item, 'the design decision is an item');
+  assert.strictEqual(item.resolution, 'pending');
+  assert.strictEqual(item.reason, 'design-decision-human-remedy');
+  assert.ok(!/patch validated/.test(item.reason));
+  assert.strictEqual(items.find((i) => i.id === 'polish-suggestion-1.md').resolution, 'apply', 'the shared Pending-review row keeps its apply stance');
+});
+
+test('#4038: review-console-appendix.md keeps design-decision-* out of the apply list and names its pending reason', () => {
+  const text = APPENDIX.replace(/\s+/g, ' ');
+  const applyList = text.match(/a staged `\.md` proposal \(([^)]*)\) applied/);
+  assert.ok(applyList, 'the apply-executes list is present');
+  assert.ok(!applyList[1].includes('design-decision-'), applyList[1]);
+  assert.ok(text.includes('pending — design-decision-human-remedy'));
+});
+
 test('#3488: resolveAll never auto-files an upstream-draft hand-off — it resolves pending', () => {
   const runDir = fixture({ staged: { 'upstream-draft-1.md': 'draft body' } });
   const item = resolveAll({ runDir, policy: 'console-auto', deps: deps() }).items.find((i) => i.id === 'upstream-draft-1.md');
@@ -2305,4 +2437,150 @@ test('#4636: review-console-appendix.md names every reference-repair pending rea
   assert.ok(reasons.length >= 4);
   const text = APPENDIX.replace(/\s+/g, ' ');
   for (const reason of reasons) assert.ok(text.includes('pending — ' + reason), reason);
+});
+
+// #5050: console-resolve.js's default runner bounds each spawn by command — `gh` follows
+// CLAUDE_TWEAKS_GH_TIMEOUT_MS (floored at 30000 by the batched bound), `git` follows
+// CLAUDE_TWEAKS_GIT_TIMEOUT_MS. `run` reaches a `gh` spawn only past a full resolve fixture, so the
+// probe calls the exported default runner directly: it is the very function `deps.execFile || defaultExecFile` picks.
+describe('default exec bound (#5050)', () => {
+  const { captureExecTimeouts } = require('../../helpers/gh-timeout-probe');
+  const CONSOLE_RESOLVE = require.resolve('../../../plugin/bin/console-resolve');
+  const probe = (cmd, env) => captureExecTimeouts({
+    env,
+    modulePaths: [CONSOLE_RESOLVE],
+    exercise: (setEnv) => {
+      setEnv();
+      require(CONSOLE_RESOLVE).defaultExecFile(cmd, ['--version']);
+    },
+  });
+
+  test('console-resolve gh spawn follows CLAUDE_TWEAKS_GH_TIMEOUT_MS above the floor', () => {
+    assert.strictEqual(probe('gh', { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '45000' }).gh[0], 45000);
+  });
+
+  test('console-resolve gh spawn keeps the 30000 default when the env is unset', () => {
+    assert.strictEqual(probe('gh', { CLAUDE_TWEAKS_GH_TIMEOUT_MS: undefined }).gh[0], 30000);
+  });
+
+  test('console-resolve gh spawn is floored at 30000 when the env is 10000', () => {
+    assert.strictEqual(probe('gh', { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '10000' }).gh[0], 30000);
+  });
+
+  test('console-resolve git spawn follows CLAUDE_TWEAKS_GIT_TIMEOUT_MS', () => {
+    assert.strictEqual(probe('git', { CLAUDE_TWEAKS_GIT_TIMEOUT_MS: '90000' }).git[0], 90000);
+  });
+
+  test('console-resolve git spawn keeps the 30000 default when the env is unset', () => {
+    assert.strictEqual(probe('git', { CLAUDE_TWEAKS_GIT_TIMEOUT_MS: undefined }).git[0], 30000);
+  });
+});
+
+describe('merge half stale until a merge-check verdict is logged (#5833)', () => {
+  const { recheckMerge } = require(MOD);
+  const { verdictText } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'dispatch', 'merge-verdict'));
+  const NOW = new Date(2026, 8, 6, 12, 0, 0);
+  const passLine = (n) => formatEntry({ status: 'AUTO', now: NOW, step: 'Auto-merge short-circuit', text: verdictText(n), reversibility: 'n/a' });
+  const needsHumanLine = (n) => formatEntry({ status: 'AUTO', now: NOW, step: 'Auto-merge short-circuit', text: verdictText(n, 'needs-human'), reversibility: 'n/a' });
+  const unparsedLine = (n) => passLine(n).replace(/\. Reversibility: n\/a\./, ' — extra. Reversibility: n/a.');
+  const recheckLine = formatEntry({ status: 'AUTO', now: NOW, step: 'Merge re-check', text: '#7 merge withheld at merge time (needs-human): assess-agent-autonomy needs-human', reversibility: 'n/a' });
+  const run = (decisions, headers = [7]) => resolveAll({ runDir: fixture({ decisions, headers }), policy: 'console-auto', deps: deps() });
+  const MERGE = { resolution: 'merge', reason: 'every member carries auto:build with auto:merge or a matured auto:merge-pending; no needs-human verdict' };
+
+  test('AC2.1: with the short-circuit applicable and no merge-check verdict logged yet, the merge half is marked stale, not resolved', () => {
+    const r = run('');
+    assert.deepStrictEqual(r.mergeStale.unconfirmed, [7]);
+    assert.match(r.mergeStale.reason, /#7: no confirmed merge-check verdict in decisions\.md yet \(latest: none\)/);
+    const re = recheckMerge(r.merge, '', r.mergeStale);
+    assert.strictEqual(re.hit, true);
+    assert.strictEqual(re.kind, 'unconfirmed');
+  });
+
+  test('AC3.1: a passing verdict logged before the resolve still resolves merge, reason unchanged, no mergeStale', () => {
+    const r = run(passLine(7));
+    assert.deepStrictEqual(r.merge, MERGE);
+    assert.strictEqual(r.mergeStale, null);
+  });
+
+  test('an unparsed pass line, or a verdict for another record, leaves member #7 unconfirmed', () => {
+    const a = run(unparsedLine(7));
+    assert.deepStrictEqual(a.mergeStale.unconfirmed, [7]);
+    assert.match(a.mergeStale.reason, /latest: unparsed/);
+    assert.deepStrictEqual(run(passLine(70)).mergeStale.unconfirmed, [7]);
+  });
+
+  test('a bundle is stale until every member has a confirmed verdict', () => {
+    assert.deepStrictEqual(run(passLine(7), [7, 8]).mergeStale.unconfirmed, [8]);
+    assert.strictEqual(run(`${passLine(7)}\n${passLine(8)}`, [7, 8]).mergeStale, null);
+  });
+
+  test('recheckMerge: a needs-human line logged after merge flips it to leave-open and names the line', () => {
+    const line = needsHumanLine(7);
+    const re = recheckMerge(MERGE, `${passLine(7)}\n${line}\n`, null);
+    assert.strictEqual(re.hit, true);
+    assert.strictEqual(re.kind, 'needs-human');
+    assert.strictEqual(re.changed, true);
+    assert.strictEqual(re.lateVerdict, line.replace(/^- /, ''));
+    assert.deepStrictEqual(re.merge, { resolution: 'leave-open', reason: `merge withheld at merge time (needs-human): ${re.lateVerdict}`, recheckedFrom: 'merge' });
+  });
+
+  test('recheckMerge: an unparsed verdict line is a hit', () => {
+    const re = recheckMerge(MERGE, `${unparsedLine(7)}\n`, null);
+    assert.strictEqual(re.kind, 'unparsed');
+    assert.strictEqual(re.lateVerdict, '#7 merge-check verdict line unparsed');
+    assert.strictEqual(re.changed, true);
+  });
+
+  test('recheckMerge: a stale member whose pass verdict was logged after the resolve is no hit, one still missing is a hit', () => {
+    const stale = { unconfirmed: [7] };
+    const ok = recheckMerge(MERGE, `${passLine(7)}\n`, stale);
+    assert.strictEqual(ok.hit, false);
+    assert.deepStrictEqual(ok.merge, MERGE);
+    const miss = recheckMerge(MERGE, '', stale);
+    assert.strictEqual(miss.hit, true);
+    assert.strictEqual(miss.kind, 'unconfirmed');
+    assert.strictEqual(miss.lateVerdict, '#7 has no confirmed merge-check verdict at merge time (latest: none)');
+  });
+
+  test('recheckMerge ignores its own Merge re-check line', () => {
+    for (const [decisions, stale] of [[`${passLine(7)}\n${needsHumanLine(7)}\n`, null], [`${unparsedLine(7)}\n`, null], ['', { unconfirmed: [7] }]]) {
+      const first = recheckMerge(MERGE, decisions, stale);
+      const second = recheckMerge(MERGE, `${decisions}${recheckLine}\n`, stale);
+      assert.strictEqual(second.kind, first.kind);
+      assert.strictEqual(second.lateVerdict, first.lateVerdict);
+    }
+  });
+
+  test('recheckMerge also ignores its own spec-scoped Merge re-check line (spec #N — Merge re-check)', () => {
+    const specLine = formatEntry({ status: 'AUTO', now: NOW, step: 'Merge re-check', spec: 7, text: verdictText(7, 'needs-human'), reversibility: 'n/a' });
+    assert.match(specLine, /spec #7 — Merge re-check/);
+    const first = recheckMerge(MERGE, `${passLine(7)}\n`, null);
+    const second = recheckMerge(MERGE, `${passLine(7)}\n${specLine}\n`, null);
+    assert.strictEqual(first.hit, false);
+    assert.strictEqual(second.hit, false);
+  });
+
+  test('recheckMerge: a mergeStale marking the members unresolved is an unconfirmed hit naming members-unresolved', () => {
+    const re = recheckMerge(MERGE, '', { unconfirmed: [], membersUnresolved: true });
+    assert.deepStrictEqual([re.hit, re.kind, re.changed], [true, 'unconfirmed', true]);
+    assert.match(re.lateVerdict, /^members-unresolved/);
+    assert.strictEqual(re.merge.resolution, 'leave-open');
+  });
+
+  test('recheckMerge: a hit with no stored merge (null) or a stored leave-open reports hit:true, changed:false', () => {
+    const stale = { unconfirmed: [7] };
+    const lo = { resolution: 'leave-open', reason: 'x' };
+    const a = recheckMerge(null, '', stale);
+    assert.deepStrictEqual([a.hit, a.changed, a.merge], [true, false, null]);
+    const b = recheckMerge(lo, '', stale);
+    assert.deepStrictEqual([b.hit, b.changed, b.merge], [true, false, lo]);
+  });
+
+  test('recheckMerge: a clean merge (only a pass line) and empty decisions with no mergeStale are no hit', () => {
+    for (const d of [`${passLine(7)}\n`, '']) {
+      const re = recheckMerge(MERGE, d, null);
+      assert.deepStrictEqual([re.hit, re.kind, re.changed, re.lateVerdict], [false, null, false, null]);
+      assert.deepStrictEqual(re.merge, MERGE);
+    }
+  });
 });

@@ -112,7 +112,7 @@ node -e "
 "
 ```
 
-Each result flags in the Needs Attention table: `{ref} — sampling floor: the {ordinal}th machine-granted merge on record, still awaiting a verdict — /claude-tweaks:demo {ref}`. `{ordinal}` is the record's position in the full, unbounded machine-granted-merge history — there is no reset; ordinal 40 always means the 40th one ever, not "40 since some earlier checkpoint." An empty result means nothing sampled this run — omit the flag entirely rather than rendering a zero row, same convention as the Justification/Definition flags above. A record already resolved (`facets.acceptance` is `approved` or `changes-requested`) never appears here even if its ordinal lands on a boundary — sampling only ever asks for a verdict that hasn't been given yet, it never re-flags a settled one.
+Each result flags in the Needs Attention table: `{ref} — sampling floor: the {ordinal}th machine-granted merge on record, still awaiting a verdict — /claude-tweaks:accept {ref}`. `{ordinal}` is the record's position in the full, unbounded machine-granted-merge history — there is no reset; ordinal 40 always means the 40th one ever, not "40 since some earlier checkpoint." An empty result means nothing sampled this run — omit the flag entirely rather than rendering a zero row, same convention as the Justification/Definition flags above. A record already resolved (`facets.acceptance` is `approved` or `changes-requested`) never appears here even if its ordinal lands on a boundary — sampling only ever asks for a verdict that hasn't been given yet, it never re-flags a settled one.
 
 ### PR-state join (in-flight runs and tombstones)
 
@@ -277,11 +277,11 @@ Cheap counts only — detail stays `/claude-tweaks:backlog`'s and `/tidy`'s job,
 not `/help`'s. Skip silently (same fail-open detection ladder as Stage 4.5)
 when `gh` is unavailable, unauthenticated, or the repo has no GitHub remote.
 
-Scan per `_shared/github-pr-scan-triage.md`, **`triage-queue`** scope (split from `_shared/github-pr-scan.md`, #4820). The dispatcher inlines `_shared/forge-detection.md`'s Detection Ladder plus that file's `triage-queue` scope section and the three-line render format into this agent's prompt — subagents cannot read sibling files. This is the single source for these three counts; this stage does not compute them independently (previously it did, and its own version double-counted `status:blocked` issues inside "pending authorization" — the shared scope excludes them). Origin-agnostic: every `ready` record counts toward pending authorization regardless of origin (health-filed, captured, or human-filed, with or without a `by:*` label) — matching `/claude-tweaks:backlog refine`'s own origin-agnostic `ready`-queue pull, which tiers no health-skill origin specially.
+Scan per `_shared/github-pr-scan-triage.md`, **`triage-queue`** scope (split from `_shared/github-pr-scan.md`, #4820). The dispatcher inlines `_shared/forge-detection.md`'s Detection Ladder plus that file's `triage-queue` scope section and the four-line render format into this agent's prompt — subagents cannot read sibling files. This is the single source for these four counts; this stage does not compute them independently (previously it did, and its own version double-counted `status:blocked` issues inside "pending authorization" — the shared scope excludes them). Origin-agnostic: every `ready` record counts toward pending authorization regardless of origin (health-filed, captured, or human-filed, with or without a `by:*` label) — matching `/claude-tweaks:backlog refine`'s own origin-agnostic `ready`-queue pull, which tiers no health-skill origin specially.
 
 ## Stage 4.7: Acceptance Queue
 
-Cheap list only — the walkthrough stays `/claude-tweaks:demo`'s job, not `/help`'s. `/demo` no
+Cheap list only — the walkthrough stays `/claude-tweaks:accept`'s job, not `/help`'s. `/demo` no
 longer sweeps the pending acceptance backlog itself (it resolves only the items you name — this
 session's own recall-detected work, one explicit `#N`, or an explicit `#N,#M` list taken one at
 a time — never a scan), so this stage is the sole discovery surface for which records are
@@ -315,8 +315,8 @@ node -e "
 ```
 
 Render as the same one-line format as the `github-issues` scope: `Awaiting sign-off: **{N}
-records** — #{id1} ({title1}), #{id2} ({title2}), ... — run /demo #{id1},#{id2},... to review them
-all` (a single ref when `{N}` is 1: `run /demo #{id1}`) — omit entirely when the count is 0.
+records** — #{id1} ({title1}), #{id2} ({title2}), ... — run /claude-tweaks:accept #{id1},#{id2},... to review them
+all` (a single ref when `{N}` is 1: `run /claude-tweaks:accept #{id1}`) — omit entirely when the count is 0.
 
 ## Stage 4.8: Trust Table (GitHub)
 
@@ -409,17 +409,18 @@ claude-tweaks v{version} (Stage 0 — see its own section for the missing/unread
 
 ### Triage Queue
 
-*(Omit this section entirely when the GitHub scan was skipped, or when all three counts are 0.)*
+*(Omit this section entirely when the GitHub scan was skipped, or when all four counts are 0.)*
 
 - Pending authorization: **{N} records awaiting your decision** — run `/claude-tweaks:backlog refine` (omit this line when N is 0)
-- Blocked: **{N} records blocked** (retry ceiling, or a plan-review question awaiting an answer) — run `/claude-tweaks:backlog refine` to review (omit this line when N is 0)
+- Blocked: **{N} records blocked** (retry ceiling) — run `/claude-tweaks:backlog refine` to review (omit this line when N is 0)
+- Awaiting answer: **{N} records awaiting a plan-review answer** — run /claude-tweaks:backlog attention (omit this line when N is 0)
 - Auto-merged this week: **{N} auto-merges** on the default branch in the last 7 days (omit this line when N is 0)
 
 ### Acceptance Queue
 
 *(Omit this section entirely when the GitHub scan was skipped, or the count is 0.)*
 
-- Awaiting sign-off: **{N} records** — #{n1} ({title1}), #{n2} ({title2}), ... — run `/claude-tweaks:demo #N` on any of these
+- Awaiting sign-off: **{N} records** — #{n1} ({title1}), #{n2} ({title2}), ... — run `/claude-tweaks:accept #N` on any of these
 
 ### Trust Table
 

@@ -4,12 +4,13 @@ const assert = require('node:assert');
 const { execFileSync, spawnSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'docs-health.js');
 
 function tmpRepo() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'docs-health-durable-'));
+  return scratchDir('docs-health-durable-');
 }
 
 test('retry-queue drain prints [] against a repo with no health-state branch', () => {

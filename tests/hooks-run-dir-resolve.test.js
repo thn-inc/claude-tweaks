@@ -11,6 +11,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const path = require('path');
 const { gitRepo, linkedWorktreeOf, harnessWorktreeOf, fixtureGit } = require('./helpers/git-fixtures');
 const { resolve, formatTimestamp, adoptionRefusal } = require('../plugin/bin/lib/hooks/run-dir-resolve');
@@ -449,6 +450,27 @@ test('standalone fallback with --create mints a directory with decisions.md and 
   assert.ok(fs.existsSync(path.join(out.path, 'decisions.md')));
 });
 
+// #4807: a caller passing a name already ending in `-standalone` (seen 3 times in ~1000 runs,
+// e.g. `--standalone backlog-standalone`) minted `{ts}-backlog-standalone-standalone`.
+test('AC1.1 #4807: --standalone with a name already ending in -standalone is not suffixed twice', () => {
+  const main = gitRepo();
+  const now = new Date('2026-03-04T05:06:07Z');
+  const out = resolve({ cwd: main, env: {}, standalone: 'backlog-standalone', create: true, now });
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.created, true);
+  assert.strictEqual(path.basename(out.path), '2026-03-04T050607-backlog-standalone');
+  assert.ok(fs.statSync(path.join(out.path, 'staged')).isDirectory());
+  // Only a trailing `-standalone` segment counts: a leading `standalone-x` (no leading dash)
+  // and a mid-name `-standalone-x` segment are both still suffixed.
+  const mid = resolve({ cwd: gitRepo(), env: {}, standalone: 'standalone-x', create: true, now });
+  assert.strictEqual(path.basename(mid.path), '2026-03-04T050607-standalone-x-standalone');
+  const midDash = resolve({ cwd: gitRepo(), env: {}, standalone: 'backlog-standalone-x', create: true, now });
+  assert.strictEqual(path.basename(midDash.path), '2026-03-04T050607-backlog-standalone-x-standalone');
+  // The bare word `standalone` has no leading dash, so it is suffixed (`endsWith('standalone')` would not).
+  const bare = resolve({ cwd: gitRepo(), env: {}, standalone: 'standalone', create: true, now });
+  assert.strictEqual(path.basename(bare.path), '2026-03-04T050607-standalone-standalone');
+});
+
 // #848: record #764's run dir was minted as `20260817T173343-spec-764` — no
 // dashes — invisible to context.js's RUN_ID_RE-filtered enumeration.
 // formatTimestamp is the one implementation every one of the three mint
@@ -477,6 +499,135 @@ test('plain spec-slug fallback with --create mkdir-only mints a bare run directo
   assert.strictEqual(path.basename(out.path), '2026-03-04T050607-spec-88');
   assert.ok(fs.statSync(out.path).isDirectory());
   assert.ok(!fs.existsSync(path.join(out.path, 'decisions.md')), 'the mkdir-only mint shape must not pre-populate decisions.md');
+  assert.ok(!fs.existsSync(path.join(out.path, 'staged')), 'the mkdir-only mint shape must not pre-populate staged/');
+  const manifest = JSON.parse(fs.readFileSync(path.join(out.path, 'manifest.json'), 'utf8'));
+  assert.strictEqual(manifest.v, 1);
+  assert.strictEqual(manifest.runId, path.basename(out.path));
+  assert.strictEqual(manifest.lane, 'unknown');
+  assert.strictEqual(manifest.ceremonyProfile, null);
+});
+
+// #5903: the mint gathers the run-start facts itself — policy hash, base commit, model profile.
+test('#5903: a --create mint records the policy hash, the integration tip as baseCommit, and the model profile', () => {
+  const main = gitRepo({ branch: 'main' });
+  fixtureGit(['-C', main, 'update-ref', 'refs/remotes/origin/main', 'HEAD']);
+  fixtureGit(['-C', main, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main']);
+  const tip = String(fixtureGit(['-C', main, 'rev-parse', 'HEAD'])).trim();
+  const out = resolve({ cwd: main, env: {}, specSlug: 'spec-89', create: true, now: new Date('2026-03-04T05:06:07Z') });
+  assert.strictEqual(out.ok, true);
+  const manifest = JSON.parse(fs.readFileSync(path.join(out.path, 'manifest.json'), 'utf8'));
+  assert.match(manifest.policyHash, /^sha256:[0-9a-f]{64}$/);
+  assert.strictEqual(manifest.baseCommit, tip);
+  assert.ok(['economy', 'default', 'max-rigor'].includes(manifest.modelProfile.stance), JSON.stringify(manifest.modelProfile));
+  assert.ok(Object.prototype.hasOwnProperty.call(manifest.modelProfile, 'ceiling'));
+});
+
+// #5903: the mint writes manifest.json beside the directory it creates.
+test('#5903: --spec-slug drive-5 --create writes lane driver in manifest.json', () => {
+  const main = gitRepo();
+  const out = resolve({ cwd: main, env: {}, specSlug: 'drive-5', create: true, now: new Date('2026-03-04T05:06:07Z') });
+  assert.strictEqual(out.ok, true);
+  const manifest = JSON.parse(fs.readFileSync(path.join(out.path, 'manifest.json'), 'utf8'));
+  assert.strictEqual(manifest.lane, 'driver');
+});
+
+test('#5903: near-miss --spec-slug values (drive-5x, drive-) write lane unknown, not driver', () => {
+  for (const specSlug of ['drive-5x', 'drive-']) {
+    const main = gitRepo();
+    const out = resolve({ cwd: main, env: {}, specSlug, create: true, now: new Date('2026-03-04T05:06:07Z') });
+    assert.strictEqual(out.ok, true, specSlug);
+    const manifest = JSON.parse(fs.readFileSync(path.join(out.path, 'manifest.json'), 'utf8'));
+    assert.strictEqual(manifest.lane, 'unknown', specSlug);
+  }
+});
+
+test('#5903: a mint with env {} (the driver\'s call shape) still writes a non-null pluginVersion', () => {
+  const pluginRoot = scratchDir('ct-rdr-plugin-');
+  fs.mkdirSync(path.join(pluginRoot, '.claude-plugin'), { recursive: true });
+  fs.writeFileSync(path.join(pluginRoot, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'fixture', version: '9.8.7' }));
+  const saved = process.env.CLAUDE_PLUGIN_ROOT;
+  process.env.CLAUDE_PLUGIN_ROOT = pluginRoot;
+  try {
+    const main = gitRepo();
+    const out = resolve({ cwd: main, env: {}, specSlug: 'drive-6', create: true, now: new Date('2026-03-04T05:06:07Z') });
+    assert.strictEqual(out.ok, true);
+    const manifest = JSON.parse(fs.readFileSync(path.join(out.path, 'manifest.json'), 'utf8'));
+    assert.strictEqual(manifest.pluginVersion, '9.8.7');
+  } finally {
+    if (saved === undefined) delete process.env.CLAUDE_PLUGIN_ROOT;
+    else process.env.CLAUDE_PLUGIN_ROOT = saved;
+  }
+});
+
+test('#5903: standalone mint still pre-populates staged/ and decisions.md and writes lane unknown', () => {
+  const main = gitRepo();
+  const out = resolve({ cwd: main, env: {}, standalone: 'tidy', create: true, now: new Date('2026-03-04T05:06:07Z') });
+  assert.strictEqual(out.ok, true);
+  assert.ok(fs.statSync(path.join(out.path, 'staged')).isDirectory());
+  assert.ok(fs.existsSync(path.join(out.path, 'decisions.md')));
+  const manifest = JSON.parse(fs.readFileSync(path.join(out.path, 'manifest.json'), 'utf8'));
+  assert.strictEqual(manifest.lane, 'unknown');
+  assert.strictEqual(manifest.runId, path.basename(out.path));
+});
+
+test('#5903: standalone \'adhoc\' mint writes no manifest.json and still pre-populates staged/ and decisions.md', () => {
+  const main = gitRepo();
+  const out = resolve({ cwd: main, env: {}, standalone: 'adhoc', create: true, now: new Date('2026-03-04T05:06:07Z') });
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.created, true);
+  assert.ok(fs.statSync(path.join(out.path, 'staged')).isDirectory());
+  assert.ok(fs.existsSync(path.join(out.path, 'decisions.md')));
+  assert.ok(!fs.existsSync(path.join(out.path, 'manifest.json')), 'a hook-stamped ad-hoc dir carries no manifest');
+});
+
+test('#5903: a standalone mint with any other name (tidy) still writes lane unknown', () => {
+  const main = gitRepo();
+  const out = resolve({ cwd: main, env: {}, standalone: 'tidy', create: true, now: new Date('2026-03-04T05:06:07Z') });
+  const manifest = JSON.parse(fs.readFileSync(path.join(out.path, 'manifest.json'), 'utf8'));
+  assert.strictEqual(manifest.lane, 'unknown');
+});
+
+test('#5903: re-resolving an existing run writes no manifest and leaves an existing one byte-identical', () => {
+  const main = gitRepo();
+  // Resolution step 2 (a --standalone --spec-slug call adopts a matching run): no manifest appears.
+  const bare = mkRunDir(main, '2026-01-01T000000-spec-31');
+  const found = resolve({ cwd: main, env: {}, specSlug: 'spec-31', standalone: 'spec-31', create: true });
+  assert.strictEqual(found.created, false);
+  assert.strictEqual(found.path, bare);
+  assert.ok(!fs.existsSync(path.join(bare, 'manifest.json')), 'finding an existing run must not write a manifest');
+  // Resolution step 1 (PIPELINE_RUN_DIR): an existing manifest is left byte-identical.
+  const withManifest = mkRunDir(main, '2026-01-01T000000-spec-32');
+  const file = path.join(withManifest, 'manifest.json');
+  fs.writeFileSync(file, '{"v":1,"keep":"me"}\n');
+  const again = resolve({ cwd: main, env: { PIPELINE_RUN_DIR: withManifest }, specSlug: 'spec-32', create: true });
+  assert.strictEqual(again.created, false);
+  assert.strictEqual(again.path, withManifest);
+  assert.strictEqual(fs.readFileSync(file, 'utf8'), '{"v":1,"keep":"me"}\n');
+  const bareEnv = mkRunDir(main, '2026-01-01T000000-spec-33');
+  const viaEnv = resolve({ cwd: main, env: { PIPELINE_RUN_DIR: bareEnv }, specSlug: 'spec-33', create: true });
+  assert.strictEqual(viaEnv.created, false);
+  assert.ok(!fs.existsSync(path.join(bareEnv, 'manifest.json')));
+});
+
+test('#5903: a manifest write failure does not change the resolve result', (t) => {
+  const main = gitRepo();
+  const realRename = fs.renameSync;
+  t.mock.method(fs, 'renameSync', (from, to) => {
+    if (/manifest\.json\.tmp-\d+$/.test(String(from))) {
+      throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+    }
+    return realRename(from, to);
+  });
+  const stderr = [];
+  t.mock.method(process.stderr, 'write', (chunk) => { stderr.push(String(chunk)); return true; });
+  const out = resolve({ cwd: main, env: {}, specSlug: 'spec-89', create: true, now: new Date('2026-03-04T05:06:07Z') });
+  assert.strictEqual(stderr.length, 1, 'the dropped write leaves exactly one stderr line');
+  assert.match(stderr[0], /^claude-tweaks: run-manifest: .*EACCES/);
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.created, true);
+  assert.strictEqual(path.basename(out.path), '2026-03-04T050607-spec-89');
+  assert.ok(fs.statSync(out.path).isDirectory());
+  assert.ok(!fs.existsSync(path.join(out.path, 'manifest.json')));
 });
 
 test('--create with neither --standalone nor --spec-slug fails loud (nothing to name the new directory)', () => {
@@ -513,7 +664,7 @@ test('--root-only prints the anchored main checkout root, ignoring every other f
 
 test('not a git repo at all: fails loud rather than silently resolving to something', () => {
   const os = require('os');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-rdr-norepo-'));
+  const dir = scratchDir('ct-rdr-norepo-');
   const out = resolve({ cwd: dir, env: {} });
   assert.strictEqual(out.ok, false);
   assert.match(out.message, /git repo|not a git/i);
@@ -637,8 +788,11 @@ test('#4677: newest closed match wins across live-clean and archived (newer name
   assert.strictEqual(resolve({ cwd: main2, env: {}, specSlug: 'spec-50', archived: true }).path, archivedNew);
 });
 
-// The name-tie order: the archived twin wins. The #208 filter itself is pinned by the spec-56 case below.
-test('#4677 #208: when a live clean dir and its archived twin share a run-id, the archived copy is returned', () => {
+// Pins the outcome only: both twins record a `pr`, and the archived copy is returned because `archiveStatus`
+// drops the live twin before the candidate sort. The archived-first name-tie comparator is reachable only
+// when `archiveStatus` reads `unknown`, which no fixture here produces; the spec-56 case below discriminates
+// the filter alone.
+test('#4677 #208: a live clean dir with an archived twin (both recording a pr) resolves to the archived copy', () => {
   const main = gitRepo();
   const live = mkRunDir(main, '2026-01-04T000000-spec-51');
   writeRunState(live, { status: 'clean', worktree: null, pr: { number: 4, url: 'u' } });
@@ -744,6 +898,33 @@ test('#4677: --archived refuses an older closed match when a newer live run of t
   assert.strictEqual(out.reason, 'archived-superseded');
   assert.match(out.message, /2026-02-01T000000-spec-62/);
   assert.match(out.message, /status interrupted/);
+});
+
+// #4807: the supersede rule was pinned only by a newer `interrupted` run. An `active` run step 2
+// refuses (its recorded worktree is gone) is just as open, and with two open runs the newest is named.
+test('AC1.1 #4807: --archived refuses an older closed match when a newer live run is active with its worktree gone', () => {
+  const main = gitRepo();
+  writeRunState(mkArchived(main, '2026-01-01T000000-spec-64'), { status: 'clean', pr: { number: 20, url: 'u' } });
+  writeRunState(mkRunDir(main, '2026-02-01T000000-spec-64'), {
+    status: 'active', worktree: path.join(main, '.claude', 'worktrees', 'gone-spec-64'), pr: { number: 21, url: 'u' },
+  });
+  const out = resolve({ cwd: main, env: {}, specSlug: 'spec-64', archived: true });
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, 'archived-superseded');
+  assert.match(out.message, /2026-02-01T000000-spec-64/);
+  assert.match(out.message, /status active/);
+});
+
+test('AC1.1 #4807: with two newer open live runs, --archived names the newest as the superseder', () => {
+  const main = gitRepo();
+  writeRunState(mkArchived(main, '2026-01-01T000000-spec-65'), { status: 'clean', pr: { number: 22, url: 'u' } });
+  writeRunState(mkRunDir(main, '2026-02-01T000000-spec-65'), { status: 'interrupted', worktree: null });
+  writeRunState(mkRunDir(main, '2026-03-01T000000-spec-65'), { status: 'interrupted', worktree: null });
+  const out = resolve({ cwd: main, env: {}, specSlug: 'spec-65', archived: true });
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, 'archived-superseded');
+  assert.match(out.message, /2026-03-01T000000-spec-65/);
+  assert.doesNotMatch(out.message, /2026-02-01T000000-spec-65/);
 });
 
 test('#4677: an older open live run, or a newer live dir whose run-state.json does not parse, does not stop the fallback', () => {

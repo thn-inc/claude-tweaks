@@ -4,6 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { readRunState } = require('../plugin/bin/lib/hooks/context');
@@ -11,6 +12,9 @@ const { shouldRunFull } = require('../plugin/bin/lib/hooks/bash-prefilter');
 const { linkedWorktreeOf } = require('./helpers/git-fixtures');
 const { chmodDenialSkip } = require('./helpers/root');
 const { shellQuote } = require('./helpers/shell-quote');
+const { spawnCli } = require('./helpers/run-cli');
+const { hookEnv, runHookCli } = require('./helpers/hook-event');
+const { fixtureHomeEnv } = require('./helpers/fixture-home');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
@@ -20,33 +24,20 @@ const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 // .claude-tweaks/pipelines/ from there write fixture events into REAL run
 // dirs (the #657 pollution incident). Calls that don't care about cwd get an
 // isolated, non-git sandbox instead.
-const HOOK_SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-disp-sandbox-'));
+const HOOK_SANDBOX = scratchDir('ct-disp-sandbox-');
 
-function runHook(args, { input = '', cwd = HOOK_SANDBOX, env = {} } = {}) {
-  try {
-    const stdout = execFileSync('node', [HOOKS, ...args], {
-      // #1130: `PIPELINE_RUN_DIR: ''` neutralizes any ambient run-dir env var
-      // so a call that doesn't explicitly pass one can't resolve against
-      // whatever real run happens to be ambient in this test runner's own
-      // process.env (e.g. when npm test itself runs inside a /flow-dispatched
-      // shell). A caller that needs a run dir still passes it explicitly via
-      // `env`, which wins because it spreads last.
-      // #1337: CT_HOOKS_TEST_MODE tells pre-tool-use.js's gate-denial write
-      // this denial came from the test suite's own exercise of the deny
-      // logic, not a real operator action — see that file's appendEvent call
-      // and friction-events.js's readEvents, which excludes tagged events
-      // from aggregation. A caller that needs to assert real (untagged)
-      // denial behavior overrides it via `env`.
-      input, cwd, encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1', ...env },
-    });
-    return { code: 0, stdout, stderr: '' };
-  } catch (e) {
-    return { code: e.status, stdout: e.stdout || '', stderr: e.stderr || '' };
-  }
+// #5377: runs hooks.js in-process through runHookCli. hookEnv carries what the old spawn spread over
+// process.env: #1130's `PIPELINE_RUN_DIR: ''` (an ambient run-dir env var cannot resolve a run for a
+// call that did not pass one; a caller that needs a run dir passes it through `env`, which wins) and
+// #1337's CT_HOOKS_TEST_MODE (the gate-denial write tags its event as the suite's own exercise of the
+// deny logic; a caller that asserts real, untagged denial behavior overrides it via `env`).
+async function runHook(args, { input = '', cwd = HOOK_SANDBOX, env = {}, deps, fresh } = {}) {
+  const { code, stdout, stderr } = await runHookCli(args, { input, cwd, env: hookEnv(env), deps, fresh });
+  return { code, stdout, stderr };
 }
 
 function tmpProject() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-disp-'));
+  const dir = scratchDir('ct-disp-');
   // #790: an explicit --run must resolve under a real git checkout (see
   // bin/hooks.js's resolveRunArg anchoring check) — a bare, non-git tmp dir
   // no longer counts as a valid anchor for any run dir nested under it.
@@ -62,7 +53,7 @@ function tmpProject() {
 }
 
 function gitRepo() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-disp-repo-'));
+  const dir = scratchDir('ct-disp-repo-');
   execFileSync('git', ['-C', dir, 'init', '-q']);
   return fs.realpathSync(dir);
 }
@@ -72,9 +63,13 @@ function writeWorktreeAlwaysPolicy(project) {
   fs.writeFileSync(path.join(project, '.claude-tweaks', 'policy.yml'), 'worktree-always: true\n');
 }
 
-test('invariant: every event exits 0 on garbage stdin, no stdout noise', () => {
+test('invariant: every event exits 0 on garbage stdin, no stdout noise', async () => {
+  // session-start starts a detached background child and reads the home dir: it gets a fake starter
+  // (no real child) and a fixture home.
+  const home = scratchDir('ct-disp-home-');
+  const fakeSpawn = () => ({ on() {}, unref() {} });
   for (const ev of ['session-start', 'session-end', 'pre-compact', 'pre-tool-use', 'post-tool-use', 'post-tool-use-failure', 'subagent-stop', 'user-prompt-submit']) {
-    const r = runHook([ev], { input: '%%%not json%%%' });
+    const r = await runHook([ev], { input: '%%%not json%%%', env: fixtureHomeEnv(home, {}), deps: ev === 'session-start' ? { spawn: fakeSpawn } : undefined });
     assert.strictEqual(r.code, 0, `${ev} must exit 0 on garbage stdin`);
     if (r.stdout.trim()) assert.doesNotThrow(() => JSON.parse(r.stdout), `${ev} stdout must be empty or valid JSON`);
   }
@@ -88,14 +83,14 @@ test('invariant: every event exits 0 on garbage stdin, no stdout noise', () => {
 // EVENTS names (invoked by the harness via stdin JSON, never probed as a
 // bare CLI arg in practice) keep the "never break a session" exit-0
 // invariant pinned in the next test below.
-test('#1586: an unrecognized hooks.js subcommand exits non-zero with a clear stderr message', () => {
-  const r = runHook(['no-such-event'], { input: '{}' });
+test('#1586: an unrecognized hooks.js subcommand exits non-zero with a clear stderr message', async () => {
+  const r = await runHook(['no-such-event'], { input: '{}' });
   assert.notStrictEqual(r.code, 0, 'unrecognized subcommand must exit non-zero, not silently no-op');
   assert.match(r.stderr, /unrecognized hooks\.js subcommand 'no-such-event'/);
 });
 
-test('#1586: a missing subcommand exits non-zero and lists known subcommands', () => {
-  const r = runHook([], { input: '{}' });
+test('#1586: a missing subcommand exits non-zero and lists known subcommands', async () => {
+  const r = await runHook([], { input: '{}' });
   assert.notStrictEqual(r.code, 0);
   assert.match(r.stderr, /no hooks\.js subcommand given/);
   assert.match(r.stderr, /record-worktree/, 'expected the known-subcommands list in the error');
@@ -106,8 +101,8 @@ test('#1586: a missing subcommand exits non-zero and lists known subcommands', (
 // CLI, a different script that only name-collides with the intended verb.
 // This gets its own, more specific message pointing at that CLI directly,
 // rather than the generic "did you mean" suggestion.
-test("#1586: 'log-decision' — the specific name-collision case — points at the separate bin/log-decision.js CLI", () => {
-  const r = runHook(['log-decision', '--run', 'x', '--text', 'y'], { input: '{}' });
+test("#1586: 'log-decision' — the specific name-collision case — points at the separate bin/log-decision.js CLI", async () => {
+  const r = await runHook(['log-decision', '--run', 'x', '--text', 'y'], { input: '{}' });
   assert.notStrictEqual(r.code, 0);
   assert.match(r.stderr, /no 'log-decision' subcommand/);
   assert.match(r.stderr, /bin\/log-decision\.js/);
@@ -115,27 +110,27 @@ test("#1586: 'log-decision' — the specific name-collision case — points at t
 
 // #1586: a near-miss typo of a real verb gets a "did you mean" suggestion
 // naming the actual verb, not just a bare "unrecognized" message.
-test('#1586: an unrecognized subcommand close to a known verb suggests it', () => {
-  const r = runHook(['close-ru'], { input: '{}' });
+test('#1586: an unrecognized subcommand close to a known verb suggests it', async () => {
+  const r = await runHook(['close-ru'], { input: '{}' });
   assert.notStrictEqual(r.code, 0);
   assert.match(r.stderr, /did you mean 'close-run'\?/);
 });
 
-test('record-worktree writes run-state, prints a confirmation line, and close-run marks clean', () => {
+test('record-worktree writes run-state, prints a confirmation line, and close-run marks clean', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  const recorded = runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project });
+  const recorded = await runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project });
   assert.strictEqual(recorded.code, 0);
   assert.match(recorded.stdout, /claude-tweaks: worktree recorded for 2026-07-01T090000-spec-1/);
   let state = readRunState(run);
   assert.strictEqual(state.worktree, path.resolve('/tmp/wt-1'));
   assert.strictEqual(state.status, 'active');
-  assert.strictEqual(runHook(['close-run'], { cwd: project }).code, 0);
+  assert.strictEqual((await runHook(['close-run'], { cwd: project })).code, 0);
   state = readRunState(run);
   assert.strictEqual(state.status, 'clean');
 });
 
-test('close-run on a run dir with no pre-existing run-state.json creates one and stamps it clean (#743 — refine standalone runs, which never call record-worktree)', () => {
+test('close-run on a run dir with no pre-existing run-state.json creates one and stamps it clean (#743 — refine standalone runs, which never call record-worktree)', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   const statePath = path.join(run, 'run-state.json');
@@ -143,28 +138,28 @@ test('close-run on a run dir with no pre-existing run-state.json creates one and
   // standalone run dir today: decisions.md gets written, run-state.json never does.
   assert.strictEqual(fs.existsSync(statePath), false,
     'precondition: run dir must start with no run-state.json at all');
-  assert.strictEqual(runHook(['close-run', '--run', run], { cwd: project }).code, 0);
+  assert.strictEqual((await runHook(['close-run', '--run', run], { cwd: project })).code, 0);
   assert.strictEqual(fs.existsSync(statePath), true,
     'close-run must create run-state.json when the run dir never had one — the premise refine-mode.md Step 5 now relies on');
   assert.strictEqual(readRunState(run).status, 'clean');
 });
 
-test('close-run warns when the run dir still holds un-archived work/ content (#1103)', () => {
+test('close-run warns when the run dir still holds un-archived work/ content (#1103)', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   fs.mkdirSync(path.join(run, 'work'), { recursive: true });
   fs.writeFileSync(path.join(run, 'work', '1-spec.md'), '# 1\n');
-  const result = runHook(['close-run', '--run', run], { cwd: project });
+  const result = await runHook(['close-run', '--run', run], { cwd: project });
   assert.strictEqual(result.code, 0);
   assert.match(result.stdout, /still holds un-archived work\/ content/,
     'expected close-run to note the pending archival as a routine informational reminder (#1103)');
   assert.match(result.stdout, /archive-run --run/);
 });
 
-test('close-run does NOT warn about un-archived work/ when no work/ content exists', () => {
+test('close-run does NOT warn about un-archived work/ when no work/ content exists', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  const result = runHook(['close-run', '--run', run], { cwd: project });
+  const result = await runHook(['close-run', '--run', run], { cwd: project });
   assert.strictEqual(result.code, 0);
   assert.doesNotMatch(result.stdout, /still holds un-archived work\/ content/);
 });
@@ -182,7 +177,7 @@ test('close-run does NOT warn about un-archived work/ when no work/ content exis
 // intercept ahead of this whole branch (exit 0, usage text, no resolveRunArg
 // call at all) — a --help probe is exercised below too, but now as that
 // earlier, distinct no-op path rather than this "missing --run" refusal.
-test('record-worktree without --run is a true no-op against two concurrent run directories, and exits non-zero; --help is a separate, earlier no-op (#1143)', () => {
+test('record-worktree without --run is a true no-op against two concurrent run directories, and exits non-zero; --help is a separate, earlier no-op (#1143)', async () => {
   const project = gitRepo(); // #790: --run must resolve under a real git checkout
   const staleDir = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-15T090000-record-19');
   const ownDir = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
@@ -197,7 +192,7 @@ test('record-worktree without --run is a true no-op against two concurrent run d
   const staleStateBefore = readRunState(staleDir);
   const ownStateBefore = readRunState(ownDir);
 
-  const bare = runHook(['record-worktree', '/tmp/wt-fallback'], { cwd: project });
+  const bare = await runHook(['record-worktree', '/tmp/wt-fallback'], { cwd: project });
   assert.notStrictEqual(bare.code, 0, 'record-worktree without --run must exit non-zero, not silently guess a target run');
   assert.match(bare.stdout, /record-worktree requires --run/);
   assert.doesNotMatch(bare.stdout, /worktree recorded/);
@@ -207,7 +202,7 @@ test('record-worktree without --run is a true no-op against two concurrent run d
   // gets its own dedicated no-op path (usage text, exit 0), not the
   // "requires --run" refusal above (which stays non-zero on genuinely
   // missing --run).
-  const help = runHook(['record-worktree', '--help'], { cwd: project });
+  const help = await runHook(['record-worktree', '--help'], { cwd: project });
   assert.strictEqual(help.code, 0, '#1143: --help is a dedicated no-op path, distinct from the missing-args refusal');
   assert.match(help.stdout, /usage: record-worktree --run <dir> <worktree-path>/);
   assert.doesNotMatch(help.stdout, /worktree recorded/);
@@ -218,7 +213,7 @@ test('record-worktree without --run is a true no-op against two concurrent run d
   // The FIX still works correctly when the caller names its own run
   // explicitly — proves this isn't a blanket regression, only the implicit
   // guess is closed off.
-  const withFlag = runHook(['record-worktree', '--run', ownDir, '/tmp/wt-correct'], { cwd: project });
+  const withFlag = await runHook(['record-worktree', '--run', ownDir, '/tmp/wt-correct'], { cwd: project });
   assert.strictEqual(withFlag.code, 0);
   assert.match(withFlag.stdout, /worktree recorded for 2026-07-01T090000-spec-1/);
   const ownState = readRunState(ownDir);
@@ -228,13 +223,33 @@ test('record-worktree without --run is a true no-op against two concurrent run d
     'an explicitly-targeted --run call must not touch a different run dir at all');
 });
 
-test('record-worktree accepts --run before or after the worktree positional', () => {
+test('record-worktree accepts --run before or after the worktree positional', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  const result = runHook(['record-worktree', '/tmp/wt-2', '--run', run], { cwd: project });
+  const result = await runHook(['record-worktree', '/tmp/wt-2', '--run', run], { cwd: project });
   assert.strictEqual(result.code, 0);
   const state = readRunState(run);
   assert.strictEqual(state.worktree, path.resolve('/tmp/wt-2'));
+});
+
+// #5377: the record-worktree verb's run-state write takes its lock wait from the env the call carries. A
+// getter counts reads of the knob made through that env object; it goes in as `deps.env` because runCli
+// copies its `env` option once, which reads the getter for any code. A call that records no worktree takes
+// no lock and gives the baseline of reads made outside the write; the write must read the knob beyond it.
+test('record-worktree reads the run-state lock wait from the passed env', async () => {
+  const project = tmpProject();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  let knobReads = 0;
+  // No session id: the owner block's `ps` env spread would read the getter too, and mask the lock read.
+  const env = hookEnv({ CLAUDE_CODE_SESSION_ID: '' });
+  Object.defineProperty(env, 'CLAUDE_TWEAKS_LOCK_WAIT_MS', { enumerable: true, get() { knobReads += 1; return '0'; } });
+  const noWrite = await runHookCli(['record-worktree', '--run', run], { cwd: project, env: hookEnv(), deps: { env } });
+  assert.match(noWrite.stdout, /worktree not recorded/);
+  const baseline = knobReads;
+  const result = await runHookCli(['record-worktree', '--run', run, '/tmp/wt-lock'], { cwd: project, env: hookEnv(), deps: { env } });
+  assert.strictEqual(result.code, 0);
+  assert.match(result.stdout, /worktree recorded/);
+  assert.ok(knobReads - baseline > baseline, `the run-state lock read its wait from the passed env (baseline ${baseline}, total ${knobReads})`);
 });
 
 // #1124 review finding: the fix's OTHER guard — rejecting a flag-shaped
@@ -255,14 +270,14 @@ test('record-worktree accepts --run before or after the worktree positional', ()
 // This test now uses a single-dash shape (`-x`), which that scan does not
 // classify (it only recognizes `--`-prefixed tokens), so it still reaches
 // and exercises this deeper, single-dash-specific safety net.
-test('record-worktree with an explicit --run still rejects a flag-shaped worktree positional (e.g. -x)', () => {
+test('record-worktree with an explicit --run still rejects a flag-shaped worktree positional (e.g. -x)', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   fs.mkdirSync(run, { recursive: true });
   fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ status: 'active' }));
   const before = readRunState(run);
 
-  const result = runHook(['record-worktree', '--run', run, '-x'], { cwd: project });
+  const result = await runHook(['record-worktree', '--run', run, '-x'], { cwd: project });
   assert.notStrictEqual(result.code, 0, 'a flag-shaped worktree positional must exit non-zero, not be treated as a literal path');
   assert.match(result.stdout, /unrecognized argument -x/);
   assert.doesNotMatch(result.stdout, /worktree recorded/);
@@ -273,14 +288,14 @@ test('record-worktree with an explicit --run still rejects a flag-shaped worktre
 // any undeclared `--*` argument anywhere in a KNOWN_FLAGS verb's arguments
 // (including one that LOOKS like it could be a worktree-path positional)
 // is refused on stderr with exit 1 (#4834) before resolveRunArg or any write ever runs.
-test('#1012: record-worktree rejects an undeclared --* argument (e.g. --bogus-flag) via the KNOWN_FLAGS guard, before any write', () => {
+test('#1012: record-worktree rejects an undeclared --* argument (e.g. --bogus-flag) via the KNOWN_FLAGS guard, before any write', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   fs.mkdirSync(run, { recursive: true });
   fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ status: 'active' }));
   const before = readRunState(run);
 
-  const result = runHook(['record-worktree', '--run', run, '--bogus-flag'], { cwd: project });
+  const result = await runHook(['record-worktree', '--run', run, '--bogus-flag'], { cwd: project });
   assert.strictEqual(result.code, 1);
   assert.strictEqual(result.stdout, '');
   assert.strictEqual(result.stderr, "claude-tweaks: record-worktree: unknown flag '--bogus-flag'\nclaude-tweaks: usage: record-worktree --run <dir> <worktree-path> [--dispatch]\n");
@@ -291,18 +306,18 @@ test('#1012: record-worktree rejects an undeclared --* argument (e.g. --bogus-fl
 // non-zero with "requires --run" regardless of whether any run dir exists to
 // guess at, so this no-run-dir-at-all case hits the same guard as every other
 // omitted---run invocation, not a distinct "nothing found" message.
-test('record-worktree without --run and with no resolvable run dir anywhere still refuses (not "no pipeline run dir found")', () => {
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bare-'));
-  const result = runHook(['record-worktree', '/tmp/wt'], { cwd: bare });
+test('record-worktree without --run and with no resolvable run dir anywhere still refuses (not "no pipeline run dir found")', async () => {
+  const bare = scratchDir('ct-bare-');
+  const result = await runHook(['record-worktree', '/tmp/wt'], { cwd: bare });
   assert.notStrictEqual(result.code, 0);
   assert.match(result.stdout, /record-worktree requires --run/);
 });
 
-test('record-worktree with a non-existent --run path fails loudly instead of falling back or claiming success', () => {
+test('record-worktree with a non-existent --run path fails loudly instead of falling back or claiming success', async () => {
   const project = tmpProject(); // has a real run dir the fallback WOULD find if we silently fell through
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   const bogus = path.join(project, 'does-not-exist');
-  const result = runHook(['record-worktree', '--run', bogus, '/tmp/wt'], { cwd: project });
+  const result = await runHook(['record-worktree', '--run', bogus, '/tmp/wt'], { cwd: project });
   assert.strictEqual(result.code, 0);
   assert.match(result.stdout, /--run path rejected/);
   assert.doesNotMatch(result.stdout, /worktree recorded/);
@@ -310,13 +325,13 @@ test('record-worktree with a non-existent --run path fails loudly instead of fal
     'an invalid --run must not silently fall back to a different run dir');
 });
 
-test('record-worktree --run with no following value fails loudly instead of falling back or claiming success', () => {
+test('record-worktree --run with no following value fails loudly instead of falling back or claiming success', async () => {
   const project = tmpProject(); // has a real run dir the fallback WOULD find if we silently fell through
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   // '--run' as the trailing token — flag present, no path follows it. Keep
   // the worktree positional present (before --run) so this isolates the
   // missing-value case from the separate "no worktree given" branch.
-  const result = runHook(['record-worktree', '/tmp/wt-2', '--run'], { cwd: project });
+  const result = await runHook(['record-worktree', '/tmp/wt-2', '--run'], { cwd: project });
   assert.strictEqual(result.code, 0);
   assert.match(result.stdout, /claude-tweaks: --run path rejected: \(missing value\) — worktree not recorded/);
   assert.doesNotMatch(result.stdout, /worktree recorded/);
@@ -324,12 +339,12 @@ test('record-worktree --run with no following value fails loudly instead of fall
     '--run with a missing value must not silently fall back to a different run dir');
 });
 
-test('record-worktree reports a distinct failure when the run-state write itself fails', chmodDenialSkip('root ignores directory permissions'), () => {
+test('record-worktree reports a distinct failure when the run-state write itself fails', chmodDenialSkip('root ignores directory permissions'), async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   fs.chmodSync(run, 0o500); // read+execute only — fs.writeFileSync inside it must throw
   try {
-    const result = runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project });
+    const result = await runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project });
     assert.strictEqual(result.code, 0);
     assert.match(result.stdout, /failed to record worktree/);
     assert.doesNotMatch(result.stdout, /worktree recorded for/);
@@ -349,11 +364,11 @@ test('record-worktree reports a distinct failure when the run-state write itself
 // worktree-setup.md Step 4.5's record-worktree call is what performs the
 // actual first write) — so it alone may target a freshly-minted,
 // completely uninitialized run-id-shaped directory.
-test('record-worktree accepts a freshly-minted, completely uninitialized --run dir (dispatch mint-then-claim pattern)', () => {
+test('record-worktree accepts a freshly-minted, completely uninitialized --run dir (dispatch mint-then-claim pattern)', async () => {
   const project = gitRepo();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   fs.mkdirSync(run, { recursive: true }); // bare mkdir only — no decisions.md/run-state.json/config.yml
-  const result = runHook(['record-worktree', '--run', run, '/tmp/wt-mint'], { cwd: project });
+  const result = await runHook(['record-worktree', '--run', run, '/tmp/wt-mint'], { cwd: project });
   assert.strictEqual(result.code, 0);
   assert.match(result.stdout, /worktree recorded for 2026-07-01T090000-spec-1/);
   assert.strictEqual(readRunState(run).worktree, path.resolve('/tmp/wt-mint'));
@@ -367,9 +382,9 @@ test('record-worktree accepts a freshly-minted, completely uninitialized --run d
 // genuinely-empty directory, and this repo root has real content (.git) but
 // no run markers, so it fails both the record-worktree exception and every
 // other verb's default gate.
-test('record-worktree rejects the main checkout root itself as --run when it carries no run markers (#1566 repro)', () => {
+test('record-worktree rejects the main checkout root itself as --run when it carries no run markers (#1566 repro)', async () => {
   const project = gitRepo();
-  const result = runHook(['record-worktree', '--run', '.', '/tmp/wt-evil'], { cwd: project });
+  const result = await runHook(['record-worktree', '--run', '.', '/tmp/wt-evil'], { cwd: project });
   assert.strictEqual(result.code, 0, 'record-worktree always exits 0, even on a rejected --run — see the other --run-rejection tests above');
   assert.match(result.stdout, /--run path rejected/);
   assert.doesNotMatch(result.stdout, /worktree recorded/);
@@ -386,7 +401,7 @@ test('record-worktree rejects the main checkout root itself as --run when it car
 // deliberately excluded from this list — see archive-run-verb.test.js's
 // "refuses a run dir with no run-state.json, naming archiveOrphanedMint",
 // its own documented exception for reporting a stale, never-claimed mint.
-test('record-pr, spec-status, close-run, teardown-run, check-resume-freshness, check-staged-inventory, and check-session-residue each reject an uninitialized --run target', () => {
+test('record-pr, spec-status, close-run, teardown-run, check-resume-freshness, check-staged-inventory, and check-session-residue each reject an uninitialized --run target', async () => {
   const verbs = [
     ['record-pr', '7', 'https://github.com/o/r/pull/7'],
     ['spec-status', '--spec', '1', '--status', 'running', '--phase', 'build'],
@@ -400,7 +415,7 @@ test('record-pr, spec-status, close-run, teardown-run, check-resume-freshness, c
     const project = gitRepo();
     const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
     fs.mkdirSync(run, { recursive: true }); // bare mkdir only — no markers at all
-    const result = runHook([verb, '--run', run, ...rest], { cwd: project });
+    const result = await runHook([verb, '--run', run, ...rest], { cwd: project });
     // close-run exits non-zero on a rejected --run so a scripted caller
     // (dispatch's drain termination) can tell "not closed" from closed.
     assert.strictEqual(result.code, verb === 'close-run' ? 1 : 0, `${verb}: unexpected exit code`);
@@ -408,80 +423,92 @@ test('record-pr, spec-status, close-run, teardown-run, check-resume-freshness, c
   }
 });
 
-test('close-run with a non-existent --run path fails loudly instead of falling back', () => {
+// #5903: the run-dir mint now writes manifest.json, but it is not one of the
+// three initialization markers — a dir holding only it is still uninitialized.
+test('close-run rejects a --run target whose only file is manifest.json (#5903: manifest.json is not run initialization)', async () => {
+  const project = gitRepo();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  fs.mkdirSync(run, { recursive: true });
+  fs.writeFileSync(path.join(run, 'manifest.json'), '{}\n');
+  const result = await runHook(['close-run', '--run', run], { cwd: project });
+  assert.strictEqual(result.code, 1);
+  assert.match(result.stdout, /--run path rejected: .*not an initialized run dir/);
+});
+
+test('close-run with a non-existent --run path fails loudly instead of falling back', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project });
+  await runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project });
   const bogus = path.join(project, 'does-not-exist');
-  const result = runHook(['close-run', '--run', bogus], { cwd: project });
+  const result = await runHook(['close-run', '--run', bogus], { cwd: project });
   assert.strictEqual(result.code, 1);
   assert.match(result.stdout, /--run path rejected/);
   const state = readRunState(run);
   assert.strictEqual(state.status, 'active', 'an invalid --run must not touch a different run dir at all');
 });
 
-test('close-run --run accepts a bare run-id basename, resolved under the main checkout\'s pipelines dir (dispatch/SKILL.md\'s $RUN_ID)', () => {
+test('close-run --run accepts a bare run-id basename, resolved under the main checkout\'s pipelines dir (dispatch/SKILL.md\'s $RUN_ID)', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project });
-  const result = runHook(['close-run', '--run', '2026-07-01T090000-spec-1'], { cwd: project });
+  await runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project });
+  const result = await runHook(['close-run', '--run', '2026-07-01T090000-spec-1'], { cwd: project });
   assert.strictEqual(result.code, 0, result.stdout);
   assert.doesNotMatch(result.stdout, /--run path rejected/);
   assert.strictEqual(readRunState(run).status, 'clean');
 });
 
-test('close-run --run bare basename from inside a linked worktree resolves to the MAIN checkout\'s pipelines dir', () => {
+test('close-run --run bare basename from inside a linked worktree resolves to the MAIN checkout\'s pipelines dir', async () => {
   const project = tmpProject();
   execFileSync('git', ['-C', project, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init']);
   const wt = path.join(project, '.claude', 'worktrees', 'wt-a');
   execFileSync('git', ['-C', project, 'worktree', 'add', '-q', '-b', 'wt-a', wt]);
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  runHook(['record-worktree', '--run', run, wt], { cwd: project });
-  const result = runHook(['close-run', '--run', '2026-07-01T090000-spec-1'], { cwd: wt });
+  await runHook(['record-worktree', '--run', run, wt], { cwd: project });
+  const result = await runHook(['close-run', '--run', '2026-07-01T090000-spec-1'], { cwd: wt });
   assert.strictEqual(result.code, 0, result.stdout);
   assert.doesNotMatch(result.stdout, /--run path rejected/, result.stdout);
   assert.strictEqual(readRunState(run).status, 'clean');
 });
 
-test('close-run --run basename: a same-named cwd-relative directory wins over the pipelines/ fallback', () => {
+test('close-run --run basename: a same-named cwd-relative directory wins over the pipelines/ fallback', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project });
+  await runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project });
   fs.mkdirSync(path.join(project, '2026-07-01T090000-spec-1'));
-  const result = runHook(['close-run', '--run', '2026-07-01T090000-spec-1'], { cwd: project });
+  const result = await runHook(['close-run', '--run', '2026-07-01T090000-spec-1'], { cwd: project });
   assert.strictEqual(result.code, 1, result.stdout);
   assert.match(result.stdout, /--run path rejected/, 'the cwd-relative dir is judged on its own and is not a run dir');
   assert.strictEqual(readRunState(run).status, 'active', 'the pipelines/ run must not be touched when a cwd-relative dir exists');
 });
 
-test('close-run --run basename containing a path separator never falls through to the pipelines/ lookup', () => {
+test('close-run --run basename containing a path separator never falls through to the pipelines/ lookup', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project });
-  const result = runHook(['close-run', '--run', './2026-07-01T090000-spec-1'], { cwd: project });
+  await runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project });
+  const result = await runHook(['close-run', '--run', './2026-07-01T090000-spec-1'], { cwd: project });
   assert.strictEqual(result.code, 1, result.stdout);
   assert.match(result.stdout, /--run path rejected/, result.stdout);
   assert.strictEqual(readRunState(run).status, 'active', 'a separator-bearing value must never resolve into the pipelines/ run dir');
 });
 
-test('close-run --run with a bare basename naming no run dir is still rejected, non-zero', () => {
+test('close-run --run with a bare basename naming no run dir is still rejected, non-zero', async () => {
   const project = tmpProject();
-  const result = runHook(['close-run', '--run', '2026-07-02T090000-spec-9'], { cwd: project });
+  const result = await runHook(['close-run', '--run', '2026-07-02T090000-spec-9'], { cwd: project });
   assert.strictEqual(result.code, 1);
   assert.match(result.stdout, /--run path rejected: 2026-07-02T090000-spec-9 — run not closed/);
 });
 
-test('close-run --run with no following value fails loudly instead of falling back to the newest non-terminal run', () => {
+test('close-run --run with no following value fails loudly instead of falling back to the newest non-terminal run', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   // Prove the fallback WOULD find and close this run if --run's missing
   // value were silently ignored: record a worktree so it's active and
   // non-terminal — exactly what resolveRunDir's "newest non-terminal run"
   // scan picks up (see the #19/#36 cross-contamination shape above).
-  assert.strictEqual(runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project }).code, 0);
+  assert.strictEqual((await runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project })).code, 0);
   assert.strictEqual(readRunState(run).status, 'active');
 
-  const result = runHook(['close-run', '--run'], { cwd: project });
+  const result = await runHook(['close-run', '--run'], { cwd: project });
   assert.strictEqual(result.code, 1);
   assert.match(result.stdout, /claude-tweaks: --run path rejected: \(missing value\) — run not closed/);
   assert.strictEqual(readRunState(run).status, 'active',
@@ -491,10 +518,10 @@ test('close-run --run with no following value fails loudly instead of falling ba
 // Regression: record-worktree's if/else-if chain had no branch for "a run
 // dir was resolved but no worktree argument was given" — that case printed
 // nothing and exited 0, indistinguishable from success.
-test('record-worktree with a resolvable run dir but no worktree argument prints a not-recorded notice instead of silent success', () => {
+test('record-worktree with a resolvable run dir but no worktree argument prints a not-recorded notice instead of silent success', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  const result = runHook(['record-worktree', '--run', run], { cwd: project });
+  const result = await runHook(['record-worktree', '--run', run], { cwd: project });
   assert.strictEqual(result.code, 0);
   assert.ok(result.stdout.trim().length > 0, 'expected a diagnostic message, not silent success');
   assert.doesNotMatch(result.stdout, /worktree recorded/);
@@ -506,47 +533,47 @@ test('record-worktree with a resolvable run dir but no worktree argument prints 
 // could be resolved and --run wasn't invalid" (i.e. --run omitted entirely
 // and resolveRunDir's own fallback also found nothing) — that case also
 // printed nothing and exited 0.
-test('close-run with no resolvable run dir and no --run given prints a not-closed notice instead of silent success', () => {
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bare-'));
-  const result = runHook(['close-run'], { cwd: bare });
+test('close-run with no resolvable run dir and no --run given prints a not-closed notice instead of silent success', async () => {
+  const bare = scratchDir('ct-bare-');
+  const result = await runHook(['close-run'], { cwd: bare });
   assert.strictEqual(result.code, 0);
   assert.ok(result.stdout.trim().length > 0, 'expected a diagnostic message, not silent success');
 });
 
-test('record-worktree stamps the owning session from CLAUDE_CODE_SESSION_ID and preserves it on env-less re-record', () => {
+test('record-worktree stamps the owning session from CLAUDE_CODE_SESSION_ID and preserves it on env-less re-record', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'sess-owner' } });
+  await runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'sess-owner' } });
   let state = readRunState(run);
   assert.strictEqual(state.sessionId, 'sess-owner');
-  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: '' } });
+  await runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: '' } });
   state = readRunState(run);
   assert.strictEqual(state.sessionId, 'sess-owner', 'env-less re-record must not clobber the stamp');
 });
 
-test('record-worktree without CLAUDE_CODE_SESSION_ID records no owner', () => {
+test('record-worktree without CLAUDE_CODE_SESSION_ID records no owner', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  runHook(['record-worktree', '--run', run, '/tmp/wt-2'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: '' } });
+  await runHook(['record-worktree', '--run', run, '/tmp/wt-2'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: '' } });
   const state = readRunState(run);
   assert.ok(!('sessionId' in state), 'no env var -> no sessionId field');
 });
 
-test('#3845: record-worktree stamps ownerPid from CLAUDE_PID and preserves it on an env-less re-record', () => {
+test('#3845: record-worktree stamps ownerPid from CLAUDE_PID and preserves it on an env-less re-record', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_PID: '4242' } });
+  await runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_PID: '4242' } });
   assert.strictEqual(readRunState(run).ownerPid, 4242);
-  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_PID: '' } });
+  await runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_PID: '' } });
   assert.strictEqual(readRunState(run).ownerPid, 4242, 'env-less re-record must not clobber ownerPid');
-  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_PID: '5151' } });
+  await runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_PID: '5151' } });
   assert.strictEqual(readRunState(run).ownerPid, 5151, 'a resumer re-stamp from another process takes ownership');
 });
 
-test('#3845: record-worktree without CLAUDE_PID writes no ownerPid', () => {
+test('#3845: record-worktree without CLAUDE_PID writes no ownerPid', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  runHook(['record-worktree', '--run', run, '/tmp/wt-2'], { cwd: project, env: { CLAUDE_PID: '' } });
+  await runHook(['record-worktree', '--run', run, '/tmp/wt-2'], { cwd: project, env: { CLAUDE_PID: '' } });
   assert.ok(!('ownerPid' in readRunState(run)));
 });
 
@@ -556,10 +583,10 @@ function deadPid() {
   return child.pid;
 }
 
-test('AC1.1/AC1.2: record-worktree writes the owner block', () => {
+test('AC1.1/AC1.2: record-worktree writes the owner block', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'owner', CLAUDE_PID: String(process.pid) } });
+  await runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'owner', CLAUDE_PID: String(process.pid) } });
   const { owner } = readRunState(run);
   assert.strictEqual(owner.sessionId, 'owner');
   assert.strictEqual(owner.host, os.hostname());
@@ -571,68 +598,68 @@ test('AC1.1/AC1.2: record-worktree writes the owner block', () => {
   const dead = deadPid();
   const project2 = tmpProject();
   const run2 = path.join(project2, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  runHook(['record-worktree', '--run', run2, '/tmp/wt-2'], { cwd: project2, env: { CLAUDE_CODE_SESSION_ID: 'owner', CLAUDE_PID: String(dead) } });
+  await runHook(['record-worktree', '--run', run2, '/tmp/wt-2'], { cwd: project2, env: { CLAUDE_CODE_SESSION_ID: 'owner', CLAUDE_PID: String(dead) } });
   const deadOwner = readRunState(run2).owner;
   assert.strictEqual(deadOwner.pid, dead);
   assert.strictEqual(deadOwner.pidStartedAt, null, 'a pid that is gone has no start time');
 });
 
-test('AC2.4: record-worktree without a session id leaves the owner block unchanged', () => {
+test('AC2.4: record-worktree without a session id leaves the owner block unchanged', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'owner', CLAUDE_PID: String(process.pid) } });
+  await runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'owner', CLAUDE_PID: String(process.pid) } });
   const first = readRunState(run).owner;
   assert.ok(first, 'the first stamp wrote an owner block');
-  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: '', CLAUDE_PID: String(process.pid) } });
+  await runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: '', CLAUDE_PID: String(process.pid) } });
   assert.deepStrictEqual(readRunState(run).owner, first);
 });
 
-test('AC2.4: record-worktree is the adoption path — a different session replaces both sessionId and the owner block, so they always agree', () => {
+test('AC2.4: record-worktree is the adoption path — a different session replaces both sessionId and the owner block, so they always agree', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'first', CLAUDE_PID: String(process.pid) } });
+  await runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'first', CLAUDE_PID: String(process.pid) } });
   assert.strictEqual(readRunState(run).owner.sessionId, 'first');
-  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'second', CLAUDE_PID: String(process.pid) } });
+  await runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'second', CLAUDE_PID: String(process.pid) } });
   const state = readRunState(run);
   assert.strictEqual(state.sessionId, 'second');
   assert.strictEqual(state.owner.sessionId, 'second', 'the owner block belongs to the session recorded in sessionId');
 });
 
-test('AC3.1 #3845: hooks.js session-end from a nested claude process (same session id, other CLAUDE_PID) leaves the run active; the owner process stamps it', () => {
+test('AC3.1 #3845: hooks.js session-end from a nested claude process (same session id, other CLAUDE_PID) leaves the run active; the owner process stamps it', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'owner', CLAUDE_PID: String(process.pid) } });
+  await runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'owner', CLAUDE_PID: String(process.pid) } });
   assert.strictEqual(readRunState(run).ownerPid, process.pid);
   const input = JSON.stringify({ session_id: 'owner', reason: 'other', cwd: project });
-  runHook(['session-end'], { cwd: project, input, env: { CLAUDE_CODE_SESSION_ID: 'owner', CLAUDE_PID: String(process.pid + 1) } });
+  await runHook(['session-end'], { cwd: project, input, env: { CLAUDE_CODE_SESSION_ID: 'owner', CLAUDE_PID: String(process.pid + 1) } });
   assert.strictEqual(readRunState(run).status, 'active', 'a nested process ending must not stamp the parent run');
-  runHook(['session-end'], { cwd: project, input, env: { CLAUDE_CODE_SESSION_ID: 'owner', CLAUDE_PID: String(process.pid) } });
+  await runHook(['session-end'], { cwd: project, input, env: { CLAUDE_CODE_SESSION_ID: 'owner', CLAUDE_PID: String(process.pid) } });
   assert.strictEqual(readRunState(run).status, 'interrupted', 'the owner process ending still stamps interrupted');
 });
 
-test('#3973: the dispatcher refreshes the owner block on a non-session-start event (heartbeat through hooks.js)', () => {
+test('#3973: the dispatcher refreshes the owner block on a non-session-start event (heartbeat through hooks.js)', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   const env = { CLAUDE_CODE_SESSION_ID: 'owner', CLAUDE_PID: String(process.pid) };
-  runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env });
+  await runHook(['record-worktree', '--run', run, '/tmp/wt-1'], { cwd: project, env });
   const stale = new Date(Date.now() - 10 * 60_000).toISOString();
   const state = readRunState(run);
   fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ ...state, owner: { ...state.owner, heartbeatAt: stale } }));
-  runHook(['session-end'], { cwd: project, input: JSON.stringify({ session_id: 'owner', reason: 'other', cwd: project }), env });
+  await runHook(['session-end'], { cwd: project, input: JSON.stringify({ session_id: 'owner', reason: 'other', cwd: project }), env });
   const owner = readRunState(run).owner;
   assert.ok(Date.parse(owner.heartbeatAt) > Date.parse(stale) + 9 * 60_000, `heartbeatAt advanced, got ${owner.heartbeatAt}`);
   assert.strictEqual(owner.pid, process.pid, 'a heartbeat leaves the pid alone');
 });
 
-test('close-run without --run REFUSES to close a run recorded by another (still-active) session, stays silent for the owner (finding regression)', () => {
+test('close-run without --run REFUSES to close a run recorded by another (still-active) session, stays silent for the owner (finding regression)', async () => {
   // Previously, a cross-session mismatch reached via the implicit fallback
   // (no --run) was only ever NOTED via a printed message but still
   // unconditionally closed — silently disarming the OTHER session's E1/E2/E3
   // enforcement with no way for it to know.
   const foreignProject = tmpProject();
   const foreignRun = path.join(foreignProject, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  runHook(['record-worktree', '--run', foreignRun, '/tmp/wt'], { cwd: foreignProject, env: { CLAUDE_CODE_SESSION_ID: 'owner' } });
-  const foreign = runHook(['close-run'], { cwd: foreignProject, env: { CLAUDE_CODE_SESSION_ID: 'bystander' } });
+  await runHook(['record-worktree', '--run', foreignRun, '/tmp/wt'], { cwd: foreignProject, env: { CLAUDE_CODE_SESSION_ID: 'owner' } });
+  const foreign = await runHook(['close-run'], { cwd: foreignProject, env: { CLAUDE_CODE_SESSION_ID: 'bystander' } });
   assert.strictEqual(foreign.code, 0);
   assert.match(foreign.stdout, /recorded by another session/);
   // #1012: the implicit-resolution refusal is now the shared candidate-list
@@ -647,25 +674,25 @@ test('close-run without --run REFUSES to close a run recorded by another (still-
 
   const ownProject = tmpProject();
   const ownRun = path.join(ownProject, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  runHook(['record-worktree', '--run', ownRun, '/tmp/wt'], { cwd: ownProject, env: { CLAUDE_CODE_SESSION_ID: 'owner' } });
-  const own = runHook(['close-run'], { cwd: ownProject, env: { CLAUDE_CODE_SESSION_ID: 'owner' } });
+  await runHook(['record-worktree', '--run', ownRun, '/tmp/wt'], { cwd: ownProject, env: { CLAUDE_CODE_SESSION_ID: 'owner' } });
+  const own = await runHook(['close-run'], { cwd: ownProject, env: { CLAUDE_CODE_SESSION_ID: 'owner' } });
   assert.strictEqual(own.code, 0);
   assert.match(own.stdout, /no recorded wrap-up/,
     'the fixture has no wrap-up event, so close-run\'s new warn-tier check (#373) fires');
 });
 
-test('close-run WITH an explicit --run still closes a run recorded by another session — the refusal only applies to the implicit fallback', () => {
+test('close-run WITH an explicit --run still closes a run recorded by another session — the refusal only applies to the implicit fallback', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  runHook(['record-worktree', '--run', run, '/tmp/wt'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'owner' } });
-  const result = runHook(['close-run', '--run', run], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'bystander' } });
+  await runHook(['record-worktree', '--run', run, '/tmp/wt'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'owner' } });
+  const result = await runHook(['close-run', '--run', run], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'bystander' } });
   assert.strictEqual(result.code, 0);
   assert.match(result.stdout, /recorded by another session/);
   assert.doesNotMatch(result.stdout, /refusing to close/);
   assert.strictEqual(readRunState(run).status, 'clean', 'an explicitly-targeted --run intentionally overrides the cross-session refusal');
 });
 
-test("close-run without --run still detects and refuses a run bound to a different, still-live worktree — not just a different session (whole-branch review finding, pre-v6.110.0)", () => {
+test("close-run without --run still detects and refuses a run bound to a different, still-live worktree — not just a different session (whole-branch review finding, pre-v6.110.0)", async () => {
   // #1410's worktree-foreign filter (added to resolveRun's shared fallback
   // helper for post-tool-use.js's event attribution) also silently applied to
   // close-run's implicit fallback, which needs the opposite behavior: it must
@@ -677,9 +704,9 @@ test("close-run without --run still detects and refuses a run bound to a differe
   const otherWt = linkedWorktreeOf(project);
   const callerWt = linkedWorktreeOf(project);
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  runHook(['record-worktree', '--run', run, otherWt], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'owner' } });
+  await runHook(['record-worktree', '--run', run, otherWt], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'owner' } });
 
-  const result = runHook(['close-run'], { cwd: callerWt, env: { CLAUDE_CODE_SESSION_ID: 'bystander' } });
+  const result = await runHook(['close-run'], { cwd: callerWt, env: { CLAUDE_CODE_SESSION_ID: 'bystander' } });
   assert.strictEqual(result.code, 0);
   assert.match(result.stdout, /recorded by another session/);
   // #1012: see the identical message-shape note on the session-mismatch test
@@ -690,7 +717,7 @@ test("close-run without --run still detects and refuses a run bound to a differe
   assert.strictEqual(readRunState(run).status, 'active', "the foreign worktree's run must remain active — found and refused, not silently invisible");
 });
 
-test('e2e: foreign-session commit in the main checkout is allowed with a systemMessage, not denied', () => {
+test('e2e: foreign-session commit in the main checkout is allowed with a systemMessage, not denied', async () => {
   const project = tmpProject(); // already a git repo (tmpProject inits one) — the "main checkout" this test's title refers to
   // #861: `worktree` must be a REAL linked worktree of `project` (not an
   // independent gitRepo()) — pre-tool-use.js now tells "wrong location WITHIN
@@ -700,9 +727,9 @@ test('e2e: foreign-session commit in the main checkout is allowed with a systemM
   execFileSync('git', ['-C', project, 'commit', '--allow-empty', '-q', '-m', 'init']);
   const worktree = linkedWorktreeOf(project);
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  runHook(['record-worktree', '--run', run, worktree], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'owner' } });
+  await runHook(['record-worktree', '--run', run, worktree], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'owner' } });
 
-  const result = runHook(['pre-tool-use'], {
+  const result = await runHook(['pre-tool-use'], {
     input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'git commit -m x' }, cwd: project, session_id: 'bystander' }),
     cwd: project,
   });
@@ -712,16 +739,16 @@ test('e2e: foreign-session commit in the main checkout is allowed with a systemM
   assert.match(result.stdout, /allowing this commit/);
 });
 
-test('close-run lifts E1 enforcement: pre-tool-use allows a commit outside the old worktree', () => {
+test('close-run lifts E1 enforcement: pre-tool-use allows a commit outside the old worktree', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   const worktree = gitRepo();
   const otherRepo = gitRepo();
 
-  assert.strictEqual(runHook(['record-worktree', '--run', run, worktree], { cwd: project }).code, 0);
-  assert.strictEqual(runHook(['close-run'], { cwd: project }).code, 0);
+  assert.strictEqual((await runHook(['record-worktree', '--run', run, worktree], { cwd: project })).code, 0);
+  assert.strictEqual((await runHook(['close-run'], { cwd: project })).code, 0);
 
-  const result = runHook(['pre-tool-use'], {
+  const result = await runHook(['pre-tool-use'], {
     input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'git commit -m x' }, cwd: otherRepo }),
     env: { PIPELINE_RUN_DIR: run },
   });
@@ -747,7 +774,7 @@ test('hooks.json registers a PreToolUse matcher for ExitWorktree (unfiltered, li
   assert.strictEqual(entry.hooks.length, 1);
   assert.strictEqual(entry.hooks[0].type, 'command');
   assert.ok(!('if' in entry.hooks[0]), 'ExitWorktree matcher must be a literal tool-name match, not pattern-filtered');
-  assert.match(entry.hooks[0].command, /bin\/hooks\.js" pre-tool-use$/);
+  assert.match(entry.hooks[0].command, /bin\/hooks\.sh" pre-tool-use$/);
 });
 
 test('AC6.1: hooks.json registers a PreToolUse matcher for AskUserQuestion (unfiltered, literal tool-name match)', () => {
@@ -757,12 +784,57 @@ test('AC6.1: hooks.json registers a PreToolUse matcher for AskUserQuestion (unfi
   assert.strictEqual(entry.hooks.length, 1);
   assert.strictEqual(entry.hooks[0].type, 'command');
   assert.ok(!('if' in entry.hooks[0]), 'AskUserQuestion matcher must be a literal tool-name match, not pattern-filtered');
-  assert.match(entry.hooks[0].command, /bin\/hooks\.js" pre-tool-use$/);
+  assert.match(entry.hooks[0].command, /bin\/hooks\.sh" pre-tool-use$/);
 });
 
-test('dispatcher: AskUserQuestion with no owned run exits 0 with no deny', () => {
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-disp-ask-'));
-  const result = runHook(['pre-tool-use'], {
+// #4589: the dispatch-prompt fidelity gate. CLI 2.1.322 reports the tool as `Agent`; `Task` covers a
+// CLI that still reports the older name (docs/reference/pretooluse-agent-tool-probe.md).
+test('AC5.1: hooks.json registers PreToolUse matchers for Agent and Task (unfiltered, literal tool-name match)', () => {
+  const config = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
+  for (const name of ['Agent', 'Task']) {
+    const entry = config.hooks.PreToolUse.find((e) => e.matcher === name);
+    assert.ok(entry, `expected a PreToolUse ${name} matcher entry`);
+    assert.strictEqual(entry.hooks.length, 1);
+    assert.strictEqual(entry.hooks[0].type, 'command');
+    assert.ok(!('if' in entry.hooks[0]), `${name} matcher must be a literal tool-name match, not pattern-filtered`);
+    assert.match(entry.hooks[0].command, /bin\/hooks\.sh" pre-tool-use$/);
+  }
+});
+
+test('AC5.1: dispatcher: an Agent prompt that differs from the rendered file is denied end to end', async () => {
+  const { run: renderPrompt } = require('../plugin/bin/dispatch-prompt');
+  const project = gitRepo();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-11-01T181353-record-4589');
+  fs.mkdirSync(run, { recursive: true });
+  assert.strictEqual((await runHook(['record-worktree', '--run', run, '/tmp/wt-4589', '--dispatch'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'S' } })).code, 0);
+  const out = path.join(scratchDir('ct-disp-dpg-'), 'first.md');
+  let err = '';
+  const code = renderPrompt(['--call', 'first', '--run', run, '--issues', '4589', '--out', out], {
+    cwd: () => project,
+    env: {},
+    resolvePolicyValues: () => 'autonomy=unattended',
+    resolveProfile: () => ({ model: 'opus', effort: 'high', source: 'default', effortLine: '' }),
+    selectedAt: () => 'unknown',
+    now: () => '2026-11-12T10:00:01.000Z',
+    defaultOut: () => null,
+    stdout: () => {},
+    stderr: (s) => { err += s; },
+  });
+  assert.strictEqual(code, 0, err);
+  const prompt = fs.readFileSync(out, 'utf8').replace(/\bExecute\b/, 'Run');
+  const result = await runHook(['pre-tool-use'], {
+    input: JSON.stringify({ tool_name: 'Agent', session_id: 'S', cwd: project, tool_input: { subagent_type: 'general-purpose', prompt } }),
+    cwd: project,
+  });
+  assert.strictEqual(result.code, 0);
+  const json = JSON.parse(result.stdout);
+  assert.strictEqual(json.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(json.hookSpecificOutput.permissionDecisionReason, /byte-for-byte/);
+});
+
+test('dispatcher: AskUserQuestion with no owned run exits 0 with no deny', async () => {
+  const cwd = scratchDir('ct-disp-ask-');
+  const result = await runHook(['pre-tool-use'], {
     input: JSON.stringify({
       tool_name: 'AskUserQuestion',
       tool_input: { questions: [{ header: 'Review Console', question: 'q', options: [] }] },
@@ -781,13 +853,13 @@ test('dispatcher: AskUserQuestion with no owned run exits 0 with no deny', () =>
 // a real git repo as cwd, a non-ad-hoc run whose run-state.json names the caller's
 // session with no worktree binding (classifies 'mine' from the main checkout), and
 // autonomy: unattended in the run's config.yml (grants consoleAutoResolve).
-test('dispatcher: AskUserQuestion with the Review Console header in an owned unattended run is denied', () => {
+test('dispatcher: AskUserQuestion with the Review Console header in an owned unattended run is denied', async () => {
   const repo = gitRepo();
   const run = path.join(repo, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   fs.mkdirSync(run, { recursive: true });
   fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ status: 'active', sessionId: 'sess-3712-e2e' }));
   fs.writeFileSync(path.join(run, 'config.yml'), 'autonomy: unattended\n');
-  const result = runHook(['pre-tool-use'], {
+  const result = await runHook(['pre-tool-use'], {
     input: JSON.stringify({
       tool_name: 'AskUserQuestion',
       tool_input: { questions: [{ header: 'Review Console', question: 'q', options: [] }] },
@@ -810,11 +882,11 @@ test('dispatcher: AskUserQuestion with the Review Console header in an owned una
 // #4028 end-to-end: an assignment plus a $ reference takes the full handler, so the
 // guard normalizer's rewrite arrives through pre-tool-use.js's run() and
 // bin/hooks.js's main() — exit 0, updatedInput only, never a permissionDecision.
-test('dispatcher: a P=…; node $P/x.js call from a linked worktree gets updatedInput and no permissionDecision', () => {
+test('dispatcher: a P=…; node $P/x.js call from a linked worktree gets updatedInput and no permissionDecision', async () => {
   const main = gitRepo();
   execFileSync('git', ['-C', main, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init']);
   const wt = linkedWorktreeOf(main);
-  const result = runHook(['pre-tool-use'], {
+  const result = await runHook(['pre-tool-use'], {
     input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'P=/opt/x; node $P/x.js' }, session_id: 'sess-4028', cwd: wt }),
     cwd: wt,
   });
@@ -837,11 +909,15 @@ test('dispatcher: when guard-rewrite.js throws at require time, deny gates still
     "Module._load = function (request, ...rest) { if (/guard-rewrite(\\.js)?$/.test(request)) throw new Error('guard-rewrite load fault'); return load.call(this, request, ...rest); };",
     '',
   ].join('\n'));
-  const stdout = execFileSync('node', ['--require', preload, HOOKS, 'pre-tool-use'], {
-    input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'git commit -m x' }, cwd: project }),
-    cwd: project, encoding: 'utf8',
-    env: { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1' },
+  // real process: a require-time preload cannot be installed after the module graph is loaded
+  const { code, stdout } = spawnCli(HOOKS, ['pre-tool-use'], {
+    stdin: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'git commit -m x' }, cwd: project }),
+    cwd: project,
+    // NODE_OPTIONS reads a backslash inside quotes as an escape, so the path goes in with forward slashes.
+    // An ambient NODE_OPTIONS (count-node-procs' own preload, CI coverage) stays in front, so this child is still counted.
+    env: hookEnv({ NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require "${preload.replace(/\\/g, '/')}"`].filter(Boolean).join(' ') }),
   });
+  assert.strictEqual(code, 0);
   assert.strictEqual(JSON.parse(stdout).hookSpecificOutput.permissionDecision, 'deny');
 });
 
@@ -860,7 +936,7 @@ test('hooks.json registers a PostToolUse matcher for Skill (unfiltered, literal 
   assert.strictEqual(skillEntry.hooks.length, 1);
   assert.strictEqual(skillEntry.hooks[0].type, 'command');
   assert.ok(!('if' in skillEntry.hooks[0]), 'Skill matcher must be a literal tool-name match, not pattern-filtered');
-  assert.match(skillEntry.hooks[0].command, /bin\/hooks\.js" post-tool-use$/);
+  assert.match(skillEntry.hooks[0].command, /bin\/hooks\.sh" post-tool-use$/);
 });
 
 test('hooks.json registers a PostToolUse matcher for AskUserQuestion (unfiltered, literal tool-name match)', () => {
@@ -874,7 +950,7 @@ test('hooks.json registers a PostToolUse matcher for AskUserQuestion (unfiltered
   assert.strictEqual(askEntry.hooks.length, 1);
   assert.strictEqual(askEntry.hooks[0].type, 'command');
   assert.ok(!('if' in askEntry.hooks[0]), 'AskUserQuestion matcher must be a literal tool-name match, not pattern-filtered');
-  assert.match(askEntry.hooks[0].command, /bin\/hooks\.js" post-tool-use$/);
+  assert.match(askEntry.hooks[0].command, /bin\/hooks\.sh" post-tool-use$/);
 });
 
 // #457: audit of every tool_name checked in post-tool-use.js's run() and its
@@ -891,7 +967,7 @@ test('hooks.json registers a PostToolUse matcher for Write (unfiltered, literal 
   assert.strictEqual(writeEntry.hooks.length, 1);
   assert.strictEqual(writeEntry.hooks[0].type, 'command');
   assert.ok(!('if' in writeEntry.hooks[0]), 'Write matcher must be a literal tool-name match, not pattern-filtered');
-  assert.match(writeEntry.hooks[0].command, /bin\/hooks\.js" post-tool-use$/);
+  assert.match(writeEntry.hooks[0].command, /bin\/hooks\.sh" post-tool-use$/);
 });
 
 test('hooks.json registers a matcher-less UserPromptSubmit group invoking hooks.js user-prompt-submit', () => {
@@ -900,7 +976,7 @@ test('hooks.json registers a matcher-less UserPromptSubmit group invoking hooks.
   assert.ok(Array.isArray(groups), 'expected a UserPromptSubmit array');
   assert.strictEqual(groups.length, 1);
   assert.ok(!('matcher' in groups[0]), 'Claude Code ignores matchers for UserPromptSubmit, so none is registered');
-  assert.ok(groups[0].hooks.some((h) => h.type === 'command' && h.command.includes('hooks.js" user-prompt-submit')));
+  assert.ok(groups[0].hooks.some((h) => h.type === 'command' && h.command.includes('hooks.sh" user-prompt-submit')));
 });
 
 test('hooks.json registers ONE unconditional PostToolUse handler for Bash (#3074)', () => {
@@ -911,7 +987,7 @@ test('hooks.json registers ONE unconditional PostToolUse handler for Bash (#3074
   const hook = bashEntry.hooks[0];
   assert.strictEqual(hook.type, 'command');
   assert.ok(!('if' in hook), 'the PostToolUse Bash handler must be unconditional — the prefilter in bin/hooks.js replaces the "if" patterns');
-  assert.match(hook.command, /bin\/hooks\.js" post-tool-use$/);
+  assert.match(hook.command, /bin\/hooks\.sh" post-tool-use$/);
 });
 
 test("the Bash prefilter covers every VALUE_FLAGS entry git-command.js's gitTargets() resolves (finding regression)", () => {
@@ -932,10 +1008,10 @@ test("the Bash prefilter covers every VALUE_FLAGS entry git-command.js's gitTarg
   }
 });
 
-test('e2e: pre-tool-use CLI denies an Edit when worktree-always policy is set in the main checkout', () => {
+test('e2e: pre-tool-use CLI denies an Edit when worktree-always policy is set in the main checkout', async () => {
   const project = gitRepo();
   writeWorktreeAlwaysPolicy(project);
-  const result = runHook(['pre-tool-use'], {
+  const result = await runHook(['pre-tool-use'], {
     input: JSON.stringify({ tool_name: 'Edit', tool_input: { file_path: path.join(project, 'a.txt') } }),
     cwd: project,
   });
@@ -954,10 +1030,10 @@ function policyRepoWithRun() {
   return { project, run };
 }
 
-test('a resolved deny appends a gate-denial event', () => {
+test('a resolved deny appends a gate-denial event', async () => {
   const { project, run } = policyRepoWithRun();
   const target = path.join(project, 'a.txt');
-  const result = runHook(['pre-tool-use'], {
+  const result = await runHook(['pre-tool-use'], {
     input: JSON.stringify({ tool_name: 'Write', tool_input: { file_path: target } }),
     cwd: project,
   });
@@ -978,10 +1054,10 @@ test('a resolved deny appends a gate-denial event', () => {
 // real, non-test invocation of the hook) must NOT tag its gate-denial event —
 // the regression guard for "a real operator denial still logs and is still
 // returned" (issue's Acceptance Criteria).
-test('#1337: a gate-denial event is untagged when CT_HOOKS_TEST_MODE is not set', () => {
+test('#1337: a gate-denial event is untagged when CT_HOOKS_TEST_MODE is not set', async () => {
   const { project, run } = policyRepoWithRun();
   const target = path.join(project, 'a.txt');
-  const result = runHook(['pre-tool-use'], {
+  const result = await runHook(['pre-tool-use'], {
     input: JSON.stringify({ tool_name: 'Write', tool_input: { file_path: target } }),
     cwd: project,
     env: { CT_HOOKS_TEST_MODE: '' },
@@ -1016,7 +1092,7 @@ test('#1337: a gate-denial event is untagged when CT_HOOKS_TEST_MODE is not set'
 // unadopted-mint case, and the broader cross-worktree case is #1402/PR #1577,
 // already built+tested+reviewed and awaiting merge as of this writing — not
 // re-implemented here to avoid duplicating that in-flight fix.)
-test('#750: a compound Bash command with no policy violation logs no gate-denial event', () => {
+test('#750: a compound Bash command with no policy violation logs no gate-denial event', async () => {
   const project = gitRepo(); // no writeWorktreeAlwaysPolicy(project) -- nothing to enforce
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   fs.mkdirSync(run, { recursive: true });
@@ -1030,7 +1106,7 @@ test('#750: a compound Bash command with no policy violation logs no gate-denial
   const hooksConfig = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugin', 'hooks', 'hooks.json'), 'utf8'));
   const bashEntry = hooksConfig.hooks.PreToolUse.find((e) => e.matcher === 'Bash');
   assert.strictEqual(bashEntry.hooks.length, 1, 'one unconditional handler (#3074)');
-  const result = runHook(['pre-tool-use'], {
+  const result = await runHook(['pre-tool-use'], {
     input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: compoundCommand } }),
     cwd: project,
   });
@@ -1046,11 +1122,11 @@ test('#750: a compound Bash command with no policy violation logs no gate-denial
 // also asked for a standalone "untracked, not gitignored" branch — deliberately
 // not implemented; see isUntrackedOrIgnored's header comment in
 // pre-tool-use.js for the concrete regression evidence that made it unsafe.)
-test('an allowed gitignored write appends a gate-exempt-gitignored event', () => {
+test('an allowed gitignored write appends a gate-exempt-gitignored event', async () => {
   const { project, run } = policyRepoWithRun();
   fs.writeFileSync(path.join(project, '.gitignore'), '*.env\n');
   const target = path.join(project, 'deploy.env');
-  const result = runHook(['pre-tool-use'], {
+  const result = await runHook(['pre-tool-use'], {
     input: JSON.stringify({ tool_name: 'Write', tool_input: { file_path: target } }),
     cwd: project,
   });
@@ -1066,11 +1142,11 @@ test('an allowed gitignored write appends a gate-exempt-gitignored event', () =>
 // Regression guard for the reverted branch above: an EXISTING, never-`git
 // add`ed file that is NOT gitignored must stay denied — proving the
 // exemption really is gitignored-only, not untracked-status-only.
-test('an existing, never-added file that is NOT gitignored stays denied (no gate-exempt-gitignored event)', () => {
+test('an existing, never-added file that is NOT gitignored stays denied (no gate-exempt-gitignored event)', async () => {
   const { project, run } = policyRepoWithRun();
   const target = path.join(project, 'scratch.txt');
   fs.writeFileSync(target, 'pre-existing, never git-added, not ignored');
-  const result = runHook(['pre-tool-use'], {
+  const result = await runHook(['pre-tool-use'], {
     input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: `cp source.txt ${shellQuote(target)}` } }),
     cwd: project,
   });
@@ -1087,11 +1163,11 @@ function runBashPreToolUse(command, cwd) {
   return runHook(['pre-tool-use'], { input: JSON.stringify({ tool_name: 'Bash', tool_input: { command } }), cwd });
 }
 
-test('#3080 AC: bare redirection writes from a worktree-always main checkout are DENIED', () => {
+test('#3080 AC: bare redirection writes from a worktree-always main checkout are DENIED', async () => {
   const { project } = policyRepoWithRun();
   const target = path.join(project, 'tracked-file.js');
   for (const command of [`echo x > ${shellQuote(target)}`, `printf y >> ${shellQuote(target)}`, `cat a > ${shellQuote(target)}`]) {
-    const result = runBashPreToolUse(command, project);
+    const result = await runBashPreToolUse(command, project);
     assert.strictEqual(result.code, 0, command);
     assert.match(result.stdout, /"permissionDecision":"deny"/, command);
   }
@@ -1099,20 +1175,20 @@ test('#3080 AC: bare redirection writes from a worktree-always main checkout are
 
 // #3080 AC: the common non-write redirection shapes, and the two existing
 // exemptions (gitignored, pipeline bookkeeping), stay ALLOWED.
-test('#3080 AC: /dev/null, fd duplication, a gitignored target, and a pipeline-bookkeeping target are ALLOWED', () => {
+test('#3080 AC: /dev/null, fd duplication, a gitignored target, and a pipeline-bookkeeping target are ALLOWED', async () => {
   const { project, run } = policyRepoWithRun();
   for (const command of ['echo x > /dev/null', 'cmd 2>&1']) {
-    const result = runBashPreToolUse(command, project);
+    const result = await runBashPreToolUse(command, project);
     assert.strictEqual(result.code, 0, command);
     assert.doesNotMatch(result.stdout, /"permissionDecision":"deny"/, command);
   }
 
   fs.writeFileSync(path.join(project, '.gitignore'), '*.log\n');
-  const ignoredResult = runBashPreToolUse(`echo x > ${shellQuote(path.join(project, 'ignored.log'))}`, project);
+  const ignoredResult = await runBashPreToolUse(`echo x > ${shellQuote(path.join(project, 'ignored.log'))}`, project);
   assert.strictEqual(ignoredResult.code, 0);
   assert.doesNotMatch(ignoredResult.stdout, /"permissionDecision":"deny"/, 'a gitignored redirection target must be allowed');
 
-  const pipelineResult = runBashPreToolUse(`echo x > ${shellQuote(path.join(run, 'work', 'x'))}`, project);
+  const pipelineResult = await runBashPreToolUse(`echo x > ${shellQuote(path.join(run, 'work', 'x'))}`, project);
   assert.strictEqual(pipelineResult.code, 0);
   assert.doesNotMatch(pipelineResult.stdout, /"permissionDecision":"deny"/, 'a .claude-tweaks/pipelines/ redirection target must be allowed');
 });
@@ -1175,19 +1251,19 @@ function frozenSnippet(root, dir) {
   return FROZEN_SNIPPET_LINES.map((l) => l.split('@ROOT@').join(root).split('@DIR@').join(dir)).join('\n');
 }
 
-test('#3989 AC1: the frozen queue-pull grouping snippet (a `>` inside its heredoc body) is NOT denied', () => {
+test('#3989 AC1: the frozen queue-pull grouping snippet (a `>` inside its heredoc body) is NOT denied', async () => {
   const { project } = policyRepoWithRun();
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-3989-queue-'));
-  const result = runBashPreToolUse(frozenSnippet(path.join(tmp, 'plugin'), tmp), project);
+  const tmp = scratchDir('ct-3989-queue-');
+  const result = await runBashPreToolUse(frozenSnippet(path.join(tmp, 'plugin'), tmp), project);
   assert.strictEqual(result.code, 0);
   assert.doesNotMatch(result.stdout, /"permissionDecision":"deny"/, 'the body is not a redirection; its only write target is under the temp dir');
 });
 
-test('#3989 AC2: the same snippet with a real top-level redirect into the repo after the delimiter IS denied', () => {
+test('#3989 AC2: the same snippet with a real top-level redirect into the repo after the delimiter IS denied', async () => {
   const { project } = policyRepoWithRun();
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-3989-queue-'));
+  const tmp = scratchDir('ct-3989-queue-');
   const command = `${frozenSnippet(path.join(tmp, 'plugin'), tmp)}\necho x > ${shellQuote(path.join(project, 'tracked-file.js'))}`;
-  const result = runBashPreToolUse(command, project);
+  const result = await runBashPreToolUse(command, project);
   assert.strictEqual(result.code, 0);
   assert.match(result.stdout, /"permissionDecision":"deny"/, 'a redirect after the closing delimiter must still be scanned');
 });
@@ -1203,7 +1279,7 @@ test('#3989 AC2: the same snippet with a real top-level redirect into the repo a
 // entirely separate from the fixture project below, so if runHook's guard
 // ever regressed, the gate-denial event triggered here would land in the
 // decoy instead of (or in addition to) the correctly cwd-resolved run.
-test('#1270: a gate-denial event never lands in an ambient PIPELINE_RUN_DIR the call site never passed', () => {
+test('#1270: a gate-denial event never lands in an ambient PIPELINE_RUN_DIR the call site never passed', async () => {
   const decoyRepo = gitRepo();
   const decoyRun = path.join(decoyRepo, '.claude-tweaks', 'pipelines', '2026-08-02T090000-record-9');
   fs.mkdirSync(decoyRun, { recursive: true });
@@ -1217,7 +1293,7 @@ test('#1270: a gate-denial event never lands in an ambient PIPELINE_RUN_DIR the 
   process.env.PIPELINE_RUN_DIR = decoyRun;
   let result;
   try {
-    result = runHook(['pre-tool-use'], {
+    result = await runHook(['pre-tool-use'], {
       input: JSON.stringify({ tool_name: 'Write', tool_input: { file_path: target } }),
       cwd: project,
     });
@@ -1235,7 +1311,7 @@ test('#1270: a gate-denial event never lands in an ambient PIPELINE_RUN_DIR the 
   assert.strictEqual(events[0].type, 'gate-denial');
 });
 
-test('a deny with no resolved run dir and no session_id writes nothing and still denies', () => {
+test('a deny with no resolved run dir and no session_id writes nothing and still denies', async () => {
   const project = gitRepo();
   writeWorktreeAlwaysPolicy(project);
   // Deliberately no .claude-tweaks/pipelines/ run dir at all, so
@@ -1246,7 +1322,7 @@ test('a deny with no resolved run dir and no session_id writes nothing and still
   // "#2351: a main-checkout gate denial with no owned run dir gets an
   // ad-hoc run dir stamped" below for the shape that now DOES stamp one.
   const target = path.join(project, 'a.txt');
-  const result = runHook(['pre-tool-use'], {
+  const result = await runHook(['pre-tool-use'], {
     input: JSON.stringify({ tool_name: 'Write', tool_input: { file_path: target } }),
     cwd: project,
   });
@@ -1264,11 +1340,11 @@ test('a deny with no resolved run dir and no session_id writes nothing and still
 // the moment a real denial needs one, keyed on whatever `git worktree list`
 // resolves cwd to (main checkout included) — as long as the payload carries
 // a session_id to stamp ownership against.
-test('#2351: a main-checkout gate denial with no owned run dir gets an ad-hoc run dir stamped', () => {
+test('#2351: a main-checkout gate denial with no owned run dir gets an ad-hoc run dir stamped', async () => {
   const project = gitRepo();
   writeWorktreeAlwaysPolicy(project);
   const target = path.join(project, 'a.txt');
-  const result = runHook(['pre-tool-use'], {
+  const result = await runHook(['pre-tool-use'], {
     input: JSON.stringify({ tool_name: 'Write', tool_input: { file_path: target }, session_id: 'main-checkout-session' }),
     cwd: project,
   });
@@ -1292,11 +1368,11 @@ test('#2351: a main-checkout gate denial with no owned run dir gets an ad-hoc ru
 // on ordinary main-checkout activity — an allowed (non-denied) call must not
 // mint anything, or every ad hoc `git status`/read in the main checkout would
 // start minting run dirs.
-test('#2351: an ordinary allowed call in the main checkout does not stamp an ad-hoc run dir', () => {
+test('#2351: an ordinary allowed call in the main checkout does not stamp an ad-hoc run dir', async () => {
   const project = gitRepo();
   // No worktree-always policy at all -> nothing is denied.
   const target = path.join(project, 'a.txt');
-  const result = runHook(['pre-tool-use'], {
+  const result = await runHook(['pre-tool-use'], {
     input: JSON.stringify({ tool_name: 'Write', tool_input: { file_path: target }, session_id: 'main-checkout-session' }),
     cwd: project,
   });
@@ -1306,12 +1382,12 @@ test('#2351: an ordinary allowed call in the main checkout does not stamp an ad-
     'an allowed call must never mint an ad-hoc run dir — only an actual denial does');
 });
 
-test('a gate denial with an unwritable run dir still denies and exits 0', chmodDenialSkip('root ignores directory permissions'), () => {
+test('a gate denial with an unwritable run dir still denies and exits 0', chmodDenialSkip('root ignores directory permissions'), async () => {
   const { project, run } = policyRepoWithRun();
   fs.chmodSync(run, 0o500); // read+execute only — fs.appendFileSync inside it must throw
   try {
     const target = path.join(project, 'a.txt');
-    const result = runHook(['pre-tool-use'], {
+    const result = await runHook(['pre-tool-use'], {
       input: JSON.stringify({ tool_name: 'Write', tool_input: { file_path: target } }),
       cwd: project,
     });
@@ -1323,9 +1399,9 @@ test('a gate denial with an unwritable run dir still denies and exits 0', chmodD
   }
 });
 
-test('e2e: pre-tool-use CLI allows an Edit when worktree-always policy is not set', () => {
+test('e2e: pre-tool-use CLI allows an Edit when worktree-always policy is not set', async () => {
   const project = gitRepo();
-  const result = runHook(['pre-tool-use'], {
+  const result = await runHook(['pre-tool-use'], {
     input: JSON.stringify({ tool_name: 'Edit', tool_input: { file_path: path.join(project, 'a.txt') } }),
     cwd: project,
   });
@@ -1335,17 +1411,35 @@ test('e2e: pre-tool-use CLI allows an Edit when worktree-always policy is not se
 
 // #409: record-pr writes run-state.json's pr:{number,url} field — same shape
 // and precedent as record-worktree/close-run (CLAUDE.md's write-ownership rule).
-test('record-pr writes run-state.pr and prints a confirmation line', () => {
+test('record-pr writes run-state.pr and prints a confirmation line', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  const result = runHook(['record-pr', '42', 'https://github.com/o/r/pull/42'], { cwd: project });
+  const result = await runHook(['record-pr', '42', 'https://github.com/o/r/pull/42'], { cwd: project });
   assert.strictEqual(result.code, 0);
   assert.match(result.stdout, /claude-tweaks: PR #42 recorded for 2026-07-01T090000-spec-1/);
   const state = readRunState(run);
   assert.deepStrictEqual(state.pr, { number: 42, url: 'https://github.com/o/r/pull/42' });
 });
 
-test('record-pr --run pins the target run dir, same as record-worktree', () => {
+// #5377: the record-pr verb's run-state write takes its lock wait from the env the call carries, on the
+// pattern of the record-worktree test above. A call that records no PR (a non-numeric number) takes no
+// lock and gives the baseline of reads made outside the write; the write must read the knob beyond it.
+test('record-pr reads the run-state lock wait from the passed env', async () => {
+  const project = tmpProject();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  let knobReads = 0;
+  const env = hookEnv({ CLAUDE_CODE_SESSION_ID: '' });
+  Object.defineProperty(env, 'CLAUDE_TWEAKS_LOCK_WAIT_MS', { enumerable: true, get() { knobReads += 1; return '0'; } });
+  const noWrite = await runHookCli(['record-pr', '--run', run, 'not-a-number', 'https://github.com/o/r/pull/7'], { cwd: project, env: hookEnv(), deps: { env } });
+  assert.match(noWrite.stdout, /PR not recorded/);
+  const baseline = knobReads;
+  const result = await runHookCli(['record-pr', '--run', run, '7', 'https://github.com/o/r/pull/7'], { cwd: project, env: hookEnv(), deps: { env } });
+  assert.strictEqual(result.code, 0);
+  assert.match(result.stdout, /PR #7 recorded/);
+  assert.ok(knobReads - baseline > baseline, `the run-state lock read its wait from the passed env (baseline ${baseline}, total ${knobReads})`);
+});
+
+test('record-pr --run pins the target run dir, same as record-worktree', async () => {
   const project = gitRepo(); // #790: --run must resolve under a real git checkout
   const staleDir = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-15T090000-record-19');
   fs.mkdirSync(staleDir, { recursive: true });
@@ -1359,33 +1453,33 @@ test('record-pr --run pins the target run dir, same as record-worktree', () => {
   // would already have written in a real pipeline.
   fs.writeFileSync(path.join(ownDir, 'decisions.md'), '');
 
-  const result = runHook(['record-pr', '--run', ownDir, '7', 'https://github.com/o/r/pull/7'], { cwd: project });
+  const result = await runHook(['record-pr', '--run', ownDir, '7', 'https://github.com/o/r/pull/7'], { cwd: project });
   assert.strictEqual(result.code, 0);
   assert.deepStrictEqual(readRunState(ownDir).pr, { number: 7, url: 'https://github.com/o/r/pull/7' });
   assert.strictEqual(readRunState(staleDir).pr, undefined, 'the stale run must not have been written to');
 });
 
-test('record-pr with a non-existent --run path fails loudly instead of falling back or claiming success', () => {
+test('record-pr with a non-existent --run path fails loudly instead of falling back or claiming success', async () => {
   const project = tmpProject();
   const bogus = path.join(project, 'nope');
-  const result = runHook(['record-pr', '--run', bogus, '7', 'https://github.com/o/r/pull/7'], { cwd: project });
+  const result = await runHook(['record-pr', '--run', bogus, '7', 'https://github.com/o/r/pull/7'], { cwd: project });
   assert.strictEqual(result.code, 0);
   assert.match(result.stdout, /--run path rejected/);
 });
 
-test('record-pr with no resolvable run dir prints a not-recorded notice instead of silent success', () => {
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bare-'));
-  const result = runHook(['record-pr', '7', 'https://github.com/o/r/pull/7'], { cwd: bare });
+test('record-pr with no resolvable run dir prints a not-recorded notice instead of silent success', async () => {
+  const bare = scratchDir('ct-bare-');
+  const result = await runHook(['record-pr', '7', 'https://github.com/o/r/pull/7'], { cwd: bare });
   assert.strictEqual(result.code, 0);
   assert.ok(result.stdout.trim().length > 0, 'expected a diagnostic message, not silent success');
   assert.doesNotMatch(result.stdout, /PR #7 recorded/);
 });
 
-test('record-pr with a non-numeric or missing number/url prints a usage notice instead of writing garbage state', () => {
+test('record-pr with a non-numeric or missing number/url prints a usage notice instead of writing garbage state', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   for (const args of [['record-pr'], ['record-pr', 'not-a-number', 'https://x'], ['record-pr', '7']]) {
-    const result = runHook(args, { cwd: project });
+    const result = await runHook(args, { cwd: project });
     assert.strictEqual(result.code, 0);
     assert.match(result.stdout, /usage: record-pr/);
     assert.strictEqual(fs.existsSync(path.join(run, 'run-state.json')), false);
@@ -1396,82 +1490,82 @@ test('record-pr with a non-numeric or missing number/url prints a usage notice i
 // live, so record-pr stamps it into pr.branch at that moment — the
 // torn-down-worktree fallback in run-integrity.js reads it back later, once
 // `git worktree list` no longer has an entry to derive it from.
-test('record-pr records the branch alongside the PR — deriveBranch() run while the worktree is still live', () => {
+test('record-pr records the branch alongside the PR — deriveBranch() run while the worktree is still live', async () => {
   const project = tmpProject();
   execFileSync('git', ['-C', project, 'commit', '--allow-empty', '-q', '-m', 'init']);
   const worktree = linkedWorktreeOf(project);
   const branch = execFileSync('git', ['-C', worktree, 'branch', '--show-current'], { encoding: 'utf8' }).trim();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  runHook(['record-worktree', '--run', run, worktree], { cwd: project });
+  await runHook(['record-worktree', '--run', run, worktree], { cwd: project });
 
-  const result = runHook(['record-pr', '--run', run, '7', 'https://github.com/o/r/pull/7'], { cwd: project });
+  const result = await runHook(['record-pr', '--run', run, '7', 'https://github.com/o/r/pull/7'], { cwd: project });
   assert.strictEqual(result.code, 0);
   assert.deepStrictEqual(readRunState(run).pr, { number: 7, url: 'https://github.com/o/r/pull/7', branch });
 });
 
-test('check-resume-freshness: reports OK when the run is not interrupted', () => {
+test('check-resume-freshness: reports OK when the run is not interrupted', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-08-01T000000-record-1');
   fs.mkdirSync(run, { recursive: true });
   fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ status: 'active', sessionId: 'other' }));
-  const result = runHook(['check-resume-freshness', '--run', run], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'me' } });
+  const result = await runHook(['check-resume-freshness', '--run', run], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'me' } });
   assert.strictEqual(result.code, 0);
   assert.match(result.stdout, /freshness OK for 2026-08-01T000000-record-1 \(not-interrupted\)/);
 });
 
-test('check-resume-freshness: reports BLOCKED with a reason when the run is interrupted and the recorded worktree has a fresh commit', () => {
+test('check-resume-freshness: reports BLOCKED with a reason when the run is interrupted and the recorded worktree has a fresh commit', async () => {
   const project = tmpProject();
   const wt = gitRepo();
   execFileSync('git', ['-C', wt, 'commit', '--allow-empty', '-m', 'recent', '-q']);
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-08-01T000000-record-2');
   fs.mkdirSync(run, { recursive: true });
   fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ status: 'interrupted', sessionId: 'other', worktree: wt }));
-  const result = runHook(['check-resume-freshness', '--run', run], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'me' } });
+  const result = await runHook(['check-resume-freshness', '--run', run], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'me' } });
   assert.strictEqual(result.code, 0);
   assert.match(result.stdout, /freshness BLOCKED for 2026-08-01T000000-record-2 — run appears actively owned \(worktree committed to within the last \d+ minutes\)/);
 });
 
-test('check-resume-freshness: no resolvable --run path reports the not-found line', () => {
+test('check-resume-freshness: no resolvable --run path reports the not-found line', async () => {
   const project = tmpProject();
-  const result = runHook(['check-resume-freshness', '--run', path.join(project, 'nope')], { cwd: project });
+  const result = await runHook(['check-resume-freshness', '--run', path.join(project, 'nope')], { cwd: project });
   assert.strictEqual(result.code, 0);
   assert.match(result.stdout, /--run path rejected/);
 });
 
-test('check-staged-inventory: reports OK when decisions.md has no STAGED entries', () => {
+test('check-staged-inventory: reports OK when decisions.md has no STAGED entries', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-08-01T000000-record-3');
   fs.mkdirSync(run, { recursive: true });
   fs.writeFileSync(path.join(run, 'decisions.md'), 'AUTO 14:32:14 — Step 1.5: scope-creep applied. Reversibility: high.');
-  const result = runHook(['check-staged-inventory', '--run', run], { cwd: project });
+  const result = await runHook(['check-staged-inventory', '--run', run], { cwd: project });
   assert.strictEqual(result.code, 0);
   assert.match(result.stdout, /staged inventory OK for 2026-08-01T000000-record-3 \(0 STAGED entries\)/);
 });
 
-test('check-staged-inventory: reports OK when every STAGED entry has a backing file', () => {
+test('check-staged-inventory: reports OK when every STAGED entry has a backing file', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-08-01T000000-record-4');
   fs.mkdirSync(path.join(run, 'staged'), { recursive: true });
   fs.writeFileSync(path.join(run, 'staged', 'review-1.patch'), 'diff');
   fs.writeFileSync(path.join(run, 'decisions.md'), 'STAGED 14:41:15 — Step 3 Routing: finding. Stage path: staged/review-1.patch.');
-  const result = runHook(['check-staged-inventory', '--run', run], { cwd: project });
+  const result = await runHook(['check-staged-inventory', '--run', run], { cwd: project });
   assert.strictEqual(result.code, 0);
   assert.match(result.stdout, /staged inventory OK for 2026-08-01T000000-record-4 \(1 STAGED entries\)/);
 });
 
-test('check-staged-inventory: reports MISMATCH naming the missing path when a STAGED entry has no backing file', () => {
+test('check-staged-inventory: reports MISMATCH naming the missing path when a STAGED entry has no backing file', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-08-01T000000-record-5');
   fs.mkdirSync(run, { recursive: true });
   fs.writeFileSync(path.join(run, 'decisions.md'), 'STAGED 08:22:19 — Step 3 lens dispatch: deferred finding. Stage path: staged/review-defer-1.md.');
-  const result = runHook(['check-staged-inventory', '--run', run], { cwd: project });
+  const result = await runHook(['check-staged-inventory', '--run', run], { cwd: project });
   assert.strictEqual(result.code, 0);
   assert.match(result.stdout, /staged inventory MISMATCH for 2026-08-01T000000-record-5 — 1 of 1 STAGED entries missing from staged\/: staged\/review-defer-1\.md/);
 });
 
-test('check-staged-inventory: no resolvable --run path reports the not-found line', () => {
+test('check-staged-inventory: no resolvable --run path reports the not-found line', async () => {
   const project = tmpProject();
-  const result = runHook(['check-staged-inventory', '--run', path.join(project, 'nope')], { cwd: project });
+  const result = await runHook(['check-staged-inventory', '--run', path.join(project, 'nope')], { cwd: project });
   assert.strictEqual(result.code, 0);
   assert.match(result.stdout, /--run path rejected/);
 });
@@ -1480,7 +1574,7 @@ test('check-staged-inventory: no resolvable --run path reports the not-found lin
 // any residue SessionStart already flagged at session start and that
 // remains unresolved — same detection session-start.js's own banners use
 // (residue.js), reused rather than re-derived.
-test('check-session-residue: reports no pending residue when this is the only run dir', () => {
+test('check-session-residue: reports no pending residue when this is the only run dir', async () => {
   // #2736: gitRepo() (unlike tmpProject()) seeds no default run dir — the
   // scan this CLI performs would otherwise pick up tmpProject()'s own
   // '2026-07-01T090000-spec-1' fixture as a false positive.
@@ -1489,29 +1583,35 @@ test('check-session-residue: reports no pending residue when this is the only ru
   fs.mkdirSync(run, { recursive: true });
   fs.writeFileSync(path.join(run, 'decisions.md'), '');
   fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ status: 'active' }));
-  const result = runHook(['check-session-residue', '--run', run], { cwd: project });
+  const result = await runHook(['check-session-residue', '--run', run], { cwd: project });
   assert.strictEqual(result.code, 0);
   assert.match(result.stdout, /no pending residue from session start/);
 });
 
-test('check-session-residue: reports a sibling interrupted run, excluding the --run target itself', () => {
+test('check-session-residue: reports a sibling orphaned run, excluding the --run target itself', async () => {
+  // #3977: a run is residue only once reconcile cached it as orphaned and its owner is gone.
+  const { seedOrphan, deadOwner, writeOldEvents } = require('./helpers/orphan-fixture');
   const project = gitRepo();
   const own = path.join(project, '.claude-tweaks', 'pipelines', '2026-08-02T000000-record-7');
   fs.mkdirSync(own, { recursive: true });
   fs.writeFileSync(path.join(own, 'decisions.md'), '');
-  fs.writeFileSync(path.join(own, 'run-state.json'), JSON.stringify({ status: 'active' }));
+  fs.writeFileSync(path.join(own, 'run-state.json'), JSON.stringify({ status: 'active', ...deadOwner() }));
+  writeOldEvents(own);
+  seedOrphan(project, own);
   const sibling = path.join(project, '.claude-tweaks', 'pipelines', '2026-08-01T000000-record-6');
   fs.mkdirSync(sibling, { recursive: true });
-  fs.writeFileSync(path.join(sibling, 'run-state.json'), JSON.stringify({ status: 'interrupted' }));
-  const result = runHook(['check-session-residue', '--run', own], { cwd: project });
+  fs.writeFileSync(path.join(sibling, 'run-state.json'), JSON.stringify({ status: 'interrupted', ...deadOwner() }));
+  writeOldEvents(sibling);
+  seedOrphan(project, sibling, 'unpushed commits on feat-6');
+  const result = await runHook(['check-session-residue', '--run', own], { cwd: project });
   assert.strictEqual(result.code, 0);
   assert.match(result.stdout, /pending residue from session start still unresolved/);
-  assert.match(result.stdout, /2026-08-01T000000-record-6 \(status: interrupted\)/);
+  assert.match(result.stdout, /2026-08-01T000000-record-6 \(status: interrupted\) — unpushed commits on feat-6: resume with /);
   assert.match(result.stdout, /close-run --run/);
   assert.doesNotMatch(result.stdout, /2026-08-02T000000-record-7/, "the --run target's own dir must never be reported as its own residue");
 });
 
-test('check-session-residue: reports a clean standalone run with unapproved staged proposals', () => {
+test('check-session-residue: reports a clean standalone run with unapproved staged proposals', async () => {
   const project = gitRepo();
   const own = path.join(project, '.claude-tweaks', 'pipelines', '2026-08-02T000000-record-8');
   fs.mkdirSync(own, { recursive: true });
@@ -1521,13 +1621,13 @@ test('check-session-residue: reports a clean standalone run with unapproved stag
   fs.mkdirSync(path.join(standalone, 'staged'), { recursive: true });
   fs.writeFileSync(path.join(standalone, 'run-state.json'), JSON.stringify({ status: 'clean' }));
   fs.writeFileSync(path.join(standalone, 'staged', 'stale-close-1.json'), '{}');
-  const result = runHook(['check-session-residue', '--run', own], { cwd: project });
+  const result = await runHook(['check-session-residue', '--run', own], { cwd: project });
   assert.strictEqual(result.code, 0);
   assert.match(result.stdout, /pending residue from session start still unresolved/);
   assert.match(result.stdout, /2026-08-01T000000-tidy-standalone.*tidy --approve/);
 });
 
-test('check-session-residue: reports an archived run\'s unreviewed console items', () => {
+test('check-session-residue: reports an archived run\'s unreviewed console items', async () => {
   const project = gitRepo();
   const own = path.join(project, '.claude-tweaks', 'pipelines', '2026-10-17T000000-record-9');
   fs.mkdirSync(own, { recursive: true });
@@ -1540,7 +1640,7 @@ test('check-session-residue: reports an archived run\'s unreviewed console items
     resolved: true,
     items: [{ id: 'review-13-record.md', section: 'Pending review', resolution: 'pending', reason: 'unmapped-prefix' }],
   }));
-  const result = runHook(['check-session-residue', '--run', own], { cwd: project });
+  const result = await runHook(['check-session-residue', '--run', own], { cwd: project });
   assert.strictEqual(result.code, 0);
   assert.match(result.stdout, /pending residue from session start still unresolved/);
   assert.match(result.stdout, /review-13-record\.md/);
@@ -1548,7 +1648,7 @@ test('check-session-residue: reports an archived run\'s unreviewed console items
   assert.doesNotMatch(result.stdout, /no pending residue/);
 });
 
-test('check-session-residue: an unreviewed-console backlog past MAX_REPORTED adds the overflow line and --ack-all (#3370 I3)', () => {
+test('check-session-residue: an unreviewed-console backlog past MAX_REPORTED adds the overflow line and --ack-all (#3370 I3)', async () => {
   const project = gitRepo();
   const own = path.join(project, '.claude-tweaks', 'pipelines', '2026-10-17T000000-record-9');
   fs.mkdirSync(own, { recursive: true });
@@ -1568,20 +1668,20 @@ test('check-session-residue: an unreviewed-console backlog past MAX_REPORTED add
   const overflow = /^- … more run\(s\) may have unreviewed console items \(newest 3 shown\)\.$/m;
   const ackAll = /^To dismiss every listed and older unreviewed item at once after reviewing \(a human decision\): node ".*\/bin\/console-residue\.js" --ack-all$/m;
   for (const i of [1, 2, 3]) mkResidue(i);
-  const three = runHook(['check-session-residue', '--run', own], { cwd: project });
+  const three = await runHook(['check-session-residue', '--run', own], { cwd: project });
   assert.strictEqual(three.code, 0);
   assert.match(three.stdout, ackAll);
   assert.doesNotMatch(three.stdout, overflow);
   mkResidue(4);
-  const four = runHook(['check-session-residue', '--run', own], { cwd: project });
+  const four = await runHook(['check-session-residue', '--run', own], { cwd: project });
   assert.strictEqual(four.code, 0);
   assert.match(four.stdout, overflow);
   assert.match(four.stdout, ackAll);
 });
 
-test('check-session-residue: no resolvable --run path reports the not-found line', () => {
+test('check-session-residue: no resolvable --run path reports the not-found line', async () => {
   const project = tmpProject();
-  const result = runHook(['check-session-residue', '--run', path.join(project, 'nope')], { cwd: project });
+  const result = await runHook(['check-session-residue', '--run', path.join(project, 'nope')], { cwd: project });
   assert.strictEqual(result.code, 0);
   assert.match(result.stdout, /--run path rejected/);
 });
@@ -1608,7 +1708,7 @@ test('check-session-residue: no resolvable --run path reports the not-found line
 // decoy repo and ownedRun resolves to the decoy run; post-fix, cwd is the
 // isolated sandbox, which has no `.claude-tweaks/pipelines/` at all, so
 // ownedRun.dir is null and appendEvent no-ops.
-test('a hook spawned with no cwd anywhere cannot write into a real run dir reachable from the test runner process.cwd()', () => {
+test('a hook spawned with no cwd anywhere cannot write into a real run dir reachable from the test runner process.cwd()', async () => {
   const decoyRepo = gitRepo();
   writeWorktreeAlwaysPolicy(decoyRepo);
   const decoyRun = path.join(decoyRepo, '.claude-tweaks', 'pipelines', '2026-08-01T090000-record-9');
@@ -1623,7 +1723,7 @@ test('a hook spawned with no cwd anywhere cannot write into a real run dir reach
     // PIPELINE_RUN_DIR, NO session_id: pre-fix, this resolves cwd to
     // process.cwd() (= decoyRepo) and can append a gate-denial event to the
     // decoy run via ownedRun's unfiltered fallback resolution.
-    runHook(['pre-tool-use'], {
+    await runHook(['pre-tool-use'], {
       input: JSON.stringify({
         tool_name: 'Write',
         tool_input: { file_path: path.join(decoyRepo, 'a.txt') },
@@ -1652,7 +1752,7 @@ test('a hook spawned with no cwd anywhere cannot write into a real run dir reach
 // way. The guard (`PIPELINE_RUN_DIR: ''` between the process.env spread and
 // the caller's env) neutralizes the ambient value so only an explicit
 // call-site `env.PIPELINE_RUN_DIR` can select a run dir.
-test('record-pr does not resolve against an ambient PIPELINE_RUN_DIR the call site never passed', () => {
+test('record-pr does not resolve against an ambient PIPELINE_RUN_DIR the call site never passed', async () => {
   const decoyRepo = gitRepo();
   const decoyRun = path.join(decoyRepo, '.claude-tweaks', 'pipelines', '2026-08-02T090000-record-9');
   fs.mkdirSync(decoyRun, { recursive: true });
@@ -1665,7 +1765,7 @@ test('record-pr does not resolve against an ambient PIPELINE_RUN_DIR the call si
   process.env.PIPELINE_RUN_DIR = decoyRun;
   let result;
   try {
-    result = runHook(['record-pr', '7', 'https://github.com/o/r/pull/7']);
+    result = await runHook(['record-pr', '7', 'https://github.com/o/r/pull/7']);
   } finally {
     if (savedAmbient === undefined) delete process.env.PIPELINE_RUN_DIR;
     else process.env.PIPELINE_RUN_DIR = savedAmbient;
@@ -1696,7 +1796,7 @@ function mkBoundRun(project, name, state) {
   return run;
 }
 
-test('#1012 named regression: A/B/C each act only on their own cwd-bound run via --help and bare close-run; run D (agent absent) stays byte-identical throughout', () => {
+test('#1012 named regression: A/B/C each act only on their own cwd-bound run via --help and bare close-run; run D (agent absent) stays byte-identical throughout', async () => {
   const main = gitRepo();
   execFileSync('git', ['-C', main, 'commit', '--allow-empty', '-q', '-m', 'init']);
   const wtA = linkedWorktreeOf(main);
@@ -1711,13 +1811,13 @@ test('#1012 named regression: A/B/C each act only on their own cwd-bound run via
   const runDBefore = readRunState(runD);
 
   for (const [label, wt, run] of [['A', wtA, runA], ['B', wtB, runB], ['C', wtC, runC]]) {
-    const help = runHook(['close-run', '--help'], { cwd: wt, env: { CLAUDE_CODE_SESSION_ID: SESSION } });
+    const help = await runHook(['close-run', '--help'], { cwd: wt, env: { CLAUDE_CODE_SESSION_ID: SESSION } });
     assert.strictEqual(help.code, 0, `caller ${label}: close-run --help must exit 0`);
     assert.strictEqual(help.stdout, 'claude-tweaks: usage: close-run [--run <dir>]\n', `caller ${label}: --help must print exactly the usage line, no lib call`);
     assert.strictEqual(readRunState(run).status, 'active', `caller ${label}: --help must leave its own run untouched`);
     assert.deepStrictEqual(readRunState(runD), runDBefore, `caller ${label}: --help must never touch run D`);
 
-    const bare = runHook(['close-run'], { cwd: wt, env: { CLAUDE_CODE_SESSION_ID: SESSION } });
+    const bare = await runHook(['close-run'], { cwd: wt, env: { CLAUDE_CODE_SESSION_ID: SESSION } });
     assert.strictEqual(bare.code, 0, `caller ${label}: bare close-run must exit 0`);
     assert.strictEqual(readRunState(run).status, 'clean', `caller ${label}: bare close-run must close its own cwd-bound run (resolution step 2)`);
     assert.deepStrictEqual(readRunState(runD), runDBefore, `caller ${label}: bare close-run must never touch run D — it has no cwd-binding hit here and step 2 alone resolves the caller's own run`);
@@ -1731,7 +1831,7 @@ test('#1012 named regression: A/B/C each act only on their own cwd-bound run via
 // worktree-binding proof: same or missing session id, but each run's
 // recorded binding is a different live worktree than this caller's own) ->
 // zero candidates survive -> refusal (step 4), and no run-state file changes.
-test('#1012 unbound-caller variant: a same-session caller with no bound run of its own is refused (step 4) rather than resolving into any of A/B/C/D', () => {
+test('#1012 unbound-caller variant: a same-session caller with no bound run of its own is refused (step 4) rather than resolving into any of A/B/C/D', async () => {
   const main = gitRepo();
   execFileSync('git', ['-C', main, 'commit', '--allow-empty', '-q', '-m', 'init']);
   const wtA = linkedWorktreeOf(main);
@@ -1746,7 +1846,7 @@ test('#1012 unbound-caller variant: a same-session caller with no bound run of i
   const runD = mkBoundRun(main, '2026-07-01T090003-d', { status: 'active', sessionId: SESSION, worktree: wtD });
   const before = [runA, runB, runC, runD].map(readRunState);
 
-  const result = runHook(['close-run'], { cwd: wtStray, env: { CLAUDE_CODE_SESSION_ID: SESSION } });
+  const result = await runHook(['close-run'], { cwd: wtStray, env: { CLAUDE_CODE_SESSION_ID: SESSION } });
   assert.strictEqual(result.code, 0);
   assert.match(result.stdout, /pass --run explicitly/, 'zero survivors among four candidates must refuse, not silently pick one');
   assert.match(result.stdout, /Run not closed/);
@@ -1758,10 +1858,10 @@ test('#1012 unbound-caller variant: a same-session caller with no bound run of i
 // #3225: record-worktree --dispatch — dispatch Step 5 binds the minted run to
 // the group's worktree BEFORE call 1 and marks it dispatched, in ONE
 // read-modify-write of run-state.json (sibling-session-check.md).
-test('#3225: record-worktree --dispatch writes dispatched: true in the same call as the worktree assignment', () => {
+test('#3225: record-worktree --dispatch writes dispatched: true in the same call as the worktree assignment', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  const r = runHook(['record-worktree', '--run', run, '/tmp/wt-3225', '--dispatch'], { cwd: project });
+  const r = await runHook(['record-worktree', '--run', run, '/tmp/wt-3225', '--dispatch'], { cwd: project });
   assert.strictEqual(r.code, 0);
   assert.match(r.stdout, /claude-tweaks: worktree recorded for 2026-07-01T090000-spec-1/);
   const s = readRunState(run);
@@ -1770,17 +1870,17 @@ test('#3225: record-worktree --dispatch writes dispatched: true in the same call
   assert.strictEqual(s.dispatched, true);
 });
 
-test('#3225: --dispatch is accepted before the worktree positional too, and never read as the worktree path', () => {
+test('#3225: --dispatch is accepted before the worktree positional too, and never read as the worktree path', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  const r = runHook(['record-worktree', '--run', run, '--dispatch', '/tmp/wt-3225b'], { cwd: project });
+  const r = await runHook(['record-worktree', '--run', run, '--dispatch', '/tmp/wt-3225b'], { cwd: project });
   assert.strictEqual(r.code, 0);
   const s = readRunState(run);
   assert.strictEqual(s.worktree, path.resolve('/tmp/wt-3225b'));
   assert.strictEqual(s.dispatched, true);
 });
 
-test('#3225: --dispatch preserves every pre-existing field and writes exactly what a plain record-worktree writes, plus dispatched and dispatchSessionId', () => {
+test('#3225: --dispatch preserves every pre-existing field and writes exactly what a plain record-worktree writes, plus dispatched and dispatchSessionId', async () => {
   const project = tmpProject();
   const seed = {
     status: 'interrupted',
@@ -1798,8 +1898,8 @@ test('#3225: --dispatch preserves every pre-existing field and writes exactly wh
   const plainRun = mk('2026-07-01T090001-spec-2');
   const dispRun = mk('2026-07-01T090002-spec-3');
   const env = { CLAUDE_CODE_SESSION_ID: 'sess-3225' };
-  assert.strictEqual(runHook(['record-worktree', '--run', plainRun, '/tmp/wt-same'], { cwd: project, env }).code, 0);
-  assert.strictEqual(runHook(['record-worktree', '--run', dispRun, '/tmp/wt-same', '--dispatch'], { cwd: project, env }).code, 0);
+  assert.strictEqual((await runHook(['record-worktree', '--run', plainRun, '/tmp/wt-same'], { cwd: project, env })).code, 0);
+  assert.strictEqual((await runHook(['record-worktree', '--run', dispRun, '/tmp/wt-same', '--dispatch'], { cwd: project, env })).code, 0);
   const plain = readRunState(plainRun);
   const disp = readRunState(dispRun);
   assert.strictEqual(plain.dispatched, undefined, 'a plain record-worktree must not write a dispatched key');
@@ -1821,23 +1921,23 @@ test('#3225: --dispatch preserves every pre-existing field and writes exactly wh
   assert.strictEqual(disp.sessionId, 'sess-3225');
 });
 
-test('#3225: dispatched is permanent — a later plain record-worktree re-stamp (task-prompt.md) never clears it', () => {
+test('#3225: dispatched is permanent — a later plain record-worktree re-stamp (task-prompt.md) never clears it', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  assert.strictEqual(runHook(['record-worktree', '--run', run, '/tmp/wt-perm', '--dispatch'], { cwd: project }).code, 0);
-  assert.strictEqual(runHook(['record-worktree', '--run', run, '/tmp/wt-perm'], { cwd: project }).code, 0);
+  assert.strictEqual((await runHook(['record-worktree', '--run', run, '/tmp/wt-perm', '--dispatch'], { cwd: project })).code, 0);
+  assert.strictEqual((await runHook(['record-worktree', '--run', run, '/tmp/wt-perm'], { cwd: project })).code, 0);
   assert.strictEqual(readRunState(run).dispatched, true);
 });
 
 // #3711: dispatchSessionId is written only by `--dispatch`, so a human resuming a dispatched run from a
 // new session (a plain record-worktree re-stamp of sessionId, run-resume-freshness.md) cannot match it.
-test('#3711: a plain re-stamp from another session overwrites sessionId but never dispatchSessionId, so the resumer is not a dispatch Task call', () => {
+test('#3711: a plain re-stamp from another session overwrites sessionId but never dispatchSessionId, so the resumer is not a dispatch Task call', async () => {
   const { isDispatchTaskCallForRun } = require('../plugin/bin/lib/dispatch/task-call');
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  assert.strictEqual(runHook(['record-worktree', '--run', run, '/tmp/wt-3711', '--dispatch'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'D' } }).code, 0);
+  assert.strictEqual((await runHook(['record-worktree', '--run', run, '/tmp/wt-3711', '--dispatch'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'D' } })).code, 0);
   assert.strictEqual(isDispatchTaskCallForRun(run, 'D'), true, 'the dispatching session is a Task call');
-  assert.strictEqual(runHook(['record-worktree', '--run', run, '/tmp/wt-3711'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'H' } }).code, 0);
+  assert.strictEqual((await runHook(['record-worktree', '--run', run, '/tmp/wt-3711'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'H' } })).code, 0);
   const s = readRunState(run);
   assert.strictEqual(s.sessionId, 'H');
   assert.strictEqual(s.dispatchSessionId, 'D');
@@ -1845,22 +1945,22 @@ test('#3711: a plain re-stamp from another session overwrites sessionId but neve
   assert.strictEqual(isDispatchTaskCallForRun(run, 'H'), false);
 });
 
-test('#3711: --dispatch with an empty CLAUDE_CODE_SESSION_ID records dispatchSessionId as null, so a later resume cannot pass as the dispatcher', () => {
+test('#3711: --dispatch with an empty CLAUDE_CODE_SESSION_ID records dispatchSessionId as null, so a later resume cannot pass as the dispatcher', async () => {
   const { isDispatchTaskCallForRun } = require('../plugin/bin/lib/dispatch/task-call');
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
-  // spawnSync, not runHook: runHook drops stderr on a zero exit, and the warning is the trace.
-  const res = require('child_process').spawnSync('node', [HOOKS, 'record-worktree', '--run', run, '/tmp/wt-3711b', '--dispatch'], {
-    cwd: project, encoding: 'utf8',
-    env: { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1', CLAUDE_CODE_SESSION_ID: '' },
+  // The in-process result carries stderr on a zero exit too, and the warning is the trace.
+  const res = await runHook(['record-worktree', '--run', run, '/tmp/wt-3711b', '--dispatch'], {
+    cwd: project,
+    env: { CLAUDE_CODE_SESSION_ID: '' },
   });
-  assert.strictEqual(res.status, 0);
+  assert.strictEqual(res.code, 0);
   assert.match(res.stderr, /--dispatch without CLAUDE_CODE_SESSION_ID/);
   const s = readRunState(run);
   assert.strictEqual(s.dispatched, true);
   assert.strictEqual(s.dispatchSessionId, null);
   // A human resume re-stamps sessionId; an absent dispatchSessionId would fall back to it and match.
-  assert.strictEqual(runHook(['record-worktree', '--run', run, '/tmp/wt-3711b'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'H' } }).code, 0);
+  assert.strictEqual((await runHook(['record-worktree', '--run', run, '/tmp/wt-3711b'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'H' } })).code, 0);
   assert.strictEqual(readRunState(run).sessionId, 'H');
   assert.strictEqual(isDispatchTaskCallForRun(run, 'H'), false);
 });
@@ -1868,27 +1968,136 @@ test('#3711: --dispatch with an empty CLAUDE_CODE_SESSION_ID records dispatchSes
 // #2783: an `-adhoc-standalone` dir is never a pipeline run a mutating verb
 // should resolve to implicitly. EnterWorktree mints it AFTER /flow's formal
 // run, so it sorts newer and used to win step 2's cwd-binding match.
-test('#2783: bare close-run inside a /flow worktree closes the formal run, never its newer ad-hoc twin', () => {
+test('#2783: bare close-run inside a /flow worktree closes the formal run, never its newer ad-hoc twin', async () => {
   const main = gitRepo();
   execFileSync('git', ['-C', main, 'commit', '--allow-empty', '-q', '-m', 'init']);
   const wt = linkedWorktreeOf(main);
   const formal = mkBoundRun(main, '2026-10-01T100000-spec-42', { status: 'active', sessionId: 'sess-2783-cr', worktree: wt });
   const adhoc = mkBoundRun(main, '2026-10-01T100100-adhoc-standalone', { status: 'active', sessionId: 'sess-2783-cr', worktree: wt });
-  const result = runHook(['close-run'], { cwd: wt, env: { CLAUDE_CODE_SESSION_ID: 'sess-2783-cr' } });
+  const result = await runHook(['close-run'], { cwd: wt, env: { CLAUDE_CODE_SESSION_ID: 'sess-2783-cr' } });
   assert.strictEqual(result.code, 0, result.stdout);
   assert.strictEqual(readRunState(formal).status, 'clean', result.stdout);
   assert.strictEqual(readRunState(adhoc).status, 'active');
 });
 
-test('#2783: an ad-hoc dir is never a step-3 candidate — it cannot turn one real run into a multiple-candidates refusal', () => {
+test('#2783: an ad-hoc dir is never a step-3 candidate — it cannot turn one real run into a multiple-candidates refusal', async () => {
   const main = gitRepo();
   execFileSync('git', ['-C', main, 'commit', '--allow-empty', '-q', '-m', 'init']);
   const wt = linkedWorktreeOf(main);
   const formal = mkBoundRun(main, '2026-10-01T100000-spec-43', { status: 'active', sessionId: 'sess-2783-s3' });
   const adhoc = mkBoundRun(main, '2026-10-01T100100-adhoc-standalone', { status: 'active', sessionId: 'sess-2783-s3', worktree: wt });
-  const result = runHook(['close-run'], { cwd: main, env: { CLAUDE_CODE_SESSION_ID: 'sess-2783-s3' } });
+  const result = await runHook(['close-run'], { cwd: main, env: { CLAUDE_CODE_SESSION_ID: 'sess-2783-s3' } });
   assert.strictEqual(result.code, 0, result.stdout);
   assert.doesNotMatch(result.stdout, /multiple candidate runs/);
   assert.strictEqual(readRunState(formal).status, 'clean', result.stdout);
   assert.strictEqual(readRunState(adhoc).status, 'active');
+});
+
+// #5377: the three real-process smoke tests. Every other hook-event test runs in-process; these stay
+// on a real `node hooks.js` child because the process is their subject (script entry, stdin payload,
+// exit code). Each runs once through the memoized smoke(key) helper, which keeps what it ran so the
+// in-process parity check can replay the same call and compare, whatever test runs first. They are
+// never edited again in this plan: that is what makes "same as before" provable.
+const SMOKE_RUNS = new Map();
+const SMOKE_RUNNERS = {
+  deny() {
+    const project = gitRepo();
+    writeWorktreeAlwaysPolicy(project);
+    const input = JSON.stringify({ tool_name: 'Edit', tool_input: { file_path: path.join(project, 'a.txt') } });
+    const args = ['pre-tool-use'];
+    const env = hookEnv();
+    const result = spawnCli(HOOKS, args, { cwd: project, env, stdin: input });
+    return { args, input, cwd: project, env, result };
+  },
+  allow() {
+    const input = JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'echo hi' } });
+    const args = ['pre-tool-use'];
+    const env = hookEnv();
+    const result = spawnCli(HOOKS, args, { cwd: HOOK_SANDBOX, env, stdin: input });
+    return { args, input, cwd: HOOK_SANDBOX, env, result };
+  },
+  sessionEnd() {
+    const input = JSON.stringify({ reason: 'other', session_id: 'sess-5377-smoke' });
+    const args = ['session-end'];
+    const env = hookEnv();
+    const result = spawnCli(HOOKS, args, { cwd: HOOK_SANDBOX, env, stdin: input });
+    return { args, input, cwd: HOOK_SANDBOX, env, result };
+  },
+};
+function smoke(key) {
+  if (!SMOKE_RUNS.has(key)) SMOKE_RUNS.set(key, SMOKE_RUNNERS[key]());
+  return SMOKE_RUNS.get(key);
+}
+
+test('AC6.1 AC8.1 smoke: pre-tool-use deny through the script entry', () => {
+  // Real process proves: the script entry reads the Edit payload from stdin and the deny JSON reaches
+  // stdout with exit 0.
+  const { cwd: project, result } = smoke('deny');
+  const reason = "claude-tweaks: this project requires an isolated worktree for Edit/Write/NotebookEdit, git commit/push/mv/rm/update-ref/apply, Bash cp/mv/tee/sed/perl/install/ln/truncate/dd writes, and Bash >/>>/>|/&>/&>>/>& redirects (not every possible Bash write shape — see _shared/policy-schema-coverage.md's worktree-always coverage block; exempt: .claude-tweaks/pipelines/, .claude-tweaks/policy.yml, an allowlisted (policy-only) commit, an allowlisted (delete-only or ff-integration-branch) push, and a write target that is gitignored in its own repo) (policy: worktree-always in .claude-tweaks/policy.yml). "
+    + `You're currently working in a non-isolated checkout (${project}). Set one up first: invoke /superpowers:using-git-worktrees, then follow \`_shared/worktree-setup.md\`'s post-creation catch-up before any other action, then retry this edit inside the new worktree.`;
+  assert.strictEqual(result.code, 0);
+  assert.strictEqual(result.stderr, '');
+  assert.strictEqual(result.stdout, JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } }));
+});
+
+test('AC6.1 AC8.1 smoke: pre-tool-use allow through the script entry', () => {
+  // Real process proves: the script entry exits 0 with nothing on stdout for an allowed Bash call.
+  const { result } = smoke('allow');
+  assert.strictEqual(result.code, 0);
+  assert.strictEqual(result.stderr, '');
+  assert.strictEqual(result.stdout, '');
+});
+
+test('AC8.1 smoke: session-end through the script entry', () => {
+  // Real process proves: the script entry reads the session-end payload from stdin and exits 0 with
+  // nothing on stdout. The event has no non-zero refusal path, so it has no refusal test.
+  const { result } = smoke('sessionEnd');
+  assert.strictEqual(result.code, 0);
+  assert.strictEqual(result.stderr, '');
+  assert.strictEqual(result.stdout, '');
+});
+
+// #5377: AC9.1 — an event call takes its cwd and env from the injected values, not from the runner's
+// own process. The payload has no `cwd`, the injected cwd is a fixture project that is not
+// process.cwd(), and PIPELINE_RUN_DIR names the OLDER of two run dirs in it. Only the injected env can
+// pick that run (a cwd scan would pick the newer one), and only the injected cwd puts the project's
+// path in the deny reason.
+test('AC9.1: hooks-dispatcher — an event call uses the injected cwd and env', async () => {
+  const { project, run } = policyRepoWithRun();
+  const newer = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-02T090000-spec-2');
+  fs.mkdirSync(newer, { recursive: true });
+  fs.writeFileSync(path.join(newer, 'decisions.md'), '');
+  assert.notStrictEqual(fs.realpathSync(project), fs.realpathSync(process.cwd()), 'precondition: the fixture project is not the runner cwd');
+  const target = path.join(project, 'a.txt');
+  const result = await runHook(['pre-tool-use'], {
+    input: JSON.stringify({ tool_name: 'Write', tool_input: { file_path: target } }),
+    cwd: project,
+    env: { PIPELINE_RUN_DIR: run },
+  });
+  assert.strictEqual(result.code, 0);
+  assert.match(result.stdout, /"permissionDecision":"deny"/);
+  assert.ok(result.stdout.includes(JSON.stringify(project).slice(1, -1)), 'the deny reason names the injected cwd');
+  const events = fs.readFileSync(path.join(run, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.strictEqual(events.length, 1, 'the injected env picked the older run');
+  assert.strictEqual(events[0].type, 'gate-denial');
+  assert.strictEqual(events[0].path, target);
+  assert.strictEqual(fs.existsSync(path.join(newer, 'events.jsonl')), false, 'the newer run, which a cwd scan would pick, got no event');
+  // A Write names its own path, which locates the repo whatever the cwd; a Bash call has only the cwd.
+  const commit = await runHook(['pre-tool-use'], {
+    input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'git commit -m x' } }),
+    cwd: project,
+    env: { PIPELINE_RUN_DIR: run },
+  });
+  assert.match(commit.stdout, /"permissionDecision":"deny"/);
+  assert.ok(commit.stdout.includes(`non-isolated checkout (${JSON.stringify(project).slice(1, -1)})`), 'the deny reason names the injected cwd as the checkout the call ran in');
+});
+
+// #5377: the in-process call and the script entry agree. Each smoke test above stored its own args,
+// input, cwd, env and result behind smoke(key); replaying them through runHookCli adds no process.
+test('smoke parity: in-process and script-entry agree', async () => {
+  for (const key of ['deny', 'allow', 'sessionEnd']) {
+    const ran = smoke(key);
+    const inProcess = await runHookCli(ran.args, { input: ran.input, cwd: ran.cwd, env: ran.env });
+    assert.deepStrictEqual(inProcess, ran.result, `${key}: the in-process result differs from the script entry's`);
+  }
 });

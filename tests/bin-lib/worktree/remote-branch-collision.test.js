@@ -4,8 +4,10 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { originWithTwoClones } = require('../../helpers/git-fixtures');
+const { warmCallStartsNoGit } = require('../../helpers/git-trace');
 const { isValidBranchName } = require('../../../plugin/bin/lib/branch-name');
 const {
+  checkAdoptedBranch,
   readRemoteTip,
   classifyRemoteBranch,
   findPrsForBranch,
@@ -542,4 +544,168 @@ test('AC1.1: a retry\'s fresh branch is foreign by ancestry but prior-attempt by
   r.run(r.work, ['merge', '--no-edit', verdict.remoteSha]);
   assert.equal(classifyRemoteBranch({ branch, git }).state, 'mine');
   assert.doesNotThrow(() => r.run(r.work, ['push', '-q', 'origin', branch]));
+});
+
+// --- #5589: the whole check as one call ---
+
+// One fake git per case. `head` is how `merge-base --is-ancestor <sha> HEAD`
+// answers: 'ancestor' (exit 0), 'not' (exit 1), 'unknown' (exit 128).
+const checkGit = ({ ls, head, fetchFails = false, priorAncestor = true }) => (args) => {
+  if (args[0] === 'ls-remote') {
+    if (ls === 'throw') throw exitWith(128);
+    return ls === 'absent' ? '' : `${SHA_A}\trefs/heads/b\n`;
+  }
+  if (args[0] === 'fetch') {
+    if (fetchFails) throw exitWith(128);
+    return '';
+  }
+  if (args[0] === 'merge-base' && args[3] === 'HEAD') {
+    if (head === 'ancestor') return '';
+    throw exitWith(head === 'not' ? 1 : 128);
+  }
+  if (args[0] === 'merge-base' && args[2] === SHA_B && args[3] === SHA_A) {
+    if (priorAncestor) return '';
+    throw exitWith(1);
+  }
+  throw new Error(`unexpected git ${args.join(' ')}`);
+};
+// `comments` answers the issue-comment read findPriorAttemptPr makes for tombstone evidence (#4058).
+const countingGh = (prs, comments = []) => {
+  const gh = (args) => { gh.calls += 1; return JSON.stringify(args && args[0] === 'issue' ? { comments } : prs); };
+  gh.calls = 0;
+  return gh;
+};
+const priorPrFor1 = () => closedPr({ closingIssuesReferences: [ref(1)], body: closedPr().body.replace('#42', '#1') });
+const FOREIGN_CARD = [
+  '## Build: Adopted branch collides with an unrelated branch on origin',
+  '',
+  "`b` already exists on `origin` at `aaaaaaaaa`, and that commit is not in this worktree's history — no PR found for it. Pushing this branch would be rejected non-fast-forward.",
+  '',
+  "Options: (1) rename this worktree's local branch (`git branch -m b-{suffix}`) and re-run, (2) delete the stale remote branch (`git push origin --delete b`) and re-run, (3) stop and resume the existing remote branch/PR instead.",
+].join('\n');
+
+test('AC1.1: checkAdoptedBranch absent', () => {
+  const gh = countingGh([]);
+  assert.deepEqual(checkAdoptedBranch({ branch: 'b', git: checkGit({ ls: 'absent' }), gh }), { state: 'absent', reason: null, remoteSha: null });
+  assert.equal(gh.calls, 0);
+});
+
+test('AC1.1: checkAdoptedBranch mine', () => {
+  const gh = countingGh([]);
+  assert.deepEqual(
+    checkAdoptedBranch({ branch: 'b', repo: 'o/r', git: checkGit({ ls: 'present', head: 'ancestor' }), gh }),
+    { state: 'mine', reason: null, remoteSha: SHA_A },
+  );
+  assert.equal(gh.calls, 0);
+});
+
+test('AC1.1: checkAdoptedBranch foreign carries the stop card', () => {
+  const result = checkAdoptedBranch({ branch: 'b', repo: 'o/r', git: checkGit({ ls: 'present', head: 'not' }), gh: countingGh([]) });
+  assert.deepEqual(result, { state: 'foreign', reason: null, remoteSha: SHA_A, card: FOREIGN_CARD });
+  assert.deepEqual(Object.keys(result), ['state', 'reason', 'remoteSha', 'card']);
+});
+
+test('AC1.1: checkAdoptedBranch prior-attempt carries the PR and no card', () => {
+  const result = checkAdoptedBranch({
+    branch: 'b',
+    repo: 'o/r',
+    records: [1],
+    git: checkGit({ ls: 'present', head: 'not' }),
+    gh: countingGh([priorPrFor1()], [tombstoneComment()]),
+  });
+  assert.deepEqual(result, {
+    state: 'prior-attempt',
+    reason: null,
+    remoteSha: SHA_A,
+    pr: { number: 9, url: 'https://example.test/pr/9' },
+  });
+  assert.deepEqual(Object.keys(result), ['state', 'reason', 'remoteSha', 'pr']);
+});
+
+test('AC1.1: checkAdoptedBranch unreachable without a sha has no card and makes no PR lookup', () => {
+  const gh = countingGh([]);
+  assert.deepEqual(
+    checkAdoptedBranch({ branch: 'b', repo: 'o/r', records: [1], git: checkGit({ ls: 'throw' }), gh }),
+    { state: 'unreachable', reason: 'ls-remote-failed', remoteSha: null },
+  );
+  assert.equal(gh.calls, 0);
+});
+
+test('AC1.1: checkAdoptedBranch unreachable with a sha carries the unknown-relation card', () => {
+  const result = checkAdoptedBranch({
+    branch: 'b',
+    repo: 'o/r',
+    git: checkGit({ ls: 'present', head: 'unknown', fetchFails: true }),
+    gh: countingGh([]),
+  });
+  assert.deepEqual(result, {
+    state: 'unreachable',
+    reason: 'fetch-failed',
+    remoteSha: SHA_A,
+    card: [
+      '## Build: Adopted branch collides with an unrelated branch on origin',
+      '',
+      "`b` already exists on `origin` at `aaaaaaaaa`, and its relation to this worktree's history could not be determined (`fetch-failed`) — no PR found for it. Pushing this branch may be rejected non-fast-forward.",
+      '',
+      "Options: (1) rename this worktree's local branch (`git branch -m b-{suffix}`) and re-run, (2) delete the stale remote branch (`git push origin --delete b`) and re-run, (3) stop and resume the existing remote branch/PR instead.",
+    ].join('\n'),
+  });
+});
+
+test('AC1.1: checkAdoptedBranch with no repo skips the PR lookup', () => {
+  const gh = countingGh([]);
+  const result = checkAdoptedBranch({ branch: 'b', records: [1], git: checkGit({ ls: 'present', head: 'not' }), gh });
+  assert.equal(gh.calls, 0);
+  assert.deepEqual(result, {
+    state: 'foreign',
+    reason: null,
+    remoteSha: SHA_A,
+    card: [
+      '## Build: Adopted branch collides with an unrelated branch on origin',
+      '',
+      "`b` already exists on `origin` at `aaaaaaaaa`, and that commit is not in this worktree's history — PR status unknown (lookup failed). Pushing this branch would be rejected non-fast-forward.",
+      '',
+      "Options: (1) rename this worktree's local branch (`git branch -m b-{suffix}`) and re-run, (2) delete the stale remote branch (`git push origin --delete b`) and re-run, (3) stop and resume the existing remote branch/PR instead.",
+    ].join('\n'),
+  });
+});
+
+test('AC1.1: checkAdoptedBranch unreachable on a failed ancestry check carries the unknown-relation card', () => {
+  const result = checkAdoptedBranch({
+    branch: 'b',
+    repo: 'o/r',
+    git: checkGit({ ls: 'present', head: 'unknown' }),
+    gh: countingGh([]),
+  });
+  assert.deepEqual(result, {
+    state: 'unreachable',
+    reason: 'ancestry-check-failed',
+    remoteSha: SHA_A,
+    card: [
+      '## Build: Adopted branch collides with an unrelated branch on origin',
+      '',
+      "`b` already exists on `origin` at `aaaaaaaaa`, and its relation to this worktree's history could not be determined (`ancestry-check-failed`) — no PR found for it. Pushing this branch may be rejected non-fast-forward.",
+      '',
+      "Options: (1) rename this worktree's local branch (`git branch -m b-{suffix}`) and re-run, (2) delete the stale remote branch (`git push origin --delete b`) and re-run, (3) stop and resume the existing remote branch/PR instead.",
+    ].join('\n'),
+  });
+});
+
+test('AC1.1: checkAdoptedBranch looks up the prior attempt only for foreign', () => {
+  const result = checkAdoptedBranch({
+    branch: 'b',
+    repo: 'o/r',
+    records: [1],
+    git: checkGit({ ls: 'present', head: 'unknown', fetchFails: true }),
+    gh: countingGh([priorPrFor1()]),
+  });
+  assert.equal(result.state, 'unreachable');
+  assert.equal(typeof result.card, 'string');
+  assert.equal('pr' in result, false);
+});
+
+// #5846: originWithTwoClones sits on a template (#5297), keyed without the prefix; this file's own
+// real-git tests build the same unseeded template, so the warm-call check lives here.
+test('originWithTwoClones: a second call starts no git process', (t) => {
+  warmCallStartsNoGit(() => originWithTwoClones('ct-gt-otc-'), { track: (r) => t.after(() => fs.rmSync(r.root, { recursive: true, force: true })) });
 });

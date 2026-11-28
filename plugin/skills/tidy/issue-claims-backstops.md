@@ -94,13 +94,14 @@ silently failed at claim release (`wrap-up/cleanup-procedures-execution.md` Sect
 as the `bot:in-progress` missed-removal backstop below. Both checks below are flagged only —
 recommendations execute after Step 6 batch approval, same as every other Step 4.7 mutation.
 
-Materialized headers are committed, never gitignored (`flow/materialize.md`'s "Committed as
-audit trail" section), so they survive on disk at `.claude-tweaks/pipelines/**/work/*-spec.md`
-(single-record runs) and `.claude-tweaks/pipelines/**/spec-*/work/*-spec.md` (multi-record
-runs) — in both live and archived (`.claude-tweaks/pipelines/archive/`) run directories:
+Materialized headers are committed, never gitignored (`flow/materialize.md`'s "Committed
+during the run, archived on the branch at wrap-up" section), so they survive on disk at
+`.claude-tweaks/pipelines/**/work/*-spec.md` (single-record runs) and
+`.claude-tweaks/pipelines/**/spec-*/work/*-spec.md` (multi-record runs) — in both live and archived
+(`.claude-tweaks/pipelines/archive/`) run directories:
 
 ```bash
-cd "{RUN_ROOT}" && find .claude-tweaks/pipelines -path "*/work/*-spec.md" 2>/dev/null | while read -r header; do
+find "{RUN_ROOT}/.claude-tweaks/pipelines" -path "*/work/*-spec.md" 2>/dev/null | while read -r header; do
   grep -q "^parked-at-shaping: true$" "$header" || continue
   n=$(grep -m1 "^record:" "$header" | sed 's/^record: *//')
   [ -z "$n" ] && continue
@@ -125,7 +126,7 @@ would run.
 ### Backstop: missed `bot:in-progress` removal
 
 ```bash
-cd "{REPO_ROOT}" && gh issue list --label bot:in-progress --state open --json number,title -q '.[] | "\(.number) \(.title)"'
+gh issue list --repo {owner}/{repo} --label bot:in-progress --state open --json number,title -q '.[] | "\(.number) \(.title)"'
 ```
 
 For each result, cross-reference against this step's own claim listing above: flag as a likely
@@ -147,7 +148,7 @@ skill-name filter, so it matches all of them equally). A `worktree-always`-block
 silently-skipped log write leaves no trace anywhere except an empty file:
 
 ```bash
-cd "{RUN_ROOT}" && find .claude-tweaks/pipelines -maxdepth 1 -type d -name "*-standalone" 2>/dev/null | while read -r RUN_DIR; do
+find "{RUN_ROOT}/.claude-tweaks/pipelines" -maxdepth 1 -type d -name "*-standalone" 2>/dev/null | while read -r RUN_DIR; do
   STATUS=$(node -e "try{console.log(JSON.parse(require('fs').readFileSync(process.argv[1]+'/run-state.json','utf8')).status)}catch(e){console.log('unknown')}" -- "$RUN_DIR")
   [ "$STATUS" = "clean" ] || continue
   SIZE=$(wc -c < "$RUN_DIR/decisions.md" 2>/dev/null || echo 0)
@@ -172,7 +173,7 @@ re-enumerate, so a resume never re-files it, and there is no automatic retry. En
 surviving preserved draft, live and archived, `find`-only (run dirs are gitignored):
 
 ```bash
-cd "{RUN_ROOT}" && find .claude-tweaks/pipelines -path "*/staged/upstream-unfiled-*.md" 2>/dev/null
+find "{RUN_ROOT}/.claude-tweaks/pipelines" -path "*/staged/upstream-unfiled-*.md" 2>/dev/null
 ```
 
 For each match:

@@ -3,18 +3,21 @@
 // background test run / fix-round / simplify subagent" with no status line. A Task agent that
 // yields expecting a completion notification is never re-woken inside the Task — the dispatching
 // session had to detect the missing status line and resume each one via SendMessage manually.
-// Neither dispatch/task-prompt.md's two fenced Task-prompt templates nor build/dispatch.md's
+// Neither dispatch/task-prompt.md's Context pack nor build/dispatch.md's
 // implementer/reviewer instruction paragraph said anything about foreground execution, so a
 // dispatched agent (or the SDD implementer/reviewer sub-dispatches it composes) had no textual
 // reason not to background a long-running command and wait on it. This suite pins the
-// foreground-execution instruction in all three locations, and proves the check can actually go
-// red (parse-signal-discipline). It also pins #3078/#3266's nested-dispatch keep-alive rule across
-// the core section, task-prompt.md's item 7 and both fenced templates, plus its output-contract and
-// review/step3 restatements, each with its own go-red proof.
+// foreground-execution instruction in item 7, the handoff template and build/dispatch.md, and
+// proves the check can actually go red (parse-signal-discipline). It also pins #3078/#3266's
+// nested-dispatch keep-alive rule across the core section, task-prompt.md's item 7 and the handoff
+// template, plus its output-contract and review/step3 restatements, each with its own go-red proof.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
 const { missingFactsOf, assertEachPatternGoesRed } = require('./helpers/conformance-asserts');
 
@@ -28,11 +31,11 @@ const HANDOFF = path.join(PLUGIN, 'skills', 'flow', 'context-handoff.md');
 
 // The load-bearing facts a reader (human or dispatched agent) must come away with — the exact
 // failure mode #1965 documents. Each `\s+` absorbs the templates' hard line wrapping; the
-// this/the alternation covers the direct address in task-prompt.md's templates versus
+// this/the alternation covers the direct address in item 7 and the handoff template versus
 // build/dispatch.md's instruction about the dispatches SDD composes.
 const REQUIRED = [
-  [/never with\s+`run_in_background`/i, 'never background a long-running command'],
-  [/never end\s+(?:this|the) turn waiting on a background/i, "never end the turn waiting on a background run or a child agent's notification"],
+  [/never\s+with\s+`run_in_background`/i, 'never background a long-running command'],
+  [/never\s+end\s+(?:this|the)\s+turn\s+waiting\s+on\s+a\s+background/i, "never end the turn waiting on a background run or a child agent's notification"],
 ];
 
 function fencedBlocks(text) {
@@ -61,17 +64,6 @@ function templateBlocks(text) {
   return blocks;
 }
 
-test('task-prompt.md: both fenced Task-prompt templates carry the foreground-execution instruction', () => {
-  const blocks = templateBlocks(readText(TASK_PROMPT));
-
-  for (const [index, block] of blocks.entries()) {
-    const label = TEMPLATE_LABELS[index];
-    for (const [pattern, fact] of REQUIRED) {
-      assert.match(block, pattern, `${label} template must instruct the dispatched agent to ${fact} (#1965)`);
-    }
-  }
-});
-
 test('build/dispatch.md: the SDD invocation instruction directs implementer and reviewer dispatches to run in the foreground', () => {
   const text = readText(BUILD_DISPATCH);
   for (const [pattern, fact] of REQUIRED) {
@@ -82,22 +74,6 @@ test('build/dispatch.md: the SDD invocation instruction directs implementer and 
     /implementer dispatch and every reviewer dispatch/i,
     'build/dispatch.md must scope the foreground instruction to every per-task implementer AND reviewer dispatch — the grandchildren that actually launched the background runs in #1965',
   );
-});
-
-test('the foreground-instruction predicate can actually go red (discrimination proof)', () => {
-  const paragraphs = readText(TASK_PROMPT).split(/\r?\n\r?\n/);
-  const kept = paragraphs.filter((p) => !p.startsWith('Foreground execution (required):'));
-  assert.equal(
-    paragraphs.length - kept.length,
-    2,
-    'expected to doctor out exactly the two foreground-execution paragraphs — anchor text not found',
-  );
-
-  for (const block of templateBlocks(kept.join('\n\n'))) {
-    for (const [pattern] of REQUIRED) {
-      assert.doesNotMatch(block, pattern, 'doctored block unexpectedly still matches — test cannot discriminate');
-    }
-  }
 });
 
 // #3078: a nested Agent child launches async, and its <task-notification> reaches the dispatcher
@@ -111,13 +87,11 @@ function coreForegroundSection(text) {
 }
 
 // The facts the final-review fix wave added (abandoned child, the whole-final-reply re-wake, the
-// sleep 20 x 60 per-wave bound and its log line). Written to match every copy of the rule -- core, item 7, both
-// templates -- so each copy's list spreads this one array, and each pattern matches exactly once
+// 20-minute per-wave window and its log line). Written to match every copy of the rule -- core, item 7, the
+// handoff template -- so each copy's list spreads this one array, and each pattern matches exactly once
 // per copy so its go-red proof removes the only occurrence.
 const SHARED_RULE = [
-  [/`sleep\s+20`\s+Bash\s+calls,\s+at\s+most\s+60\s+\(20\s+minutes\)\s+per\s+wave\s+of\s+children/, 'the sleep 20 x 60 (20 minute) per-wave bound'],
-  [/blocked\s+or\s+fails[^.]*?is\s+not\s+a\s+wait\s+and\s+never\s+counts\s+toward\s+the\s+bound;\s+never\s+retry\s+it\s+in\s+another\s+form/, 'a blocked or failed wait never counts and is never retried in another form'],
-  [/how\s+many\s+children\s+are\s+still\s+pending/, 'each wait logs how many children are still pending'],
+  [/blocked\s+or\s+fails[^.]*?is\s+not\s+a\s+wait\s+and\s+does\s+not\s+move\s+the\s+window's\s+deadline;\s+never\s+retry\s+it\s+in\s+another\s+form\s+\(a\s+`sleep`\s+of\s+any\s+length/, "a blocked or failed wait does not move the window's deadline and is never retried in another form"],
   [/\bis\s+abandoned\b/, 'a child self-judged at the bound is abandoned'],
   [/no\s+longer\s+counts\s+as\s+outstanding/, 'an abandoned child no longer counts as outstanding'],
   [/final\s+reply\s+still\s+ends\s+with\s+(?:its\s+usual\s+)?`STATUS:/, 'the final reply after an abandoned child still ends with STATUS:'],
@@ -129,6 +103,21 @@ const SHARED_RULE = [
   [/returns\s+the\s+child's\s+own\s+reply[\s\S]{0,80}?that\s+child\s+has\s+reported\s+and\s+needs\s+no\s+wait/, "a call that returns the child's own reply means that child has reported"],
 ];
 
+// #5604: the wait is one CLI call, and every copy of the rule says how to read its result. Each
+// pattern matches exactly once per copy; the invocation alternation covers core's `${CLAUDE_PLUGIN_ROOT}`
+// and item 7's / the handoff template's `{plugin-root}`.
+const WAIT_FOR_FACTS = [
+  [/`node\s+"(?:\$\{CLAUDE_PLUGIN_ROOT\}|\{plugin-root\})\/bin\/wait-for\.js"\s+agents\s+--ids\s+\{ids\}\s+--max-seconds\s+150`,\s+20\s+minutes\s+per\s+wave\s+of\s+children/, 'the wait-for.js agents invocation with its 20-minute window per wave'],
+  [/`\{ids\}`\s+are\s+the\s+agent\s+ids\s+of\s+the\s+children\s+whose\s+notification\s+has\s+not\s+arrived\s+and\s+that\s+no\s+call\s+has\s+reported,\s+comma-separated\s+\(the\s+last\s+call's\s+`pending`\s+list;\s+empty\s+means\s+the\s+wait\s+is\s+over\)/, '{ids} are the children whose notification has not arrived and that no call has reported, taken from the last call pending list'],
+  [/foreground\s+Bash\s+call\s+with\s+no\s+`timeout`\s+parameter:\s+the\s+command\s+returns\s+within\s+150\s+seconds,\s+under\s+the\s+180-second\s+ceiling/, 'a foreground call with no timeout parameter, returning under the 180-second ceiling'],
+  [/Exit\s+0\s+means\s+a\s+listed\s+child\s+stopped:\s+its\s+notification\s+is\s+in\s+hand\s+or\s+arrives\s+next;\s+call\s+again\s+while\s+any\s+child\s+is\s+outstanding/, 'exit 0 means a listed child stopped'],
+  [/Exit\s+3\s+with\s+`"bound":"call"`\s+means\s+call\s+again/, 'exit 3 with a call bound means call again'],
+  [/Exit\s+3\s+with\s+`"bound":"deadline"`\s+means\s+the\s+20-minute\s+window\s+is\s+over:[^.]*?the\s+next\s+call\s+is\s+that\s+window/, 'exit 3 with a deadline bound ends the 20-minute window'],
+  [/Any\s+other\s+exit\s+is\s+a\s+failed\s+wait\s+call/, 'any exit other than 0 and 3 is a failed wait call'],
+  [/The\s+command's\s+output\s+line\s+is\s+the\s+wait's\s+log\s+line,\s+so\s+(?:write|the\s+agent\s+writes)\s+no\s+separate\s+one/, "the command's output line is the wait's log line"],
+];
+const INVOCATION_NEEDLE = '/bin/wait-for.js" agents --ids';
+
 // Each `\s+` absorbs the hard line wrapping, as in REQUIRED above.
 const KEEP_ALIVE = [
   [/\blaunches\s+async/i, 'a nested Agent call launches async'],
@@ -137,6 +126,7 @@ const KEEP_ALIVE = [
   [/no\s+`Agent`\/`Task`\s+tool/i, 'the fallback covers the no-Agent/Task-tool case'],
   [/`unconfirmed`/, 'findings from a self-judged unit are marked unconfirmed'],
   [/arrives\s+after\s+its\s+unit\s+was\s+self-judged\s+is\s+ignored;\s+it\s+never\s+changes\s+a\s+verdict/, 'a late child result is ignored and never changes a verdict'],
+  [/Outside\s+the\s+rendered-UI\s+exception\s+below,\s+a\s+child\s+result/, 'the ignore sentence carries its own rendered-UI scope (#5280)'],
   ...SHARED_RULE,
 ];
 
@@ -215,9 +205,13 @@ const HUNG_AGENT = [
 const hungAgentMissing = missingFactsOf(HUNG_AGENT);
 const LENS_NOTE_SENTENCE = /When the reviewer is itself a dispatched agent,.*?\(findings `unconfirmed`, logged\)\./;
 
+// #4826: the low-tier dispatch rule the carve-out used to amend now lives in step3-tier-variants.md.
+const TIER_VARIANTS = path.join(PLUGIN, 'skills', 'review', 'step3-tier-variants.md');
+
 test('step3-lens-dispatch.md has no dispatched-reviewer carve-out (#3078)', () => {
   const step3 = readText(STEP3);
   assert.deepEqual(carveOutPhrases(step3), [], 'step3-lens-dispatch.md still carves out a dispatched reviewer from its lens dispatch (#3078)');
+  assert.deepEqual(carveOutPhrases(readText(TIER_VARIANTS)), [], 'step3-tier-variants.md carves out a dispatched reviewer from its low-tier dispatch (#3078)');
 });
 
 test("step3 Foreground note covers the reviewer's own lens dispatches (#3078)", () => {
@@ -266,28 +260,15 @@ const ITEM7 = [
   [/`unconfirmed`/, 'the self-judged fallback marks findings unconfirmed'],
   [/never\s+end\s+your\s+turn\s+with\s+one\s+outstanding/, 'item 7 never ends the turn with a child outstanding'],
   [/Ignore\s+a\s+late\s+result/, 'item 7 ignores a late result'],
+  ...REQUIRED,
+  [/run\s+the\s+project's\s+test\s+command\s+and\s+every\s+other\s+long-running\s+command/, "item 7 names the project's test command"],
+  [/log\s+the\s+downgrade/i, "item 7's fallback logs the downgrade"],
+  [/output\s+redirected\s+to\s+a\s+file/i, 'item 7 says long output is redirected to a file'],
   ...SHARED_RULE,
 ];
 const item7Missing = missingFactsOf(ITEM7);
 const dropsNothingWakes = (block) => !/nothing wakes you/.test(block);
 
-const TEMPLATE_KEEP_ALIVE = [
-  [/\blaunches\s+async/i, 'a nested Agent call launches async'],
-  [/never\s+end\s+this\s+turn\s+with\s+(?:a|one)\s+child\s+outstanding/i, 'the turn never ends with a child outstanding'],
-  [/ignore\s+that\s+child's\s+result\s+if\s+it\s+arrives\s+later/i, 'a late child result is ignored'],
-  [/reply\s+that\s+ends\s+without\s+a\s+tool\s+call\s+ends\s+the\s+turn/i, 'a reply that ends without a tool call ends the turn'],
-  [/`unconfirmed`/, "the template's fallback marks findings unconfirmed"],
-  [/log\s+the\s+downgrade/i, "the template's fallback logs the downgrade"],
-  ...SHARED_RULE,
-];
-const foregroundParagraph = (block) => {
-  const found = block.split(/\r?\n\r?\n/).filter((p) => p.startsWith('Foreground execution (required):'));
-  assert.equal(found.length, 1, `expected exactly one "Foreground execution (required):" paragraph per template, found ${found.length}`);
-  return found[0];
-};
-// Takes the template's "Foreground execution (required):" paragraph, not the whole fenced block, so
-// a pattern's one occurrence is the paragraph's (the block mentions `unconfirmed` elsewhere).
-const templateKeepAliveMissing = missingFactsOf(TEMPLATE_KEEP_ALIVE);
 const dropsInTurnCarveOut = (block) => !/It\s+does\s+not\s+cover\s+an\s+in-turn/.test(block);
 
 const dropsPrimaryResumeSignal = (text) => !/primary resume signal/.test(text);
@@ -307,7 +288,6 @@ test('neither fenced template keeps the in-turn carve-out (#3078)', () => {
   for (const [index, block] of blocks.entries()) {
     const label = TEMPLATE_LABELS[index];
     assert.ok(dropsInTurnCarveOut(block), `${label} template still carries the in-turn carve-out (#3078)`);
-    assert.deepEqual(templateKeepAliveMissing(foregroundParagraph(block)), [], `${label} template must carry the nested-Agent rule itself (#3078)`);
   }
 });
 
@@ -317,10 +297,9 @@ test("the #2533 rationale cites the core section, not dispatch-waiting.md's resu
   assert.deepEqual(rationaleMissing(text), [], 'the #2533 rationale must cite subagent-dispatch-core.md\'s Foreground Execution Discipline (#3078)');
 });
 
-test('each task-prompt assertion can actually go red on its own (discrimination proof)', () => {
+test('AC3.1 AC3.2 AC3.3: each task-prompt assertion can actually go red on its own (discrimination proof)', () => {
   const text = readText(TASK_PROMPT);
   assertEachPatternGoesRed(item7Block(text), ITEM7, item7Missing);
-  for (const block of templateBlocks(text)) assertEachPatternGoesRed(foregroundParagraph(block), TEMPLATE_KEEP_ALIVE, templateKeepAliveMissing);
   assertEachPatternGoesRed(text, RATIONALE, rationaleMissing);
 });
 
@@ -369,52 +348,260 @@ function handoffWaitParagraph(text) {
   return found[0];
 }
 
-// The primitive's numbers (sleep interval, call cap, minutes) are restated in seven copies; they must
-// agree. Each copy is reduced to the one place the primitive appears in it.
-const PRIMITIVE = /`sleep\s+(\d+)`\s+Bash\s+calls,\s+at\s+most\s+(\d+)\s+\((\d+)\s+minutes\)/g;
-const EXPECTED_PRIMITIVE = '20/60/20';
+test('AC3: REQUIRED holds on the handoff template paragraph (#5601)', () => {
+  const paragraph = handoffWaitParagraph(readText(HANDOFF));
+  assert.deepEqual(missingFactsOf(REQUIRED)(paragraph), [], 'the handoff template must state the foreground rule as item 7 does (#5601)');
+  assertEachPatternGoesRed(paragraph, REQUIRED, missingFactsOf(REQUIRED));
+});
+
+// AC7.1: the multi-spec wave prompt copies items 1, 6 and 7 of the Context pack and no template clause.
+const MULTISPEC = path.join(PLUGIN, 'skills', 'flow', 'multispec-parallel-waves.md');
+const MULTISPEC_PACK = /`\{context-pack\}` is `dispatch\/task-prompt\.md`'s Context pack items 1 \(the literal plugin root\), 6 \(the worktree shell constraint\) and 7 \(async-wait discipline, with its `INTERIM_STATUS` rule\)/;
+// Item 7 carries `{plugin-root}` in its wait-for.js line, so the orchestrator resolves it there as in item 1 (#5604).
+const MULTISPEC_RESOLVES_ROOT = /`\{plugin-root\}` resolved to this session's own plugin root wherever it appears in them \(item 1, and item 7's `wait-for\.js` line\)/;
+const multispecPackGaps = (p) => [
+  ...(MULTISPEC_PACK.test(p) ? [] : ['names items 1, 6 and 7']),
+  ...(MULTISPEC_RESOLVES_ROOT.test(p) ? [] : ['resolves {plugin-root} in items 1 and 7']),
+  ...(/template's Foreground execution clause/i.test(p) ? ['no template clause'] : []),
+];
+function multispecPackParagraph(text) {
+  const found = text.split(/\r?\n\r?\n/).filter((p) => p.startsWith('Inline the block below verbatim'));
+  assert.equal(found.length, 1, `expected exactly one "Inline the block below verbatim" paragraph, found ${found.length}`);
+  return found[0].replace(/\s+/g, ' ');
+}
+
+test('AC7.1: multispec-parallel-waves.md inlines items 1, 6 and 7 and no template clause (#5601)', () => {
+  const paragraph = multispecPackParagraph(readText(MULTISPEC));
+  assert.deepEqual(multispecPackGaps(paragraph), []);
+  const withClause = `${paragraph.replace(/ all copied verbatim/, ", plus that file's `build,test` template's Foreground execution clause, all copied verbatim")}`;
+  assert.notEqual(withClause, paragraph);
+  assert.deepEqual(multispecPackGaps(withClause), ['no template clause']);
+  const dropped = paragraph.replace(' and 7 (async-wait discipline, with its `INTERIM_STATUS` rule)', '');
+  assert.notEqual(dropped, paragraph);
+  assert.deepEqual(multispecPackGaps(dropped), ['names items 1, 6 and 7']);
+  const stripped = paragraph.replace(MULTISPEC_RESOLVES_ROOT, '');
+  assert.notEqual(stripped, paragraph);
+  assert.deepEqual(multispecPackGaps(stripped), ['resolves {plugin-root} in items 1 and 7']);
+  const itemOneOnly = paragraph.replace(MULTISPEC_RESOLVES_ROOT, "item 1 resolved to this session's own plugin root");
+  assert.notEqual(itemOneOnly, paragraph);
+  assert.deepEqual(multispecPackGaps(itemOneOnly), ['resolves {plugin-root} in items 1 and 7']);
+});
+
+// #5601: a dispatched agent's prompt states the foreground-wait rule once, through Context pack item 7;
+// the fenced templates no longer carry their own paragraph. Counted on the rendered prompt, because
+// that is the text the agent reads.
+const { renderTaskPrompt } = require('../plugin/bin/lib/dispatch/task-prompt');
+const PRE_5601_PARAGRAPH = path.join(__dirname, 'fixtures', 'dispatch-prompt', 'foreground-paragraph-pre-5601.txt');
+const RENDER_OPTS = {
+  issues: [5601],
+  runDir: '/tmp/x y/.claude-tweaks/pipelines/2026-11-16T000000-record-5601',
+  pluginRoot: '/p/root',
+  policyValues: 'autonomy=unattended, integration-model=pr-first',
+  selectedAt: '2026-11-16T00:00:00.000Z',
+  effortLine: '[Effort: high — apply high-level reasoning depth to this task.]',
+};
+const countOf = (squashed, pattern) => squashed.split(pattern).length - 1;
+function renderedCounts(prompt) {
+  const squashed = prompt.replace(/\s+/g, ' ');
+  return {
+    invocation: countOf(squashed, INVOCATION_NEEDLE),
+    filled: countOf(squashed, 'node "/p/root/bin/wait-for.js" agents --ids'),
+    probe: countOf(squashed, 'probe the worktree its prompt names, read-only'),
+    runInBackground: countOf(squashed, '`run_in_background`'),
+    projectTestCmd: countOf(squashed, "the project's test command"),
+  };
+}
+const renderCall = (text, call) => renderTaskPrompt(text, { ...RENDER_OPTS, call });
+
+test('AC4.1: a rendered first-call and second-call prompt each hold the invocation once, plugin root filled (#5604)', () => {
+  const text = readText(TASK_PROMPT);
+  for (const call of ['first', 'second']) {
+    const rendered = renderCall(text, call);
+    const counts = renderedCounts(rendered);
+    assert.equal(counts.invocation, 1, `${call} call: the wait-for.js invocation`);
+    assert.equal(counts.filled, 1, `${call} call: the invocation with the plugin root filled`);
+    assert.ok(!rendered.replace(/\s+/g, ' ').includes('{plugin-root}/bin/wait-for.js'), `${call} call: no unfilled {plugin-root} in the invocation`);
+    assert.equal(counts.probe, 1, `${call} call: the worktree probe`);
+    assert.ok(counts.runInBackground >= 1, `${call} call: names run_in_background`);
+    assert.ok(counts.projectTestCmd >= 1, `${call} call: names the project's test command`);
+  }
+});
+
+// Insert the paragraph immediately before the first `{context-pack}` line of each fenced template.
+function withParagraphRestored(text, paragraph) {
+  const out = [];
+  let inFence = false;
+  let done = false;
+  for (const line of text.split('\n')) {
+    if (line.startsWith('```')) { inFence = !inFence; done = false; }
+    if (inFence && !done && line === '{context-pack}') { out.push(paragraph, ''); done = true; }
+    out.push(line);
+  }
+  return out.join('\n');
+}
+
+test('AC1.1: the rendered-count check goes red with a template paragraph restored (#5601)', () => {
+  const text = readText(TASK_PROMPT);
+  const restored = withParagraphRestored(text, readText(PRE_5601_PARAGRAPH).trimEnd());
+  assert.notEqual(restored, text);
+  for (const call of ['first', 'second']) {
+    const counts = renderedCounts(renderCall(restored, call));
+    assert.equal(counts.probe, 2, `${call} call: the base-commit probe count`);
+  }
+});
+
+test('AC4.1: the rendered-count check goes red with the invocation line restored in a template (#5604)', () => {
+  const text = readText(TASK_PROMPT);
+  const restored = withParagraphRestored(text, 'keep alive with `node "{plugin-root}/bin/wait-for.js" agents --ids {ids} --max-seconds 150`.');
+  assert.notEqual(restored, text);
+  for (const call of ['first', 'second']) {
+    const counts = renderedCounts(renderCall(restored, call));
+    assert.equal(counts.invocation, 2, `${call} call: the invocation held once by item 7 and once by the restored line`);
+  }
+});
+
+// A fenced template holds no Foreground paragraph and its `{context-pack}` exactly once (#5601). The
+// paragraph is found by its heading, or by the wait-for.js invocation and the probe phrase it carried, so an
+// indented or re-headed copy is still caught. The raw block never holds item 7's text.
+const templateDefects = (blocks) => blocks.flatMap(([label, block]) => {
+  const squashed = block.replace(/\s+/g, ' ');
+  const foreground = block.split(/\r?\n\r?\n/).some((p) => p.startsWith('Foreground execution (required):'))
+    || squashed.includes(INVOCATION_NEEDLE)
+    || squashed.includes('probe the worktree its prompt names, read-only');
+  return foreground || countOf(block, '{context-pack}') !== 1 ? [label] : [];
+});
+function labelledTemplates() {
+  const task = templateBlocks(readText(TASK_PROMPT));
+  const express = fencedBlocks(readText(EXPRESS_PROMPT));
+  assert.equal(express.length, 2, `expected exactly two fenced express-prompt blocks, found ${express.length}`);
+  return [
+    ['task-prompt first call', task[0]], ['task-prompt second call', task[1]],
+    ['express-prompt express call', express[0]], ['express-prompt review call', express[1]],
+  ];
+}
+
+test('AC2.1 AC2.2: no fenced template holds a Foreground paragraph; each holds {context-pack} once (#5601)', () => {
+  assert.deepEqual(templateDefects(labelledTemplates()), []);
+});
+
+test('AC2.1 AC2.2: the template-defect check goes red for a restored paragraph and a duplicated placeholder (#5601)', () => {
+  const blocks = labelledTemplates();
+  const paragraph = readText(PRE_5601_PARAGRAPH).trimEnd();
+  for (const [index, [label, block]] of blocks.entries()) {
+    const restored = blocks.map((b, i) => (i === index ? [label, withParagraphRestored(`\`\`\`\n${block}\n\`\`\``, paragraph)] : b));
+    assert.notEqual(restored[index][1], block);
+    assert.deepEqual(templateDefects(restored), [label], `a restored paragraph in only ${label}`);
+    const duplicated = blocks.map((b, i) => (i === index ? [label, `${block}\n\n{context-pack}`] : b));
+    assert.notEqual(duplicated[index][1], block);
+    assert.deepEqual(templateDefects(duplicated), [label], `a duplicated {context-pack} in only ${label}`);
+  }
+});
+
+// The restored paragraph can dodge a head-only check: indented, or with its heading renamed (#5601 final review).
+test('AC2.1: the template-defect check goes red for an indented or re-headed restored paragraph (#5601)', () => {
+  const blocks = labelledTemplates();
+  const paragraph = readText(PRE_5601_PARAGRAPH).trimEnd();
+  const shapes = [
+    ['indented two spaces', paragraph.split('\n').map((line) => `  ${line}`).join('\n')],
+    ['re-headed', paragraph.replace('Foreground execution (required):', 'Foreground execution:')],
+  ];
+  for (const [shape, doctoredParagraph] of shapes) {
+    assert.notEqual(doctoredParagraph, paragraph, `${shape}: the doctoring changed nothing`);
+    for (const [index, [label, block]] of blocks.entries()) {
+      const restored = blocks.map((b, i) => (i === index ? [label, withParagraphRestored(`\`\`\`\n${block}\n\`\`\``, doctoredParagraph)] : b));
+      assert.notEqual(restored[index][1], block);
+      assert.deepEqual(templateDefects(restored), [label], `a ${shape} restored paragraph in only ${label}`);
+    }
+  }
+});
+
+// The invocation line (its call bound and window length) is restated in three copies; they must
+// agree. Each copy is reduced to the one place the rule appears in it.
 function primitiveCopies() {
-  const taskPrompt = readText(TASK_PROMPT);
-  const [firstCall, secondCall] = templateBlocks(taskPrompt);
-  const expressBlocks = fencedBlocks(readText(EXPRESS_PROMPT));
-  assert.equal(expressBlocks.length, 2, `expected exactly two fenced express-prompt blocks, found ${expressBlocks.length}`);
-  const [expressExpress, expressReview] = expressBlocks;
   return {
     'subagent-dispatch-core.md': coreForegroundSection(readText(CORE)),
-    'task-prompt.md item 7': item7Block(taskPrompt),
-    'task-prompt.md first-call template': foregroundParagraph(firstCall),
-    'task-prompt.md second-call template': foregroundParagraph(secondCall),
-    'express-prompt.md express call': foregroundParagraph(expressExpress),
-    'express-prompt.md review call': foregroundParagraph(expressReview),
+    'task-prompt.md item 7': item7Block(readText(TASK_PROMPT)),
     'context-handoff.md template': handoffWaitParagraph(readText(HANDOFF)),
   };
 }
-const primitiveOf = (text) => [...text.matchAll(PRIMITIVE)].map((m) => m.slice(1).join('/'));
-const statesPrimitiveOnce = (text) => {
-  const found = primitiveOf(text);
-  return found.length === 1 && found[0] === EXPECTED_PRIMITIVE;
+const statesInvocationOnce = (text) => {
+  const squashed = text.replace(/\s+/g, ' ');
+  return countOf(squashed, INVOCATION_NEEDLE) === 1
+    && /--max-seconds\s+150`,\s+20\s+minutes\s+per\s+wave/.test(squashed);
 };
 const mismatchedPrimitiveCopies = (copies) => Object.entries(copies)
-  .filter(([, text]) => !statesPrimitiveOnce(text))
+  .filter(([, text]) => !statesInvocationOnce(text))
   .map(([name]) => name);
 
-test('the keep-alive primitive (sleep 20, at most 60, 20 minutes) agrees across all seven copies (#3078, #4557)', () => {
-  assert.deepEqual(mismatchedPrimitiveCopies(primitiveCopies()), [], 'every copy of the keep-alive primitive must state sleep 20, at most 60 (20 minutes), exactly once');
+test('AC1.1: each copy holds the invocation line exactly once, with --max-seconds 150 and a 20-minute window (#5604)', () => {
+  assert.deepEqual(mismatchedPrimitiveCopies(primitiveCopies()), [], 'every copy of the keep-alive rule must state the wait-for.js invocation exactly once, with --max-seconds 150 and a 20-minute window');
 });
 
-test('a mismatched keep-alive primitive copy can actually go red (discrimination proof)', () => {
+test('AC1.1: a mismatched invocation copy can actually go red (discrimination proof)', () => {
   const copies = primitiveCopies();
   for (const name of Object.keys(copies)) {
     for (const [label, doctor] of [
-      ['interval', (t) => t.replace(/`sleep\s+20`/, '`sleep 30`')],
-      ['cap', (t) => t.replace(/at\s+most\s+60/, 'at most 15')],
-      ['minutes', (t) => t.replace(/\(20\s+minutes\)/, '(5 minutes)')],
+      ['call bound', (t) => t.replace(/--max-seconds\s+150/, '--max-seconds 100')],
+      ['window', (t) => t.replace(/20\s+minutes\s+per\s+wave/, '30 minutes per wave')],
+      ['duplicate', (t) => `${t} node "{plugin-root}/bin/wait-for.js" agents --ids {ids} --max-seconds 150`],
     ]) {
       const doctored = doctor(copies[name]);
       assert.notEqual(doctored, copies[name], `anchor text for the ${label} in ${name} not found — proof cannot discriminate`);
       assert.deepEqual(mismatchedPrimitiveCopies({ ...copies, [name]: doctored }), [name], `a ${label} mismatch in only ${name} must turn exactly that copy red`);
     }
   }
+});
+
+test('AC1.1 AC1.2: every copy states each wait-for.js fact (#5604)', () => {
+  for (const [name, text] of Object.entries(primitiveCopies())) {
+    assert.deepEqual(missingFactsOf(WAIT_FOR_FACTS)(text), [], name);
+  }
+});
+
+test('AC1.2: each wait-for.js fact goes red when removed from any single copy (discrimination proof)', () => {
+  for (const text of Object.values(primitiveCopies())) {
+    assertEachPatternGoesRed(text, WAIT_FOR_FACTS, missingFactsOf(WAIT_FOR_FACTS));
+  }
+});
+
+test('AC5.1: the core invocation line runs against the real CLI and reports a call bound in window 1 (#5604)', (t) => {
+  const section = coreForegroundSection(readText(CORE));
+  const line = section.replace(/\s+/g, ' ').match(/`(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/wait-for\.js" agents [^`]*)`/);
+  assert.ok(line, 'the core section holds no wait-for.js invocation line');
+  assert.strictEqual(line[1], 'node "${CLAUDE_PLUGIN_ROOT}/bin/wait-for.js" agents --ids {ids} --max-seconds 150');
+  const fwd = (p) => p.replace(/\\/g, '/');
+  const fill = (cmd) => {
+    let out = cmd;
+    for (const [from, to] of [
+      ['node', `"${fwd(process.execPath)}"`],
+      ['${CLAUDE_PLUGIN_ROOT}', fwd(PLUGIN)],
+      ['{ids}', 'fixture-a,fixture-b'],
+    ]) {
+      const next = out.replace(from, to);
+      assert.notEqual(next, out, `filling ${from} changed nothing`);
+      out = next;
+    }
+    return out;
+  };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wait-for-5604-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const run = (cmd) => spawnSync('bash', ['-c', cmd], {
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 30000,
+    env: { ...process.env, TMPDIR: dir, TMP: dir, TEMP: dir, CLAUDE_CODE_SESSION_ID: `fixture-5604-${process.pid}` },
+  });
+  const filled = fill(line[1]);
+  const bounded = filled.replace('--max-seconds 150', '--max-seconds 1');
+  assert.notEqual(bounded, filled, 'the --max-seconds replace changed nothing');
+  const result = run(bounded);
+  assert.equal(result.status, 3, `stdout: ${result.stdout} stderr: ${result.stderr}`);
+  const parsed = JSON.parse(result.stdout.trim().split('\n').pop());
+  assert.equal(parsed.bound, 'call');
+  assert.equal(parsed.window, 1);
+  const control = filled.replace('--max-seconds 150', '--max-seconds 151');
+  assert.notEqual(control, filled, 'the control --max-seconds replace changed nothing');
+  assert.equal(run(control).status, 2, 'an over-ceiling --max-seconds 151 must exit 2');
 });
 
 // #3722: the dispatcher keeps only the latest reply, so a re-wake answered with the bare STATUS line
@@ -513,9 +700,9 @@ test('each core measured-fact assertion can actually go red on its own (discrimi
   assertEachPatternGoesRed(coreForegroundSection(readText(CORE)), CORE_MEASURED, coreMeasuredMissing);
 });
 
-// #4557: at the sleep 20 x 60 bound, a still-outstanding write-capable child's worktree is probed
+// #4557: at the 20-minute window's bound, a still-outstanding write-capable child's worktree is probed
 // read-only and the wait continues while it progresses, instead of stopping BLOCKED on elapsed time
-// alone. One passage, the same words in all seven copies; each pattern matches once per copy.
+// alone. One passage, the same words in all three copies; each pattern matches once per copy.
 const PROGRESS_CHECK = [
   [/probe\s+the\s+worktree\s+its\s+prompt\s+names,\s+read-only/, 'the probe reads the worktree the child prompt names, read-only'],
   [/`git\s+-C\s+"\{child-worktree\}"\s+rev-parse\s+HEAD`/, 'the probe reads the child worktree HEAD'],
@@ -523,7 +710,7 @@ const PROGRESS_CHECK = [
   [/`git\s+-C\s+"\{child-worktree\}"\s+--no-optional-locks\s+diff\s+HEAD`\s+piped\s+to\s+`git\s+hash-object\s+--stdin`\s+\(a\s+`fatal:`\s+line\s+fails\s+the\s+probe\)/, 'the probe hashes the diff against HEAD, so re-edits count as progress (AC9.1)'],
   [/against\s+the\s+previous\s+probe\s+\(taken\s+right\s+after\s+launching\s+the\s+wave,\s+then\s+at\s+each\s+bound/, 'each bound compares with the previous probe, the first taken right after the wave launches (AC1.1)'],
   [/lacking\s+one,\s+the\s+first\s+bound's\s+probe\s+sets\s+it\s+and\s+grants\s+a\s+window/, 'with no launch probe, the first bound sets the baseline and grants one window'],
-  [/Per\s+wave,\s+while\s+any\s+child\s+shows\s+a\s+change,\s+log\s+one\s+wait\s+line\s+and\s+grant\s+one\s+more\s+60-wait\s+window/, 'per wave, a change in any child logs a wait line and grants one more 60-wait window (Decision: Reading B)'],
+  [/Per\s+wave,\s+while\s+any\s+child\s+shows\s+a\s+change,\s+log\s+one\s+wait\s+line\s+and\s+grant\s+one\s+more\s+20-minute\s+window/, 'per wave, a change in any child logs a wait line and grants one more 20-minute window (Decision: Reading B)'],
   [/stop\s+when\s+a\s+whole\s+window\s+passes\s+with\s+no\s+change/, 'BLOCKED only after a whole window with no change'],
   [/ceiling\s+of\s+3\s+windows\s+\(60\s+minutes\)\s+per\s+wave/, 'the 3-window (60-minute) ceiling'],
   [/\(`no\s+progress\s+for\s+one\s+window`\s+or\s+`ceiling\s+reached\s+while\s+progressing`\)/, 'the BLOCKED report names which of exactly two conditions fired — no third (AC8.2)'],
@@ -604,4 +791,160 @@ test('AC1.3: a copy with an unrelated sentence between the stop sentence and the
     const doctored = text.slice(0, stopEnd) + ' Then redo the child in-session.' + text.slice(stopEnd);
     assert.deepEqual(misorderedCopies({ ...copies, [name]: doctored }), [name], `an unrelated sentence before the passage in only ${name} must turn exactly that copy red`);
   }
+});
+
+// #5280: a rendered-UI unit (review Step 6 / 6.5) outlives the wait bound more often than a lens: it
+// gets artifact-directory progress windows and its late result is staged. The rule lives in its own
+// _shared file (headroom-forced); the core section carries one exception sentence pointing at it.
+const RENDERED_UI = path.join(PLUGIN, 'skills', '_shared', 'rendered-ui-units.md');
+const RENDERED_UI_EXCEPTION = 'Exception: a rendered-UI unit (review Step 6/6.5) gets more windows while its artifact directory changes; stage its late result (`_shared/rendered-ui-units.md`).';
+const RENDERED_UI_CONTRACT = [
+  [/review\s+Step\s+6\s+\(visual-review\)\s+and\s+Step\s+6\.5\s+\(design-wrapper\s+review\)/, 'names review Step 6 and Step 6.5 as the rendered-UI units'],
+  [/Steps?\s+3\.7\s+and\s+3\.8[^.]*?no\s+artifact\s+directory/, 'the 3.7/3.8 children have no artifact directory'],
+  [/`\.claude-tweaks\/artifacts\/screenshots\/browse\/\{session\}\/`/, 'names the visual-review artifact directory'],
+  [/`\.impeccable\/review\/`/, 'names the design-wrapper review artifact directory'],
+  [/`ls\s+-lR\s+"\{artifact-dir\}"`\s+piped\s+to\s+`git\s+hash-object\s+--stdin`/, 'the read-only artifact-directory probe'],
+  [/ceiling\s+of\s+3\s+windows\s+\(60\s+minutes\)/, 'the 3-window ceiling'],
+  [/names\s+no\s+artifact\s+directory\s+counts\s+as\s+unchanged/, 'a unit naming no artifact directory counts as unchanged'],
+  [/missing\s+directory\s+or\s+a\s+failed\s+probe\s+counts\s+as\s+no\s+change/, 'a missing directory or failed probe counts as no change'],
+  [/Lenses,\s+single\s+reads\s+and\s+judges\s+are\s+not\s+rendered-UI\s+units/, 'lenses, single reads and judges are not rendered-UI units'],
+  [/never\s+satisfies\s+the\s+rendered-UI\s+check\s+before\s+merge/, 'a self-judged unit never satisfies the rendered-UI check'],
+  [/explicit\s+decline/, 'it surfaces as an explicit decline'],
+  [/session-tmp-resolve\.js[\s\S]*?never\s+under\s+the\s+run\s+dir/, 'the findings file is a session temp path, never under the run dir'],
+  [/stage-item\.js"\s+--run\s+"\{run-dir\}"\s+--id\s+visual-review-late-1\s+--allocate/, 'stages with the allocated visual-review-late- id'],
+  [/staged\/visual-review-late-\{n\}\.md/, 'names the staged file'],
+  [/--status\s+STAGED[\s\S]*?--reversibility\s+high\s+--text-file/, 'logs the staging decision'],
+  [/late\s+rendered-UI\s+result\s+from\s+\{unit\}\s+staged\s+to\s+staged\/\{written-file\}\./, 'the decision log text'],
+  [/`status`\s+is\s+anything\s+but\s+`active`[\s\S]{0,240}?`console\.json`\s+exists[\s\S]{0,240}?exits\s+3\s+\(archived\s+or\s+unanchored\)\s+or\s+with\s+any\s+other\s+non-zero\s+code,\s+write\s+nothing\s+under\s+the\s+run\s+dir[\s\S]{0,240}?name\s+the\s+findings\s+in\s+your\s+reply\s+instead/, 'a closed run, or any non-zero stage-item.js exit, stages nothing and names the findings in the reply'],
+  [/never\s+changes\s+a\s+verdict\s+already\s+reached/, 'a late result never changes a verdict already reached'],
+  [/`\{section\}`\s+is\s+`\/review`/, 'binds the log-decision {section}'],
+  [/basename\s+of\s+the\s+first\s+path\s+stage-item\s+printed/, '{written-file} is the basename of the first path stage-item printed'],
+  [/`\{text-file\}`\s+is\s+a\s+path\s+`bin\/session-tmp-resolve\.js`\s+prints/, 'binds the {text-file} location'],
+  [/artifact\s+directory\s+in\s+its\s+prompt\s+as\s+an\s+absolute\s+path/, 'the artifact directory is named as an absolute path'],
+  [/`LATE_FINDING:\s+\{severity\}\s+—\s+\{one-line\s+finding\}`/, 'a closed-run finding is one LATE_FINDING: {severity} — {one-line finding} line'],
+  [/immediately\s+before\s+the\s+reply's\s+trailing\s+`STATUS:`\s+line/, 'the LATE_FINDING lines sit immediately before the trailing STATUS: line'],
+  [/re-woken\s+agent\s+after\s+its\s+final\s+reply\s+repeats\s+the\s+whole\s+final\s+reply\s+with\s+those\s+lines\s+inserted\s+before\s+`STATUS:`/, 'a re-wake after a closed run repeats the reply with the lines inserted before STATUS:'],
+  [/no\s+pipeline\s+run\s+directory,\s+or\s+no\s+`run-state\.json`\s+in\s+it,\s+treat\s+the\s+run\s+as\s+not\s+active/, 'no run dir or no run-state.json counts as not active'],
+  [/downgrade\s+line\s+\(`decisions\.md`,\s+under\s+the\s+dispatching\s+skill's\s+section\)[\s\S]{0,120}?review\s+summary's\s+Visual\s+Review\s+or\s+Design\s+Quality\s+section/, 'the explicit decline lands in the downgrade line and the review summary'],
+  [/`\{unit\}`\s+is\s+the\s+child\s+as\s+its\s+launch\s+site\s+named\s+it[^.]*?`\{unit-slug\}`\s+is\s+its\s+lowercase,\s+hyphen-joined\s+form/, 'binds {unit} and {unit-slug}'],
+  [/every\s+character\s+outside\s+`a-z`,\s+`0-9`\s+and\s+`-`\s+replaced\s+by\s+`-`/, '{unit-slug} is restricted to a-z, 0-9 and - before it reaches a shell command'],
+  [/non-zero\s+`log-decision\.js`\s+exit[\s\S]{0,120}?name\s+the\s+findings\s+in\s+your\s+reply/, 'a failed log-decision.js call also names the findings in the reply'],
+];
+const renderedUiMissing = missingFactsOf(RENDERED_UI_CONTRACT);
+
+test('AC1.1 AC1.2 AC2.1 AC3.1 AC4.1 AC5.1 AC5.2: rendered-ui-units.md states the rendered-UI unit rule (#5280)', () => {
+  assert.deepEqual(renderedUiMissing(readText(RENDERED_UI)), []);
+});
+
+test('AC1.1: each rendered-UI contract assertion goes red on its own (discrimination proof)', () => {
+  assertEachPatternGoesRed(readText(RENDERED_UI), RENDERED_UI_CONTRACT, renderedUiMissing);
+});
+
+test('AC3.1: the contract stage-item id classifies to a mapped console section (#5280)', () => {
+  const id = readText(RENDERED_UI).match(/--id\s+(\S+)/)[1];
+  const { classifyStagedItem, SECTIONS } = require('../plugin/bin/lib/console/resolve');
+  const mapped = classifyStagedItem(`${id}.md`, '');
+  assert.equal(mapped.section, SECTIONS.PENDING);
+  assert.notEqual(mapped.reason, 'unmapped-prefix');
+  assert.equal(classifyStagedItem('rendered-late-1.md', '').reason, 'unmapped-prefix');
+});
+
+test('AC1.1: the core section carries the rendered-UI exception sentence once (#5280)', () => {
+  const section = coreForegroundSection(readText(CORE)).replace(/\s+/g, ' ');
+  assert.equal(section.split(RENDERED_UI_EXCEPTION).length - 1, 1);
+});
+
+const RENDERED_UI_EXCEPTION_FACTS = [
+  [/Exception:\s+a\s+rendered-UI\s+unit\s+\(review\s+Step\s+6\/6\.5\)\s+gets\s+more\s+windows\s+while\s+its\s+artifact\s+directory\s+changes;/, 'names the rendered-UI unit exception and its extra windows'],
+  [/stage\s+its\s+late\s+result\s+\(`_shared\/rendered-ui-units\.md`\)\./, 'stages the late result per _shared/rendered-ui-units.md'],
+];
+const missingRenderedUiException = missingFactsOf(RENDERED_UI_EXCEPTION_FACTS);
+
+test('AC1.1 AC2.1: every copy carries the rendered-UI exception sentence (#5280)', () => {
+  for (const [name, text] of Object.entries(primitiveCopies())) {
+    assert.deepEqual(missingRenderedUiException(text), [], name);
+  }
+});
+
+test('AC1.1: each exception assertion goes red when removed from any single copy (discrimination proof)', () => {
+  for (const text of Object.values(primitiveCopies())) {
+    assertEachPatternGoesRed(text, RENDERED_UI_EXCEPTION_FACTS, missingRenderedUiException);
+  }
+});
+
+const SELF_JUDGE_THEN_EXCEPTION = 'Read-only units keep the first-bound self-judge. Exception: a rendered-UI unit (review Step 6/6.5)';
+const exceptionMisplacedCopies = (copies) => Object.entries(copies)
+  .filter(([, text]) => !text.replace(/\s+/g, ' ').includes(SELF_JUDGE_THEN_EXCEPTION))
+  .map(([name]) => name);
+
+test('AC1.1: the exception sentence directly follows the read-only self-judge sentence in every copy', () => {
+  assert.deepEqual(exceptionMisplacedCopies(primitiveCopies()), []);
+});
+
+test('AC1.1: a copy with the exception sentence moved to its start goes red (discrimination proof)', () => {
+  const copies = primitiveCopies();
+  for (const [name, text] of Object.entries(copies)) {
+    const flat = text.replace(/\s+/g, ' ');
+    assert.ok(flat.includes(RENDERED_UI_EXCEPTION), `exception sentence not found in ${name}`);
+    const doctored = RENDERED_UI_EXCEPTION + ' ' + flat.replace(' ' + RENDERED_UI_EXCEPTION, '');
+    assert.deepEqual(exceptionMisplacedCopies({ ...copies, [name]: doctored }), [name], `moving the exception in only ${name} must turn exactly that copy red`);
+  }
+});
+
+// #5604: the bounded-polling paragraph names wait-for.js for a pull request's checks, a workflow run and a
+// local process, and keeps its cap, interval and logging rules for any other condition. Each pattern matches
+// exactly once in that one paragraph, so its go-red proof removes the only occurrence.
+function boundedPollingParagraph(core) {
+  const found = coreForegroundSection(core).split(/\n\n/).filter((p) => p.startsWith('**Bounded polling for a long external wait.**'));
+  assert.equal(found.length, 1, 'the Foreground Execution Discipline section must hold exactly one Bounded polling paragraph');
+  return found[0];
+}
+const BOUNDED_POLLING = [
+  [/wait-for\.js\s+ci\s+--pr/, 'a pull request wait is `wait-for.js ci --pr`'],
+  [/wait-for\.js\s+ci\s+--run/, 'a workflow run wait is `wait-for.js ci --run`'],
+  [/wait-for\.js\s+pid\b/, 'a local process wait is `wait-for.js pid`'],
+  [/`--max-seconds\s+150`;\s+a\s+`ci`\s+call\s+may\s+run\s+20\s+s\s+past\s+it/, 'a ci call may run 20 s past --max-seconds'],
+  [/:\s+0\s+means\s+read\s+the\s+result/, 'exit 0 means read the result'],
+  [/3\s+with\s+`"bound":"call"`\s+means\s+call\s+again/, 'exit 3 with a call bound means call again'],
+  [/3\s+with\s+`"bound":"deadline"`\s+means\s+the\s+bound\s+is\s+exhausted/, 'exit 3 with a deadline bound means the bound is exhausted'],
+  [/on\s+exit\s+2\s+call\s+it\s+once\s+more,\s+which\s+joins\s+the\s+failed\s+call's\s+window,\s+and\s+a\s+second\s+exit\s+2\s+ends\s+the\s+wait\s+unresolved/, 'a first exit 2 is retried once and a second ends the wait unresolved'],
+  [/the\s+cap,\s+interval\s+and\s+logging\s+rules\s+below\s+are\s+for\s+any\s+other\s+condition/, 'the cap, interval and logging rules are for any other condition'],
+];
+const missingBoundedPolling = missingFactsOf(BOUNDED_POLLING);
+
+test('AC7.1: the bounded-polling paragraph names wait-for.js ci --pr, ci --run and pid (#5604)', () => {
+  const paragraph = boundedPollingParagraph(readText(CORE));
+  assert.deepEqual(missingBoundedPolling(paragraph), []);
+  assertEachPatternGoesRed(paragraph, BOUNDED_POLLING, missingBoundedPolling);
+});
+
+// #5604: no skill file shows a wait as a backtick-quoted `sleep N` (the harness refuses a leading sleep).
+// Every file under plugin/skills is read, whatever its extension.
+function skillFiles(root) {
+  return fs.readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(root, entry.name);
+    return entry.isDirectory() ? skillFiles(full) : [[full, readText(full)]];
+  });
+}
+const backtickSleepHits = (files) => files.filter(([, text]) => /`sleep \d/.test(text)).map(([file]) => file);
+const sleep30Count = (text) => (text.match(/sleep 30/g) || []).length;
+const PR_FIRST_MERGE = path.join(PLUGIN, 'skills', '_shared', 'pr-first-merge.md');
+
+test('AC3.1 AC3.2: no file under plugin/skills puts a backtick directly before sleep and a digit (#5604)', () => {
+  const files = skillFiles(path.join(PLUGIN, 'skills'));
+  assert.ok(files.length > 100, `expected over 100 skill files, found ${files.length}`);
+  assert.deepEqual(backtickSleepHits(files), []);
+  const merge = files.find(([file]) => file === PR_FIRST_MERGE);
+  assert.ok(merge, 'pr-first-merge.md is not among the swept files');
+  assert.equal(sleep30Count(merge[1]), 2, 'the unmatched anchors (two bare sleep 30 lines in code blocks) are not both there, so the sweep proves nothing about them');
+  const oneGone = merge[1].replace('sleep 30', 'true');
+  assert.notEqual(oneGone, merge[1]);
+  assert.equal(sleep30Count(oneGone), 1, 'dropping one bare sleep 30 must move the count off two');
+});
+
+test('AC3.3: the backtick-sleep sweep goes red on a fixture copy carrying such text (#5604)', () => {
+  const files = skillFiles(path.join(PLUGIN, 'skills'));
+  const doctored = files.map(([file, text]) => (file === CORE ? [file, `${text} \`sleep 20\` `] : [file, text]));
+  assert.notDeepEqual(doctored, files, 'the core is not among the swept files');
+  assert.deepEqual(backtickSleepHits(doctored), [CORE]);
 });

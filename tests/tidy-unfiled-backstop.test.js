@@ -20,7 +20,7 @@ test('issue-claims-backstops.md carries the unfiled-drafts backstop', () => {
   const text = readText(BACKSTOPS);
   assert.ok(text.includes(BACKSTOP_HEADING), 'backstop subsection heading missing');
   assert.ok(
-    text.includes('find .claude-tweaks/pipelines -path "*/staged/upstream-unfiled-*.md"'),
+    text.includes('find "{RUN_ROOT}/.claude-tweaks/pipelines" -path "*/staged/upstream-unfiled-*.md"'),
     'find enumeration command missing or does not match the live+archived glob shape',
   );
   assert.ok(

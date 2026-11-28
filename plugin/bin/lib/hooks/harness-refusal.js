@@ -5,11 +5,22 @@
 // "This session" or "This agent", and a worktree whose working directory is gone
 // ends "Refusing to run there" instead (the agent-noun and worktree-gone templates
 // were measured 2026-10-28 against Claude Code 2.1.302). This is the one place a
-// wording update lands: both post-tool-use-failure.js (the regex, via
-// classifyRefusal) and bash-prefilter.js (the signatures) derive from it.
+// wording update lands: post-tool-use-failure.js (the regex, via
+// classifyRefusal), bash-prefilter.js (the signatures) and timing/turn-class.js
+// (the nouns and clause, for its guard-refusal class, #4521) and
+// tools/guard-refusals/transcripts.js and trace.js (the signatures) derive from it.
 // tools/upstream-drift/manifest.yml's `claude-code` entry asserts each fragment
 // against the installed binary, and tests/harness-refusal-drift-pin.test.js keeps
 // that manifest and this module in lockstep.
+//
+// The pattern is anchored at the start of `error` (#4523), so command output that
+// merely quotes a refusal is not one. A 2026-11-26 probe on 2.1.325 showed the
+// session-guard and `${noun}` worktree-gone `error` begin with the noun (the agent
+// guard was measured 2026-10-28). The session-noun and fixed worktree-gone
+// templates were unreachable headless but are noun-first literals behind the same
+// shell-error wrapper. Re-probe that `error` still starts with the noun,
+// per the repo-local `upstream-repin` skill, whenever the `claude-code` floor in
+// tools/upstream-drift/manifest.yml is raised.
 //
 // Requires nothing, by contract: bash-prefilter.js loads it on every failed Bash
 // call, so any require here moves cost onto each of them.
@@ -21,7 +32,7 @@ const ISOLATION_CLAUSE = ' is isolated in the worktree ';
 const REFUSAL_SIGNATURE = 'Refusing to run it';
 const WORKTREE_GONE_SIGNATURE = 'Refusing to run there';
 
-// Signature tails, for a raw-substring prefilter.
+// Signature tails, for the prefilter's noun-first check on the parsed `error` (#4523).
 const REFUSAL_SIGNATURES = Object.freeze([REFUSAL_SIGNATURE, WORKTREE_GONE_SIGNATURE]);
 
 // Fragments: the two nouns, the isolation clause, then the two signatures.
@@ -32,7 +43,7 @@ function escapeRegex(s) {
 }
 
 const HARNESS_ISOLATION_REFUSAL_RE = new RegExp(
-  '(' + escapeRegex(SESSION_NOUN) + '|' + escapeRegex(AGENT_NOUN) + ')' + escapeRegex(ISOLATION_CLAUSE)
+  '^(' + escapeRegex(SESSION_NOUN) + '|' + escapeRegex(AGENT_NOUN) + ')' + escapeRegex(ISOLATION_CLAUSE)
   + '[\\s\\S]*?(' + escapeRegex(REFUSAL_SIGNATURE) + '|' + escapeRegex(WORKTREE_GONE_SIGNATURE) + ')',
 );
 
@@ -50,5 +61,5 @@ function classifyRefusal(text) {
 
 module.exports = {
   SESSION_NOUN, AGENT_NOUN, ISOLATION_CLAUSE, REFUSAL_SIGNATURE, WORKTREE_GONE_SIGNATURE,
-  REFUSAL_SIGNATURES, REFUSAL_FRAGMENTS, HARNESS_ISOLATION_REFUSAL_RE, classifyRefusal,
+  REFUSAL_SIGNATURES, REFUSAL_FRAGMENTS, HARNESS_ISOLATION_REFUSAL_RE, classifyRefusal, escapeRegex,
 };

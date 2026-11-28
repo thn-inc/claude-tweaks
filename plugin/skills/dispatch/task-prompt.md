@@ -1,24 +1,22 @@
 # Dispatch Step 5 — Task() Prompt Template
 
-Referenced by `skills/dispatch/SKILL.md` Step 5. **Each of this file's two templates must be inlined verbatim into its own `Task()` tool call** when dispatching a group — they are the operative templates, not supplementary reading. Never inline both into one call. Copy each fenced block below exactly, substituting `{issue list}`, `{minted-run-dir}`, `{plugin-root}`, `{context-pack}`, etc. as SKILL.md's Step 5 directs.
+Referenced by `skills/dispatch/SKILL.md` Step 5. **Each of this file's two templates must be inlined verbatim into its own `Task()` tool call** when dispatching a group — they are the operative templates, not supplementary reading. Never inline both into one call. `bin/dispatch-prompt.js` renders each call's prompt (SKILL.md Step 5): these fenced blocks and the Context pack's numbered items are its only template source, so an edited sentence here reaches every rendered prompt with no code change. Nothing is substituted by hand; a render failure blocks the group and ends the firing (`two-call-gate.md` §2).
 
 Each group is dispatched as **two sequential `Task()` calls**, not one (per `_shared/subagent-output-contract.md`'s input discipline — minimal input, literal output template inlined, no conversation history). The single-assistant-message rule (`_shared/subagent-dispatch-core.md`'s fan-out section) creates no batching decision here — these two calls are sequential by design, never emitted together.
 
-## Context pack (#1542 — resolve once, substitute into both calls)
+## Context pack (#1542 — resolved once by `dispatch-prompt.js` for both calls)
 
 A dispatched Task agent inherits no shell environment (`_shared/subagent-output-contract.md`'s
 Input Discipline), so an env-var reference such as `${CLAUDE_PLUGIN_ROOT}` embedded in a template
-resolves to nothing in its shell. The dispatching session already resolved seven of these facts
-earlier in the same firing (Steps 1-4); it resolves them **once more here, as literals**, before
-composing either call — plus one standing instruction (item 7) that needs no resolution, only
-inclusion:
+resolves to nothing in its shell. `dispatch-prompt.js` resolves these facts as literals for both
+calls — plus one standing instruction (item 7) whose only dispatcher placeholder is `{plugin-root}`:
 
 1. **`{plugin-root}`** — this session's own already-resolved `$CLAUDE_PLUGIN_ROOT` value,
    substituted as a literal absolute path everywhere this file used to embed the env-var
    reference `${CLAUDE_PLUGIN_ROOT}` — never left as `${CLAUDE_PLUGIN_ROOT}` for the dispatched
    agent's shell to expand.
 2. **`{minted-run-dir}`** — unchanged from before this section existed (Step 4's mint).
-3. **Resolved policy values** — one call, before either dispatch: `node "{plugin-root}/bin/resolve-policy.js" --values autonomy,integration-model,merge-verification,risk-floor,size-floor`. The five values this call's own Settle/Auto-merge procedures need downstream. **Scope note (#2413):** these are read-only facts for Settle/Auto-merge only — they never substitute for `/flow`'s own Step 3 Manifesto, which independently computes and writes the full 13-lever `config.yml` (including its own `merge-verification` entry) on the first call regardless of what is handed here. A lever already resolved above is never grounds for that call to skip the Manifesto's `config.yml` write.
+3. **Resolved policy values** — `{policy-values}`, the `--values` reading of `autonomy,integration-model,merge-verification,risk-floor,size-floor`, resolved in-process by `dispatch-prompt.js`. The five values this call's own Settle/Auto-merge procedures need downstream. **Scope note (#2413):** these are read-only facts for Settle/Auto-merge only — they never substitute for `/flow`'s own Step 3 Manifesto, which independently computes and writes the full 13-lever `config.yml` (including its own `merge-verification` entry) on the first call regardless of what is handed here. A lever already resolved above is never grounds for that call to skip the Manifesto's `config.yml` write.
 4. **Canonical CLI invocation table** — the argument shapes and enums a dispatched call has
    historically had to rediscover by trial and error:
 
@@ -38,56 +36,67 @@ inclusion:
 
 7. **Async-wait discipline** — you are a subagent, not a top-level session. Once your turn ends you
    cannot count on being re-woken: a reply that ends without a tool call ends your turn, whatever is
-   still in flight, so a progress note rides alongside a tool call or is skipped (#3266). Run a long
-   command (e.g. the full test suite) as a normal foreground call with a large explicit timeout
-   (#1965). A nested `Agent` call launches async, and its completion notification reaches you only
-   while your turn is alive (when the call instead returns the child's own reply, that child has
-   reported and needs no wait): keep your turn alive with bounded foreground waits — repeated
-   `sleep 20` Bash calls, at most 60 (20 minutes) per wave of children (the set launched
-   together), each wait logged as one line (what you wait on, the iteration against the bound, how
-   many children are still pending), stopping as soon as every child's `<task-notification>` has
-   arrived, never reading or tailing a running child's `output_file` — until every child you
-   launched has reported, and never end your turn with one outstanding. With no `Agent` tool
-   (`ToolSearch` finds none, deferred or otherwise), or a child still silent when the bound
-   expires, judge that unit yourself, log the downgrade, and mark its findings `unconfirmed`; that
-   child is abandoned and no longer counts as outstanding, so your final reply still ends with
-   `STATUS: {WORD}`. For a `/claude-tweaks:review` lens unit, log that downgrade as the single-read
-   coverage line, and carry its caveat, from `review/step3-lens-dispatch.md`'s partner-died
-   paragraph. Ignore a late result; if a late notification re-wakes you after your final
-   reply, repeat your whole final reply unchanged — the dispatcher keeps only your latest reply, so
-   a bare `STATUS:` line would replace the report. A child that reports a failure (a `failed`
-   notification, an API error, a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so it is not
-   outstanding: handle it per the dispatching skill's own status handling where one exists
+   still in flight, so a progress note rides alongside a tool call or is skipped (#3266). Always
+   run the project's test command and every other long-running command in the foreground, as a
+   normal call with a large explicit timeout and its output redirected to a file if it's long —
+   never with `run_in_background` — and never end the turn waiting on a background run you
+   started (#1965). A nested `Agent` call launches async, and its completion notification reaches
+   you only while your turn is alive (when the call instead returns the child's own reply, that
+   child has reported and needs no wait): keep your turn alive with bounded foreground waits —
+   `node "{plugin-root}/bin/wait-for.js" agents --ids {ids} --max-seconds 150`, 20 minutes per wave
+   of children (the set launched together), stopping as soon as every child's `<task-notification>`
+   has arrived, never reading or tailing a running child's `output_file` — until every child you
+   launched has reported, and never end your turn with one outstanding. `{ids}` are the agent ids of
+   the children whose notification has not arrived and that no call has reported, comma-separated
+   (the last call's `pending` list; empty means the wait is over). Make each call a foreground Bash call with no `timeout` parameter: the command returns within 150
+   seconds, under the 180-second ceiling a dispatched agent's foreground call has (#5602). Exit 0
+   means a listed child stopped: its notification is in hand or arrives next; call again while any
+   child is outstanding. Exit 3 with `"bound":"call"` means call again. Exit 3 with
+   `"bound":"deadline"` means the 20-minute window is over: the bound has expired, and when the rule
+   below grants another window, the next call is that window. Any other exit is a failed wait call. The
+   command's output line is the wait's log line, so write no separate one. With no `Agent` tool
+   (`ToolSearch` finds none, deferred or otherwise), or a child still silent when the bound expires,
+   judge that unit yourself, log the downgrade, and mark its findings `unconfirmed`; that child is
+   abandoned and no longer counts as outstanding, so your final reply still ends with `STATUS:
+   {WORD}`. For a `/claude-tweaks:review` lens unit, log that downgrade as the single-read coverage
+   line, and carry its caveat, from `review/step3-tier-variants.md`'s partner-died paragraph. Ignore
+   a late result; if a late notification re-wakes you after your final reply, repeat your whole
+   final reply unchanged — the dispatcher keeps only your latest reply, so a bare `STATUS:` line
+   would replace the report. A child that reports a failure (a `failed` notification, an API error,
+   a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so it is not outstanding: handle it per the
+   dispatching skill's own status handling where one exists
    (`superpowers:subagent-driven-development`'s BLOCKED handling), otherwise judge that unit
-   yourself. Self-judging is for a read-only unit (a lens, a single read, a judge); a
-   write-capable child (one that edits files) still silent at the bound is never redone in-session,
-   because an abandoned child keeps running and may still write — stop, and end with
-   `STATUS: BLOCKED` naming that child and its unit. Before that stop, probe the worktree its prompt
-   names, read-only: `git -C "{child-worktree}" rev-parse HEAD`, `git -C "{child-worktree}"
-   --no-optional-locks status --porcelain` and `git -C "{child-worktree}" --no-optional-locks diff
-   HEAD` piped to `git hash-object --stdin` (a `fatal:` line fails the probe), against the previous probe (taken right after launching the
-   wave, then at each bound; lacking one, the first bound's probe sets it and grants a window). Per
-   wave, while any child shows a change, log one wait line and grant one more 60-wait window; stop
-   when a whole window passes with no change, or at a ceiling of 3 windows (60 minutes) per wave,
-   naming which fired (`no progress for one window` or `ceiling reached while progressing`) and
-   every unchanged child. Children sharing a worktree progress together; a child whose prompt names
-   no worktree counts as unchanged. A failed wait call counts as no wait but ends its window, and the probe runs as at any
-   bound; a failed probe command counts as no change, never retried in another form. Read-only units
-   keep the first-bound self-judge. A wait call that is blocked or fails is not a wait and never
-   counts toward the bound; never retry it in another form (a longer, wrapped or backgrounded
-   sleep): treat every child still outstanding as silent at the bound. The full rule is in
-   `subagent-dispatch-core.md`'s Foreground Execution Discipline section. Give any agent you
-   dispatch this same instruction, whether it is a nested Task/Agent call or a
-   `superpowers:subagent-driven-development` or review-lens fan-out. **Mark every interim reply
-   (#2714):** if a turn ends anyway while a keep-alive wait is still in progress, with a child
-   outstanding — the keep-alive rule's failure path — make that reply's last non-empty line
-   `INTERIM_STATUS: {one-line progress note}`, never `STATUS: {WORD}`, which is reserved for your
-   genuine final reply (an abandoned child is not outstanding; that reply is final and ends with
-   `STATUS: {WORD}`). An unmarked interim reply is graded by the `SubagentStop` hook as a final
-   reply missing its status line and logged as a false-positive `contract-violation`, unless your
-   own async `Agent` launches are still pending in your transcript (#3015) — the marker stays
-   required, since that exemption covers only pending launches. Forward this marker rule, with the
-   rest of this item, to any nested dispatch that itself dispatches.
+   yourself. Self-judging is for a read-only unit (a lens, a single read, a judge); a write-capable
+   child (one that edits files) still silent at the bound is never redone in-session, because an
+   abandoned child keeps running and may still write — stop, and end with `STATUS: BLOCKED`
+   naming that child and its unit. Before that stop, probe the worktree its prompt names, read-only:
+   `git -C "{child-worktree}" rev-parse HEAD`, `git -C "{child-worktree}" --no-optional-locks status
+   --porcelain` and `git -C "{child-worktree}" --no-optional-locks diff HEAD` piped to `git
+   hash-object --stdin` (a `fatal:` line fails the probe), against the previous probe (taken right
+   after launching the wave, then at each bound; lacking one, the first bound's probe sets it and
+   grants a window). Per wave, while any child shows a change, log one wait line and grant one more
+   20-minute window; stop when a whole window passes with no change, or at a ceiling of 3 windows
+   (60 minutes) per wave, naming which fired (`no progress for one window` or `ceiling reached while
+   progressing`) and every unchanged child. Children sharing a worktree progress together; a child
+   whose prompt names no worktree counts as unchanged. A failed wait call counts as no wait but ends
+   its window, and the probe runs as at any bound; a failed probe command counts as no change, never
+   retried in another form. Read-only units keep the first-bound self-judge. Exception: a
+   rendered-UI unit (review Step 6/6.5) gets more windows while its artifact directory changes;
+   stage its late result (`_shared/rendered-ui-units.md`). A wait call that is blocked or fails is
+   not a wait and does not move the window's deadline; never retry it in another form (a `sleep` of
+   any length, or a longer, wrapped or backgrounded call): treat every child still outstanding as
+   silent at the bound. The full rule is in `subagent-dispatch-core.md`'s Foreground Execution
+   Discipline section. Give any agent you dispatch this same instruction, whether it is a nested
+   Task/Agent call or a `superpowers:subagent-driven-development` or review-lens fan-out. **Mark
+   every interim reply (#2714):** if a turn ends anyway while a keep-alive wait is still in
+   progress, with a child outstanding — the keep-alive rule's failure path — make that reply's last
+   non-empty line `INTERIM_STATUS: {one-line progress note}`, never `STATUS: {WORD}`, which is
+   reserved for your genuine final reply (an abandoned child is not outstanding; that reply is final
+   and ends with `STATUS: {WORD}`). An unmarked interim reply is graded by the `SubagentStop` hook
+   as a final reply missing its status line and logged as a false-positive `contract-violation`,
+   unless your own async `Agent` launches are still pending in your transcript (#3015) — the marker
+   stays required, since that exemption covers only pending launches. Forward this marker rule, with
+   the rest of this item, to any nested dispatch that itself dispatches.
 8. **Selected at** (#3131) — one literal line, `Selected at: {ISO}`: the modification time of
    this firing's session-scoped `dispatch-groups.json` (`queue-pull-script.md`'s output, resolved
    via `sessionTmpPath` as `next-ranking.md` does). That pull already dropped every
@@ -96,13 +105,12 @@ inclusion:
    against the holder's `claimedAt` to tell a missing projection from a claim race. An unreadable
    file → `Selected at: unknown`; never block the dispatch on it.
 
-Substitute this whole block, filled in with this firing's actual resolved values, as
-`{context-pack}` immediately after each call's opening `Task scope:` paragraph below. This is
-environment facts and tool signatures only — never a prior call's conclusions (test results,
-verdicts) — so it does not weaken the two-call gate's fresh-context independence property (see
-each template's own "CRITICAL"/re-derive-from-artifacts language, unchanged by this section).
+Substitute this whole block, resolved, as each call's `{context-pack}` — `dispatch-prompt.js`
+does. It is environment facts and tool signatures only — never a prior call's conclusions (test
+results, verdicts) — so it keeps the two-call gate's fresh-context independence (each template's
+own "CRITICAL"/re-derive-from-artifacts language).
 
-**Before substituting `{context-pack}` into a call, compose that call's phase** into the minted
+**Before running `dispatch-prompt.js` for a call, compose that call's phase** into the minted
 run directory with one physical line — before the first call:
 `node "{plugin-root}/bin/compose-context.js" --run "{minted-run-dir}" --phase first-call`
 and before the second call:
@@ -118,15 +126,13 @@ composed-bytes scanner expands each `--phase` line into the phase's registered b
 two lines are measured call sites; if the compose command is unavailable or exits non-zero, read the named source files directly — which, for the dispatched agent, each template citation's own fallback already says.
 
 **Log each group's resolved first-call model (#3212).** This is a dispatching-session step, not
-part of `{context-pack}`. When resolving the first call's profile
-(`node "{plugin-root}/bin/resolve-profile.js" capable`, the template below), keep the resolved
-`model` and `source`; after the first call returns — never before it is dispatched — write one
+part of `{context-pack}`. Keep the `model`, `launchEffort` and `source` of the first call's `dispatch-prompt.js`
+envelope `profile`; after the first call returns — never before it is dispatched — write one
 line per group to that group's `{minted-run-dir}/decisions.md` by running
-`node "{plugin-root}/bin/log-decision.js" --run "{minted-run-dir}" --status AUTO --step "Dispatch group {group}" --text "first-call model resolved to {model} (source: {source})" --reversibility n/a`,
+`node "{plugin-root}/bin/log-decision.js" --run "{minted-run-dir}" --status AUTO --step "Dispatch group {group}" --text "first-call model resolved to {model} at effort {launchEffort} (source: {source})" --reversibility n/a`,
 which produces, per `_shared/auto-decision-log.md`'s canonical entry schema:
-`- AUTO {time} — Dispatch group {group}: first-call model resolved to {model} (source: {source}). Reversibility: n/a.`
-where `{model}` and `{source}` are the `model` and `source` fields of the `resolve-profile.js
-capable` JSON, and `{group}` is the group's comma-joined issue list in brackets (e.g. `[42]` or
+`- AUTO {time} — Dispatch group {group}: first-call model resolved to {model} at effort {launchEffort} (source: {source}). Reversibility: n/a.`
+where `{model}`, `{launchEffort}` and `{source}` are that `profile`'s fields (a `null` `launchEffort` is written as `inherit`), and `{group}` is the group's comma-joined issue list in brackets (e.g. `[42]` or
 `[42,43]`). The timing matters: before the first call, the minted directory's `decisions.md` may
 hold only `/flow` Step 2.8's claim-log lines, and any other line makes `/flow` Step 3 treat the
 directory as a recovery (adoption case 3, `bin/lib/flow/preflight.js` via
@@ -138,11 +144,11 @@ template applied.
 
 **No handoff to capture from this call's report.** Dispatch Step 4 already minted this group's run directory before either call — `{minted-run-dir}` below is that same directory, substituted literally, on both calls. There is nothing to parse out of this call's prose report to construct the second call's input; the gate between calls (`two-call-gate.md`) reduces to reading the status line and `OUTCOME` (plus `NEXT_STEPS` on a handoff).
 
-**Before substituting this template**, the dispatching session decides whether to add `DISPATCH_HEADLESS=1 ` immediately before `/claude-tweaks:flow` on the invocation line below — a decision made once, here, never left in the copy-pasted text for the dispatched agent to reason about. Add it when this firing came from a scheduled Routine — a bare drain, or its deprecated `next` alias — with nobody present; omit it entirely (no `{headless-marker}` placeholder, no trailing space) when a human typed the command directly, in any form (bare, `next`, `#N`, or explicit-list) — the same human-present/Routine discriminator `SKILL.md`'s Next Actions render rule already uses. When set, it tells this call's Settle procedure (`settle-and-merge.md`) that nobody is present to read a Step 2.8 claim-contest stop, so a contest there self-reports via `_shared/headless-self-report.md`. It stays outside the fenced block below because only the dispatching session knows the firing form.
+**Before rendering this template**, the dispatching session decides whether to pass `--headless`, which adds `DISPATCH_HEADLESS=1 ` immediately before `/claude-tweaks:flow` on both invocation lines below. Add it when this firing came from a scheduled Routine — a bare drain, or its deprecated `next` alias — with nobody present; omit it when a human typed the command directly, in any form (bare, `next`, `#N`, or explicit-list) — the same human-present/Routine discriminator `SKILL.md`'s Next Actions render rule already uses. When set, it tells this call's Settle procedure (`settle-and-merge.md`) that nobody is present to read a Step 2.8 claim-contest stop, so a contest there self-reports via `_shared/headless-self-report.md`.
 
 A dispatched call is headless and cannot answer `interactive` prompts, so both calls pass `auto` explicitly; an explicit mode argument outranks the project's `auto-mode` policy, and the `autonomy` ceiling still bounds what the run may do. The `auto` suffix after the step list is independent of the `DISPATCH_HEADLESS=1 ` prefix before `/claude-tweaks:flow`.
 
-**Resume (#4588).** Only `dispatch resume` (`resume.md`) adds `RESUME_PR="{pr-url}" ` immediately before `/claude-tweaks:flow` on the first call's line; the second call and its continuations carry neither it nor `{resume-context}`. `dispatch resume` is typed by a human, so no call of a resume carries `DISPATCH_HEADLESS=1 `, exactly as for the explicit `#N` form above. The same session appends `{resume-context}` after the filled first-call template, never inside the fenced block, and omits it entirely outside resume: `Resuming stalled run {priorRunId} on PR {prUrl}; last logged phase: {section} {step}; open defects: {each}`. A null `lastPhase` renders `last logged phase: none recorded`; an empty `openDefects` renders `open defects: none recorded`. A first-call continuation keeps both, since the Continuation call inlines the template verbatim; `RESUME_PR` is then a no-op, because Step 2.8 returns the run's own claim as `alreadyOwned` before the `'stale'` branch.
+**Resume (#4588).** Only `dispatch resume` (`resume.md`) adds `RESUME_PR="{pr-url}" ` immediately before `/claude-tweaks:flow` on the first call's line; the second call and its continuations carry neither it nor `{resume-context}`. A typed `dispatch resume` comes from a human, so no call of a resume carries `DISPATCH_HEADLESS=1 `, exactly as for the explicit `#N` form above, with one exception: a sweep-originated resume (`answered-resumes.md`) in a headless firing carries it as any headless drain group does. `dispatch-prompt.js --resume-verdict {file}` adds that prefix and appends `{resume-context}` after the filled first-call template, never inside the fenced block, and omits it entirely outside resume: `Resuming stalled run {priorRunId} on PR {prUrl}; last logged phase: {section} {step}; open defects: {each}`. A null `lastPhase` renders `last logged phase: none recorded`; an empty `openDefects` renders `open defects: none recorded`. A first-call continuation keeps both, since the Continuation call inlines the template verbatim; `RESUME_PR` is then a no-op, because Step 2.8 returns the run's own claim as `alreadyOwned` before the `'stale'` branch.
 
 ```
 Task scope: Execute claude-tweaks build+test for this dispatch group of
@@ -153,44 +159,6 @@ Bundle (2+ issues) -> run
 once, comma-joined. Stop after the test gate -- do not proceed to review, polish, or wrap-up;
 a separate Task call handles those. If you reference any of these issue numbers in an
 intermediate commit message, write "refs #N" -- never "closes #N" or "fixes #N".
-
-Foreground execution (required): run `npm test` and every other long-running command in the
-foreground of this turn, output redirected to a file if it's long -- never with `run_in_background`.
-Never end this turn waiting on a background test run or fix-round you started this way -- you cannot
-count on being re-woken by either, and the run stalls silently when you are not (#1965). A nested
-`Agent` call (a lens-dispatch fan-out, a reproduction pair) launches async, and its completion
-notification reaches you only while this turn is alive (when the call instead returns the child's
-own reply, that child has reported and needs no wait): keep the turn alive with bounded
-foreground waits -- repeated `sleep 20` Bash calls, at most 60 (20 minutes) per wave of children
-(the set launched together), each wait logged as one line (what you wait on, the iteration against
-the bound, how many children are still pending), stopping as soon as every child's
-`<task-notification>` has arrived, never reading or tailing a running child's `output_file` --
-until every child has reported, and never end this turn with one child outstanding. With no `Agent`
-tool (`ToolSearch` finds none, deferred or otherwise), or a child still silent when the bound
-expires, judge that unit yourself, log the downgrade, and mark its findings `unconfirmed`; that
-child is abandoned and no longer counts as outstanding, so your final reply still ends with its
-usual `STATUS:` line. Ignore that child's result if it arrives later; if a late notification
-re-wakes you after your final reply, repeat your whole final reply unchanged -- the dispatcher keeps
-only your latest reply, so a bare `STATUS:` line would replace the report. A child that reports a
-failure (a `failed` notification, an API error, a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so
-it is not outstanding: handle it per the dispatching skill's own status handling where one exists,
-otherwise judge that unit yourself. Self-judging is for a read-only unit (a lens, a single read, a
-judge); a write-capable child (one that edits files) still silent at the bound is never redone
-in-session, because an abandoned child keeps running and may still write -- stop, and end with
-`STATUS: BLOCKED` naming that child and its unit. Before that stop, probe the worktree its prompt
-names, read-only: `git -C "{child-worktree}" rev-parse HEAD`, `git -C "{child-worktree}"
---no-optional-locks status --porcelain` and `git -C "{child-worktree}" --no-optional-locks diff HEAD`
-piped to `git hash-object --stdin` (a `fatal:` line fails the probe), against the previous probe (taken right after launching the wave, then at
-each bound; lacking one, the first bound's probe sets it and grants a window). Per wave, while any
-child shows a change, log one wait line and grant one more 60-wait window; stop when a whole window
-passes with no change, or at a ceiling of 3 windows (60 minutes) per wave, naming which fired (`no
-progress for one window` or `ceiling reached while progressing`) and every unchanged child. Children
-sharing a worktree progress together; a child whose prompt names no worktree counts as unchanged. A
-failed wait call counts as no wait but ends its window, and the probe runs as at any bound; a failed probe command counts
-as no change, never retried in another form. Read-only units keep the first-bound self-judge. A wait
-call that is blocked or fails is not a wait and never counts toward the bound; never retry it in
-another form (a longer, wrapped or backgrounded sleep): treat every child still outstanding as
-silent at the bound. A reply that ends without a tool call ends the turn.
 
 {context-pack}
 
@@ -252,7 +220,7 @@ The actual artifact is the runner-written pass stamp verifying HEAD (`verify.js 
 reports `verifiedHead: true`) and its `report.json` -- or a complete composed verdict
 (`suiteComposed.complete: true`), whose per-suite records carry their own report paths and are
 the same artifact. Both exist only when the test phase runs through `/claude-tweaks:test`. A raw
-`npm test` log is not that artifact: it leaves no stamp, and the second call then re-runs the
+test-command log is not that artifact: it leaves no stamp, and the second call then re-runs the
 full suite (#3661). Never report a result from narrative or memory of an earlier pass in this same
 call -- if `--stamp-status` does not report `verifiedHead: true` (no stamp, no complete
 composition, or neither verifies HEAD), re-run the test phase through `/claude-tweaks:test` once
@@ -300,13 +268,15 @@ pipeline's own steps still select their own models as usual. Resolve via
 `node "{plugin-root}/bin/resolve-profile.js" capable` (contract § Model Selection).
 ```
 
+Set the Agent tool's `effort` parameter on this call to the envelope's `profile.launchEffort` when it is not `null`, and leave it unset when it is.
+
 **The `model-ceiling` clamp (#3212).** `[Use: Capable]` above does not guarantee Opus: a project
 `model-ceiling: standard` policy value clamps `capable` back to `sonnet`
 (`plugin/bin/lib/model-profiles/profiles.js`'s `resolve()`, reporting `source: 'ceiling'` in
 `resolve-profile.js`'s JSON), an expected outcome the Context pack's per-group log line records.
 The later diff-size cap never applies: this invocation passes no `--diff-facts`.
 
-The Foreground execution clause above is backed by a mechanical check, not prose alone (#2429):
+Context pack item 7 is backed by a mechanical check, not prose alone (#2429):
 `sequential-execution.md`'s "The loop" section verifies this call's `STATUS:` line against the
 required pattern the moment the call returns, and treats a missing or malformed one as evidence
 of backgrounded/yielded execution.
@@ -314,20 +284,20 @@ of backgrounded/yielded execution.
 This call's own `decisions.md` writes (`log-decision.js`, called throughout `/flow`'s steps) are
 also what `sequential-execution.md`'s Heartbeat section (#2427) points a "still waiting?" user at
 for a long-running call like this one — a passive read of this group's run directory, never a
-reason to relax the Foreground execution clause above or have this call check in mid-turn.
+reason to relax Context pack item 7 or have this call check in mid-turn.
 
-The Foreground execution clause's nested-`Agent` rule (#2533, reworked in #3078) is restated in
-each template, because each template is inlined verbatim into a `Task()` prompt whose agent never
-sees the core file. `_shared/subagent-dispatch-core.md`'s Foreground Execution Discipline is the
-one definition of that rule, its keep-alive bound and its `unconfirmed` fallback.
-`_shared/dispatch-waiting.md` describes a top-level dispatcher waiting on its own children, not
-this agent, so it is not the basis for the clause.
+Context pack item 7 carries the nested-`Agent` rule (#2533, reworked in #3078) into each template
+through its `{context-pack}` placeholder, because each template is inlined verbatim into a
+`Task()` prompt whose agent never sees the core file. `_shared/subagent-dispatch-core.md`'s
+Foreground Execution Discipline is the one definition of that rule, its keep-alive bound and its
+`unconfirmed` fallback. `_shared/dispatch-waiting.md` describes a top-level dispatcher waiting on
+its own children, not this agent, so it is not the basis for item 7.
 
 ## Second call — review,polish,wrap-up (gated on the first call)
 
 **Only dispatch this call if the first call's status line was DONE or DONE_WITH_CONCERNS AND its OUTCOME was `build-test-ok`.** A `NEEDS_CONTEXT`/`BLOCKED` status, an `OUTCOME` of `build-test-failed`/`build-test-blocked`, or no parseable report at all means this second call is never dispatched — the first call's own agent settles its own failure (its template above instructs it to), and the dispatching session takes the terminal path in `two-call-gate.md` section 5 (fail-loud reporting plus the `/claude-tweaks:wrap-up {target} cleanup-only` teardown call). An `OUTCOME` of `already-shipped` (#2502) is a **third, distinct** case, neither success nor failure: this second call is never dispatched here either, but the reason is that the first call already finished the record (staged a Close proposal, closed any draft PR, released the claim) — there is nothing left to review, polish, or wrap up. Take `two-call-gate.md` §7's terminal path for it, never section 5's — §7 tears the worktree down the same way section 5 does, but never invokes Settle's failure classification, retry counting, or failure comment, and the dispatching session's own report surfaces the group as a no-op, not `pending-review`. An `OUTCOME` of `handoff` (#4027) is none of these: the first call stopped at a phase boundary past `/flow`'s context cap and is continued (Continuation call, below), and this gate reads the last continuation's report.
 
-**Substitute `{minted-run-dir}` into this call's command line**, exactly as `{issue list}` is substituted — not exported as a shell variable in the dispatching session, which would never reach the agent: a dispatched Task agent is a clean room that inherits no environment (`_shared/subagent-output-contract.md`'s Input Discipline). It is the same value substituted into the first call — dispatch Step 4 minted it once, before either call, so there is nothing to derive from the first call's report this time. Omit it and `/flow` starts a fresh run directory instead of resuming the one the first call adopted.
+**`{minted-run-dir}` rides this call's command line** (`dispatch-prompt.js` fills it), never exported as a shell variable in the dispatching session, which would never reach the agent: a dispatched Task agent is a clean room that inherits no environment (`_shared/subagent-output-contract.md`'s Input Discipline). It is the first call's value, minted once by dispatch Step 4, so nothing is derived from the first call's report; without it `/flow` starts a fresh run directory instead of resuming the one the first call adopted.
 
 This call's prompt names ONLY the record number(s) and the `PIPELINE_RUN_DIR` path above — never a summary of the first call's outcome. Both are resolution targets, not findings; that is what keeps the no-echo rule intact while the run itself is handed over. It is a fresh Task-tool dispatch with zero conversation history from the first call, and its own review step must re-derive its verdict from raw artifacts (the actual diff, the actual test-output artifact — via the same shape `bin/lib/dispatch/artifact-verdict.js`'s `deriveTestVerdict` pins as a testable invariant) rather than trusting any claim the first call made, including claims written to `decisions.md`, ledger entries, or staged proposals the first call produced. File-based state is readable across the two calls even though conversation history is not.
 
@@ -343,44 +313,6 @@ the command line is what makes this call resume that exact run rather than start
 _shared/run-dir-resolution.md's resolution order step 1 (the env var, its documented preferred
 path) feeding flow/SKILL.md Step 3's adopt-if-set branch. You need no other input about what
 the prior call did or found.
-
-Foreground execution (required): run `npm test` and every other long-running command in the
-foreground of this turn, output redirected to a file if it's long -- never with `run_in_background`.
-Never end this turn waiting on a background test run or fix-round you started this way -- you cannot
-count on being re-woken by either, and the run stalls silently when you are not (#1965). A nested
-`Agent` call (a lens-dispatch fan-out, a reproduction pair) launches async, and its completion
-notification reaches you only while this turn is alive (when the call instead returns the child's
-own reply, that child has reported and needs no wait): keep the turn alive with bounded
-foreground waits -- repeated `sleep 20` Bash calls, at most 60 (20 minutes) per wave of children
-(the set launched together), each wait logged as one line (what you wait on, the iteration against
-the bound, how many children are still pending), stopping as soon as every child's
-`<task-notification>` has arrived, never reading or tailing a running child's `output_file` --
-until every child has reported, and never end this turn with one child outstanding. With no `Agent`
-tool (`ToolSearch` finds none, deferred or otherwise), or a child still silent when the bound
-expires, judge that unit yourself, log the downgrade, and mark its findings `unconfirmed`; that
-child is abandoned and no longer counts as outstanding, so your final reply still ends with its
-usual `STATUS:` line. Ignore that child's result if it arrives later; if a late notification
-re-wakes you after your final reply, repeat your whole final reply unchanged -- the dispatcher keeps
-only your latest reply, so a bare `STATUS:` line would replace the report. A child that reports a
-failure (a `failed` notification, an API error, a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so
-it is not outstanding: handle it per the dispatching skill's own status handling where one exists,
-otherwise judge that unit yourself. Self-judging is for a read-only unit (a lens, a single read, a
-judge); a write-capable child (one that edits files) still silent at the bound is never redone
-in-session, because an abandoned child keeps running and may still write -- stop, and end with
-`STATUS: BLOCKED` naming that child and its unit. Before that stop, probe the worktree its prompt
-names, read-only: `git -C "{child-worktree}" rev-parse HEAD`, `git -C "{child-worktree}"
---no-optional-locks status --porcelain` and `git -C "{child-worktree}" --no-optional-locks diff HEAD`
-piped to `git hash-object --stdin` (a `fatal:` line fails the probe), against the previous probe (taken right after launching the wave, then at
-each bound; lacking one, the first bound's probe sets it and grants a window). Per wave, while any
-child shows a change, log one wait line and grant one more 60-wait window; stop when a whole window
-passes with no change, or at a ceiling of 3 windows (60 minutes) per wave, naming which fired (`no
-progress for one window` or `ceiling reached while progressing`) and every unchanged child. Children
-sharing a worktree progress together; a child whose prompt names no worktree counts as unchanged. A
-failed wait call counts as no wait but ends its window, and the probe runs as at any bound; a failed probe command counts
-as no change, never retried in another form. Read-only units keep the first-bound self-judge. A wait
-call that is blocked or fails is not a wait and never counts toward the bound; never retry it in
-another form (a longer, wrapped or backgrounded sleep): treat every child still outstanding as
-silent at the bound. A reply that ends without a tool call ends the turn.
 
 {context-pack}
 
@@ -543,6 +475,8 @@ how long the PR has already existed.
 pipeline's own steps select their own models as usual. Resolve via
 `node "{plugin-root}/bin/resolve-profile.js" standard` (contract § Model Selection).
 ```
+
+Set the Agent tool's `effort` parameter on this call to the envelope's `profile.launchEffort` when it is not `null`, and leave it unset when it is.
 
 Same mechanical status-line check applies to this call. The Auto-merge gate's `merge-check`
 clause this call runs (`settle-and-merge.md`'s Content judgment step) is backed by its own

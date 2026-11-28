@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const {
@@ -14,7 +15,7 @@ const {
 const { lintReport } = require('../../../plugin/bin/lib/tidy-report-lint/rules');
 
 function tmpRunDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'rtr-'));
+  return scratchDir('rtr-');
 }
 
 function writeSidecar(runDir, name, items) {

@@ -282,7 +282,7 @@ test('classifyDecisions: the widened class still fails closed (#3665 Review Focu
     'truncated canonical claim': REAL_SINGLE.slice(0, -30),
     'overlap skip, no claim': `## /flow\n${OVERLAP_SKIP}\n`,
     'degraded skip, no claim': `## /flow\n${DEGRADED_SKIP}\n`,
-    'dispatch-group line': `${REAL_SINGLE}- AUTO 18:50:00 — Dispatch group [2861]: first-call model resolved to claude-opus-5-5 (source: policy). Reversibility: n/a.\n`,
+    'dispatch-group line': `${REAL_SINGLE}- AUTO 18:50:00 — Dispatch group [2861]: first-call model resolved to claude-opus-5-5 at effort medium (source: policy). Reversibility: n/a.\n`,
     'contested claim': `${REAL_SINGLE}- AUTO 21:08:27 — Step 2.8: claim contested: #3004 held live by run 2026-10-16T190307-record-2734 (claimed 19:07:35, ttl 72h). Reversibility: n/a.\n`,
     'FAILED claim': `${REAL_SINGLE}- AUTO 08:00:00 — Step 2.8: claimed #3012 — FAILED (exit 4). Reversibility: n/a.\n`,
     'log-decision-located bookkeeping mention': `${REAL_SINGLE}- AUTO 18:43:35 — log-decision: Step 2.8 file-overlap warning check skipped as redundant. Reversibility: n/a.\n`,

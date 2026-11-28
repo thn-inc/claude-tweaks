@@ -531,6 +531,29 @@ test('loadImpactContext: the fetch runs once on a problem and the map is reloade
   assert.strictEqual(diffs[0].args[5], fetched);
 });
 
+test('loadImpactContext: a known ancestor skips the ancestry question for its own commit only, and never after a fetch (#5773)', () => {
+  const ancestorCalls = (calls) => calls.filter((c) => c.args[0] === 'merge-base');
+  const load = (extra, git = fakeGit()) => {
+    const ctx = loadImpactContext({ decl: declOf(), repoRoot: ROOT, commonDir: COMMON, execImpl: git.execImpl, fsImpl: fakeFs({ [MAP_PATH]: mapText() }), ...extra });
+    return { ctx, calls: git.calls };
+  };
+  const base = load({});
+  assert.strictEqual(ancestorCalls(base.calls).length, 1, 'default: asks git');
+  const known = load({ knownAncestor: SHA });
+  assert.strictEqual(ancestorCalls(known.calls).length, 0, 'the proven anchor is not asked again');
+  assert.strictEqual(known.ctx.problem, null);
+  assert.strictEqual(known.ctx.distance, 2, 'the age is still read');
+  const other = load({ knownAncestor: 'fedcba9876543210fedcba9876543210fedcba98' });
+  assert.strictEqual(ancestorCalls(other.calls).length, 1, 'a different commit is asked');
+  // The reload after impact.fetch (a shell command that can rewrite history) always asks git again.
+  const git = fakeGit();
+  loadImpactContext({
+    decl: declOf({ fetch: 'get-map', maxAgeCommits: 1 }), repoRoot: ROOT, commonDir: COMMON, execImpl: git.execImpl,
+    fsImpl: fakeFs({ [MAP_PATH]: mapText() }), runFetch: () => ({ ran: true, exitCode: 0, durationMs: 1 }), knownAncestor: SHA,
+  });
+  assert.strictEqual(ancestorCalls(git.calls).length, 1, 'only the reload asks');
+});
+
 test('loadImpactContext: a failed fetch keeps the original problem; no problem or no fetch command never fetches', () => {
   const commands = [];
   const failing = (command) => { commands.push(command); return { ran: true, exitCode: 3, durationMs: 1 }; };

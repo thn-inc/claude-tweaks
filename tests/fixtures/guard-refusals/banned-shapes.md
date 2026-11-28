@@ -144,3 +144,59 @@ test main = main
 ```bash
 cat /Users/me/My\ Docs/a.md
 ```
+
+## git-C-dot
+
+```bash
+git -C . rev-parse --short HEAD
+```
+
+## git-C-glob
+
+```bash
+git -C /abs/wt grep -c X -- tools/*.js
+```
+
+## git-chained-status
+
+```bash
+git merge-base --is-ancestor HEAD HEAD; echo exit=$?
+```
+
+## git-word-argument
+
+```bash
+git log --oneline -3 -- git
+```
+
+## heredoc-brace-quote
+
+```bash
+node /abs/bin/run.js a <<'EOF'
+const cfg = { name: 'x' };
+EOF
+```
+
+## git-text-late-var
+
+```bash
+pwd; F="README.md"; grep -c "digit" "$F"
+```
+
+## quoted-backslash-space
+
+```bash
+grep -c "a\ b" README.md
+```
+
+## equals-word
+
+```bash
+grep -c "x =require" README.md
+```
+
+## unterminated-quote
+
+```bash
+grep -c "^# " "README.md
+```

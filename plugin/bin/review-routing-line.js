@@ -7,7 +7,7 @@
 // The composer (bin/lib/log-decision/review-routing.js) fixes the text, so the literal tokens /claude-tweaks:release
 // Step 3 classifies by are never hand-typed. The write is log-decision.js's, under the `## /review` section.
 // Exit 0 appended (line echoed to stdout); 2 malformed invocation or an invalid route/severity/flag combination; 3 run dir
-// missing or not anchored under the main checkout (a worktree-local shadow — _shared/pipeline-run-dir.md), from log-decision.js.
+// missing or not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/ — _shared/pipeline-run-dir.md), from log-decision.js.
 'use strict';
 
 const { composeRoutingLine, ROUTING_STEP } = require('./lib/log-decision/review-routing');

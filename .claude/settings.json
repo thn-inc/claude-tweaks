@@ -1,7 +1,4 @@
 {
-  "worktree": {
-    "baseRef": "head"
-  },
   "permissions": {
     "allow": [
       "Read(node_modules/**)"
@@ -28,6 +25,9 @@
       "Read(~/.config/gh/hosts.yml)"
     ]
   },
+  "worktree": {
+    "baseRef": "head"
+  },
   "enabledPlugins": {
     "superpowers@claude-plugins-official": true,
     "code-simplifier@claude-plugins-official": true,
@@ -40,5 +40,15 @@
         "repo": "pbakaus/impeccable"
       }
     }
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "d=\"$CLAUDE_PROJECT_DIR/tools/direct-test-run-guard\"; [ -r \"$d.sh\" ] && command . \"$d.sh\"; node \"$d.js\"; exit 0", "timeout": 10 }
+        ]
+      }
+    ]
   }
 }

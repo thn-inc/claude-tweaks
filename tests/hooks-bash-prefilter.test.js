@@ -49,6 +49,9 @@ const DIFFERENTIAL_CORPUS = [
   'A=x>tracked.js', '\\\nA=x>tracked.js',
   // #4281: a backslash-newline inside a program word, which bash and the parsers join.
   'g\\\nit commit -m x', 't\\\nee tracked.js', '"g\\\nit" commit -m x',
+  // #4448: a write or git command behind a stripped prefix.
+  'X=1 cp a.txt b.txt', 'sudo tee out.txt', 'x+=1 git commit -m x', 'sudo git commit -m x',
+  'time cp a.txt b.txt', 'nohup git commit -m x', 'env -C sub cp a.txt b.txt', 'builtin cd sub; cp a.txt b.txt',
   // #4548: name-based process kills (sole-trigger witnesses for each word first), then the case,
   // pgrep-fed, filter and wrapper shapes.
   'pkill node', 'killall node', 'taskkill /F /IM node.exe', 'kill -Name node', 'stop-process -name node',
@@ -123,6 +126,11 @@ for (const command of [
   'pkill node', 'killall node', 'taskkill /F /IM node.exe', 'TASKKILL /IM node.exe', 'Stop-process -Name node',
   'KILLALL node', "sh -c 'pkill node'", 'bash -c "killall node"', 'cmd /c taskkill /IM node.exe',
   'powershell -c "Stop-Process -Name node"', 'pwsh -Command "Get-Process node | Stop-Process"',
+  // #6143: gh pr ready|merge reach the handler through a pre-tool-use-only rule, not GUARDED_PROGRAM_WORDS.
+  'gh pr merge 123 --squash', 'gh pr ready 7', 'cd x && gh pr merge 5', '/usr/local/bin/gh.exe pr merge 5',
+  'GH pr merge 5', 'GH.EXE pr ready 5', 'cd $X && gh pr merge 5', 'gh pr merge -sb x 5', 'gh pr merge -R=o/r 5', 'env -C $X gh pr merge 5',
+  // #6143 review: a GH_REPO/GH_HOST assignment prefix and --disable-auto still reach the handler.
+  'GH_REPO=o/r gh pr merge 5', 'GH_HOST=ghe.example.com GH_REPO=o/r gh pr ready 5', 'export GH_REPO=o/r; gh pr merge 5', 'gh pr merge --disable-auto 5',
 ]) {
   test(`pre-tool-use runs the full handler for: ${command}`, () => {
     assert.strictEqual(shouldRunFull('pre-tool-use', bash(command)), true);
@@ -140,7 +148,7 @@ for (const command of [
 }
 
 for (const command of ['echo hi', 'ls -la', 'node script.js', 'for i in 1; do echo probe-loop-$i; done',
-  'echo digit gitk sedate envoy', 'gh issue view 3074', '']) {
+  'echo digit gitk sedate envoy', 'gh issue view 3074', 'gh pr view 5', 'gh pr list --state open', '']) {
   test(`pre-tool-use skips: ${JSON.stringify(command)}`, () => {
     assert.strictEqual(shouldRunFull('pre-tool-use', bash(command)), false);
   });
@@ -327,7 +335,7 @@ test('earlyGate governs user-prompt-submit by a raw substring test', () => {
 // #2783 M3: every failing Bash call fires PostToolUseFailure, but the handler
 // only ever acts on the harness worktree-isolation refusal text.
 const REFUSAL = 'This session is isolated in the worktree /w, but this command cannot be shown not to be git. Refusing to run it — a worktree-isolated session\'s git operations must target its own worktree.';
-test('#2783: earlyGate skips a post-tool-use-failure payload unless it carries the harness refusal text', () => {
+test('#2783/#4523: earlyGate skips a post-tool-use-failure payload unless its parsed error begins with a noun and carries the harness refusal signature', () => {
   const failed = JSON.stringify({ ...bash('git status'), error: 'Command failed with exit code 1' });
   assert.deepStrictEqual(earlyGate('post-tool-use-failure', () => failed), { raw: failed, skip: true });
   const refused = JSON.stringify({ ...bash('echo hi'), error: REFUSAL });
@@ -335,6 +343,8 @@ test('#2783: earlyGate skips a post-tool-use-failure payload unless it carries t
   const escaped = refused.replace('Refusing', '\\u0052efusing');
   assert.strictEqual(earlyGate('post-tool-use-failure', () => escaped).skip, false, 'a JSON-escaped spelling still reaches the handler');
   assert.deepStrictEqual(earlyGate('post-tool-use-failure', () => 'not json'), { raw: 'not json', skip: true });
+  // The raw-payload branch is gone (#4523): unparseable input skips even when it carries a full refusal.
+  assert.strictEqual(earlyGate('post-tool-use-failure', () => 'not json ' + REFUSAL).skip, true, 'unparseable input never reaches the handler');
 });
 
 // ── e2e: bin/hooks.js's early exit (#3074) ───────────────────────────────────

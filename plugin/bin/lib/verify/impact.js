@@ -21,7 +21,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 const { globToRegExp } = require('../issues/blast-radius');
 const { GIT_COMMON_DIR_TOKEN } = require('./declaration');
 const { lstatType } = require('../path-guard');
@@ -30,6 +30,9 @@ const { LARGE_MAX_BUFFER_BYTES } = require('../shared-primitives');
 const IMPACT_MAP_VERSION = 1;
 const DEFAULT_MAP_NAME = 'claude-tweaks-test-impact.json';
 const KINDS = ['f', 's', 'd', 'c'];
+const DRIFT_REFRESH_TESTS = 50;
+const REFRESH_WINDOW_MS = 10 * 60 * 1000;
+const REFRESH_MARKER_NAME = 'claude-tweaks-test-impact.refresh-attempt';
 const SHA_RE = /^[0-9a-f]{40}$/;
 
 const sortedUnique = (list) => [...new Set(list)].sort();
@@ -214,7 +217,7 @@ function listDriftTests({ decl, repoRoot, commit, execImpl }) {
   return sortedUnique(out.split('\0').filter((p) => p !== '' && patterns.some((re) => re.test(p))));
 }
 
-function readMap({ decl, mapPath, repoRoot, execImpl, fsImpl }) {
+function readMap({ decl, mapPath, repoRoot, execImpl, fsImpl, knownAncestor = null }) {
   let parsed;
   try {
     parsed = parseImpactMap(fsImpl.readFileSync(mapPath, 'utf8'));
@@ -226,10 +229,14 @@ function readMap({ decl, mapPath, repoRoot, execImpl, fsImpl }) {
   let distance = null;
   if (parsed && parsed.ok) {
     const commit = parsed.map.commit;
-    try {
-      git(execImpl, repoRoot, ['merge-base', '--is-ancestor', '--end-of-options', commit, 'HEAD']);
+    if (knownAncestor !== null && commit === knownAncestor) {
       isAncestor = true;
-    } catch { /* not an ancestor, or not a commit here */ }
+    } else {
+      try {
+        git(execImpl, repoRoot, ['merge-base', '--is-ancestor', '--end-of-options', commit, 'HEAD']);
+        isAncestor = true;
+      } catch { /* not an ancestor, or not a commit here */ }
+    }
     if (isAncestor) {
       try {
         const count = git(execImpl, repoRoot, ['rev-list', '--count', '--end-of-options', `${commit}..HEAD`]).trim();
@@ -246,13 +253,37 @@ function readMap({ decl, mapPath, repoRoot, execImpl, fsImpl }) {
   };
 }
 
+// True when a drift-refresh attempt marker exists and is younger than REFRESH_WINDOW_MS; an unreadable marker is "no attempt".
+function recentRefreshAttempt({ markerPath, fsImpl, now }) {
+  try {
+    const age = now - fsImpl.statSync(markerPath).mtimeMs;
+    return age >= 0 && age < REFRESH_WINDOW_MS; // a future mtime (clock correction) never blocks
+  } catch {
+    return false;
+  }
+}
+
 // The impact context scope.js's selectScope reads, plus what the report shows.
 // A map problem with a declared impact.fetch runs `runFetch(command)` once
 // (→ {ran, exitCode, durationMs, timedOut, signal}); only a fetch that exits
 // 0 reloads the map, so a failed fetch leaves the original problem standing.
-function loadImpactContext({ decl, repoRoot, commonDir, execImpl = execFileSync, fsImpl = fs, runFetch = null }) {
+// `knownAncestor` (optional sha): a commit the caller already proved is an ancestor of HEAD, with only git reads
+// since (#5773). The FIRST map read trusts it for a map commit equal to it; the reload after impact.fetch (a shell
+// command that can rewrite history) always asks git again. Absent, every map read asks git as before.
+// A usable map whose drift exceeds DRIFT_REFRESH_TESTS runs the fetch once too (#5947), at most once per
+// REFRESH_WINDOW_MS per checkout (a marker in the git common dir, shared by every worktree, written before the
+// fetch so a failed or timed-out attempt counts); the threshold and the adoption comparison count only the drift
+// selection would actually run (known to the map, present at HEAD); the reload is adopted only if usable with no
+// more such drift, else the current map stands.
+// The drift files selectImpactTests would actually run: known to the map and present at HEAD (null = unknown listing).
+function selectableDriftCount(drift, map, headTests) {
+  const atHead = headTests === null ? null : new Set(headTests);
+  return drift.filter((t) => Object.hasOwn(map.tests, t) && (atHead === null || atHead.has(t))).length;
+}
+
+function loadImpactContext({ decl, repoRoot, commonDir, execImpl = execFileSync, fsImpl = fs, runFetch = null, knownAncestor = null, now = Date.now() }) {
   const mapPath = resolveMapPath({ decl, commonDir, repoRoot });
-  let state = readMap({ decl, mapPath, repoRoot, execImpl, fsImpl });
+  let state = readMap({ decl, mapPath, repoRoot, execImpl, fsImpl, knownAncestor });
   let fetch = null;
   if (state.problem && decl.impact.fetch && runFetch) {
     fetch = runFetch(decl.impact.fetch);
@@ -261,12 +292,28 @@ function loadImpactContext({ decl, repoRoot, commonDir, execImpl = execFileSync,
   // Only a usable map has a drift to read; an unreadable one fails closed like the head-test listing.
   let driftTests = [];
   let driftProblem = null;
+  const headTests = listHeadTests({ decl, repoRoot, execImpl, fsImpl });
   if (!state.problem) {
-    const drift = listDriftTests({ decl, repoRoot, commit: state.mapCommit, execImpl });
+    let drift = listDriftTests({ decl, repoRoot, commit: state.mapCommit, execImpl });
+    const markerPath = path.join(commonDir, REFRESH_MARKER_NAME);
+    if (drift !== null && selectableDriftCount(drift, state.map, headTests) > DRIFT_REFRESH_TESTS && decl.impact.fetch && runFetch && fetch === null
+      && !recentRefreshAttempt({ markerPath, fsImpl, now })) {
+      try { fsImpl.writeFileSync(markerPath, String(now)); } catch { /* an unwritable marker never blocks the load */ }
+      fetch = runFetch(decl.impact.fetch);
+      if (fetch.exitCode === 0) {
+        const next = readMap({ decl, mapPath, repoRoot, execImpl, fsImpl });
+        if (!next.problem) {
+          const nextDrift = listDriftTests({ decl, repoRoot, commit: next.mapCommit, execImpl });
+          if (nextDrift !== null && selectableDriftCount(nextDrift, next.map, headTests) <= selectableDriftCount(drift, state.map, headTests)) {
+            state = next;
+            drift = nextDrift;
+          }
+        }
+      }
+    }
     if (drift === null) driftProblem = 'map-drift-unreadable';
     else driftTests = drift;
   }
-  const headTests = listHeadTests({ decl, repoRoot, execImpl, fsImpl });
   // A listing that succeeded but names no test file (a sparse checkout, a pathspec oddity) would make
   // every reader "absent at HEAD" and a changed test select nothing — it fails closed like a failed one.
   let headProblem = null;
@@ -300,8 +347,35 @@ function lazyImpactContext(load) {
   };
 }
 
+// impact.fetch downloads a ready map (never a trace): at most once per run, bounded, its output
+// ignored (never piped, so no maxBuffer can kill a verbose fetch). The result keeps its exit code,
+// time, timeout and signal for the report.
+function runImpactFetch(command, cwd, { spawnImpl = spawnSync } = {}) {
+  const startedMs = Date.now();
+  const r = spawnImpl(command, { shell: true, cwd, timeout: 120000, stdio: 'ignore', windowsHide: true });
+  return {
+    ran: true,
+    exitCode: typeof r.status === 'number' ? r.status : null,
+    durationMs: Date.now() - startedMs,
+    timedOut: Boolean(r.error && r.error.code === 'ETIMEDOUT'),
+    signal: r.signal || null,
+  };
+}
+
+// The lazily loaded impact context for the checkout at `cwd`. `verify.js --scope` and a plain local
+// `npm test` (tools/run-tests.js, #5319) both build it here, so the two always select alike. A cwd
+// outside any git checkout reads as the `map-unlocatable` problem, which fails selection closed.
+// `runFetch(command, repoRoot)` runs impact.fetch; `locate` and `load` are seams for tests. `knownAncestor` is
+// loadImpactContext's optional proven-ancestor sha, passed on only when set.
+function checkoutImpactContext({ decl, cwd, runFetch = runImpactFetch, locate = gitLocations, load = loadImpactContext, knownAncestor = null }) {
+  const where = locate({ cwd });
+  return lazyImpactContext(() => (where === null
+    ? { map: null, problem: 'map-unlocatable', headTests: [], driftTests: [], mapPath: null, mapCommit: null, mapDirty: null, distance: null, fetch: null }
+    : load({ decl, ...where, ...(knownAncestor === null ? {} : { knownAncestor }), runFetch: (command) => runFetch(command, where.repoRoot) })));
+}
+
 module.exports = {
-  IMPACT_MAP_VERSION, DEFAULT_MAP_NAME, KINDS,
+  IMPACT_MAP_VERSION, DEFAULT_MAP_NAME, KINDS, DRIFT_REFRESH_TESTS, REFRESH_WINDOW_MS, REFRESH_MARKER_NAME,
   encodeImpactMap, parseImpactMap, under, selectImpactTests, mapProblem,
-  gitLocations, resolveMapPath, loadImpactContext, lazyImpactContext,
+  gitLocations, resolveMapPath, loadImpactContext, lazyImpactContext, runImpactFetch, checkoutImpactContext,
 };

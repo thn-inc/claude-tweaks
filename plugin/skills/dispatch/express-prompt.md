@@ -1,6 +1,6 @@
 # Dispatch — Express Lane Task() Prompt Templates (#4025)
 
-Referenced by `skills/dispatch/SKILL.md` Step 5 (the express call) and Step 3's loop termination (the post-merge sample review call). The same rules as `task-prompt.md` bind both templates: inline each fenced block verbatim into its own `Task()` call, never paraphrased and never both in one call, substituting its placeholders. `{context-pack}` is `task-prompt.md`'s Context pack section, resolved and substituted as that section directs. Neither of Templates A/B/C fits an agent that runs a procedure rather than returning findings, so these are their own minimal templates, as `task-prompt.md`'s are: minimal input, the literal output format inlined, and the four-value status line.
+Referenced by `skills/dispatch/SKILL.md` Step 5 (the express call) and Step 3's loop termination (the post-merge sample review call). `task-prompt.md`'s template rules bind both templates: inline each fenced block verbatim into its own `Task()` call, never paraphrased and never both in one call. Unlike `task-prompt.md`'s, its placeholders are substituted by hand, since `dispatch-prompt.js` renders only that file (#4735). `{context-pack}` is `task-prompt.md`'s Context pack section, each numbered item resolved as it states (item 3's `{policy-values}`: its command's five values as `key=value`, joined by `, `). Neither of Templates A/B/C fits an agent that runs a procedure rather than returning findings, so these are their own minimal templates, as `task-prompt.md`'s are: minimal input, the literal output format inlined, and the four-value status line.
 
 ## Express call
 
@@ -27,44 +27,6 @@ On outcome `blocked`, before reporting, run Step 6's Settle in
 special case (a `DISPATCH_HEADLESS=1` first line on this prompt is the marker it reads);
 otherwise its numbered steps 1-7, with `--reason "failed: express-{step}"`, where `{step}` is the
 bold name of the Procedure step that stopped, lowercased and hyphenated (e.g. `check`, `pr`).
-
-Foreground execution (required): run `npm test` and every other long-running command in the
-foreground of this turn, output redirected to a file if it's long -- never with `run_in_background`.
-Never end this turn waiting on a background test run or fix-round you started this way -- you cannot
-count on being re-woken by either, and the run stalls silently when you are not (#1965). A nested
-`Agent` call (a lens-dispatch fan-out, a reproduction pair) launches async, and its completion
-notification reaches you only while this turn is alive (when the call instead returns the child's
-own reply, that child has reported and needs no wait): keep the turn alive with bounded
-foreground waits -- repeated `sleep 20` Bash calls, at most 60 (20 minutes) per wave of children
-(the set launched together), each wait logged as one line (what you wait on, the iteration against
-the bound, how many children are still pending), stopping as soon as every child's
-`<task-notification>` has arrived, never reading or tailing a running child's `output_file` --
-until every child has reported, and never end this turn with one child outstanding. With no `Agent`
-tool (`ToolSearch` finds none, deferred or otherwise), or a child still silent when the bound
-expires, judge that unit yourself, log the downgrade, and mark its findings `unconfirmed`; that
-child is abandoned and no longer counts as outstanding, so your final reply still ends with its
-usual `STATUS:` line. Ignore that child's result if it arrives later; if a late notification
-re-wakes you after your final reply, repeat your whole final reply unchanged -- the dispatcher keeps
-only your latest reply, so a bare `STATUS:` line would replace the report. A child that reports a
-failure (a `failed` notification, an API error, a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so
-it is not outstanding: handle it per the dispatching skill's own status handling where one exists,
-otherwise judge that unit yourself. Self-judging is for a read-only unit (a lens, a single read, a
-judge); a write-capable child (one that edits files) still silent at the bound is never redone
-in-session, because an abandoned child keeps running and may still write -- stop, and end with
-`STATUS: BLOCKED` naming that child and its unit. Before that stop, probe the worktree its prompt
-names, read-only: `git -C "{child-worktree}" rev-parse HEAD`, `git -C "{child-worktree}"
---no-optional-locks status --porcelain` and `git -C "{child-worktree}" --no-optional-locks diff HEAD`
-piped to `git hash-object --stdin` (a `fatal:` line fails the probe), against the previous probe (taken right after launching the wave, then at
-each bound; lacking one, the first bound's probe sets it and grants a window). Per wave, while any
-child shows a change, log one wait line and grant one more 60-wait window; stop when a whole window
-passes with no change, or at a ceiling of 3 windows (60 minutes) per wave, naming which fired (`no
-progress for one window` or `ceiling reached while progressing`) and every unchanged child. Children
-sharing a worktree progress together; a child whose prompt names no worktree counts as unchanged. A
-failed wait call counts as no wait but ends its window, and the probe runs as at any bound; a failed probe command counts
-as no change, never retried in another form. Read-only units keep the first-bound self-judge. A wait
-call that is blocked or fails is not a wait and never counts toward the bound; never retry it in
-another form (a longer, wrapped or backgrounded sleep): treat every child still outstanding as
-silent at the bound. A reply that ends without a tool call ends the turn.
 
 {context-pack}
 
@@ -113,7 +75,7 @@ firings vs 0 of 3 at Standard): this call builds, tests and merges. Resolve via
 
 ## Post-merge sample review call
 
-Dispatched from this session at Step 3's loop termination, one sampled PR at a time and never in parallel, running `_shared/express-lane.md`'s Post-merge sampling. This session runs that section's step 1 (`express-lane.js samples`, whose exit 1 or 2 means no sweep this firing) and, per sampled PR, step 2's `mergeSha: null` case (name the PR in this firing's report; mint and dispatch nothing) and its mint. The minted sampling run dir is `{minted-run-dir}` here and in the Context pack, resolved for it; `task-prompt.md`'s #3212 model log line is a first-call record and is not written for this call. Substitute `{pr}`, `{merge-sha}`, `{records}` (the entry's `records`, comma-joined), `{minted-run-dir}`, `{run-root}` (the main checkout, `$RUN_ROOT` per `_shared/pipeline-run-dir.md`), `{plugin-root}` and `{context-pack}`. On its return, the `sequential-execution.md` status-line check applies; any reply but `DONE`/`DONE_WITH_CONCERNS` with `OUTCOME: reviewed` names the PR in this firing's report as left for the next sweep, never retried this firing, and a `reviewed` reply's `FINDINGS` line, filed record numbers included, goes into this firing's report. Whatever it reports, this session then runs that section's close-run for `{minted-run-dir}`; a refusal because the call died before logging anything leaves the dir to the reconciler's orphaned-mint sweep.
+Dispatched from this session at Step 3's loop termination, one sampled PR at a time and never in parallel, running `_shared/express-lane.md`'s Post-merge sampling. A foreground express merge's own-PR check (#4365: `SKILL.md` Step 5's `#N`/`#N,#M` forms, or `/claude-tweaks:flow`'s `express-entry.md`) dispatches it too, for its one PR: there step 1 is `samples --pr {pr}`, and "this firing's report" below is that session's own report (in `/claude-tweaks:flow`, a line after the express note). This session runs that section's step 1 (`express-lane.js samples`, whose exit 1 or 2 means no sweep this firing) and, per sampled PR, step 2's `mergeSha: null` case (name the PR in this firing's report; mint and dispatch nothing) and its mint. The minted sampling run dir is `{minted-run-dir}` here and in the Context pack, resolved for it; `task-prompt.md`'s #3212 model log line is a first-call record and is not written for this call. Substitute `{pr}`, `{merge-sha}`, `{records}` (the entry's `records`, comma-joined), `{minted-run-dir}`, `{run-root}` (the main checkout, `$RUN_ROOT` per `_shared/pipeline-run-dir.md`), `{plugin-root}` and `{context-pack}`. On its return, the `sequential-execution.md` status-line check applies; any reply but `DONE`/`DONE_WITH_CONCERNS` with `OUTCOME: reviewed` names the PR in this firing's report as left for the next sweep, never retried this firing, and a `reviewed` reply's `FINDINGS` line, filed record numbers included, goes into this firing's report. Whatever it reports, this session then runs that section's close-run for `{minted-run-dir}`; a refusal because the call died before logging anything leaves the dir to the reconciler's orphaned-mint sweep.
 
 ```
 Task scope: Review merged express-lane PR #{pr} (merge commit {merge-sha}; records {records})
@@ -127,44 +89,6 @@ every `${CLAUDE_PLUGIN_ROOT}` as `{plugin-root}`. File every confirmed finding w
 last paragraph says.
 Of its last bullet, log the posted review's `AUTO` line but do not run `close-run`: the
 dispatching session closes the run dir after you report.
-
-Foreground execution (required): run `npm test` and every other long-running command in the
-foreground of this turn, output redirected to a file if it's long -- never with `run_in_background`.
-Never end this turn waiting on a background test run or fix-round you started this way -- you cannot
-count on being re-woken by either, and the run stalls silently when you are not (#1965). A nested
-`Agent` call (a lens-dispatch fan-out, a reproduction pair) launches async, and its completion
-notification reaches you only while this turn is alive (when the call instead returns the child's
-own reply, that child has reported and needs no wait): keep the turn alive with bounded
-foreground waits -- repeated `sleep 20` Bash calls, at most 60 (20 minutes) per wave of children
-(the set launched together), each wait logged as one line (what you wait on, the iteration against
-the bound, how many children are still pending), stopping as soon as every child's
-`<task-notification>` has arrived, never reading or tailing a running child's `output_file` --
-until every child has reported, and never end this turn with one child outstanding. With no `Agent`
-tool (`ToolSearch` finds none, deferred or otherwise), or a child still silent when the bound
-expires, judge that unit yourself, log the downgrade, and mark its findings `unconfirmed`; that
-child is abandoned and no longer counts as outstanding, so your final reply still ends with its
-usual `STATUS:` line. Ignore that child's result if it arrives later; if a late notification
-re-wakes you after your final reply, repeat your whole final reply unchanged -- the dispatcher keeps
-only your latest reply, so a bare `STATUS:` line would replace the report. A child that reports a
-failure (a `failed` notification, an API error, a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so
-it is not outstanding: handle it per the dispatching skill's own status handling where one exists,
-otherwise judge that unit yourself. Self-judging is for a read-only unit (a lens, a single read, a
-judge); a write-capable child (one that edits files) still silent at the bound is never redone
-in-session, because an abandoned child keeps running and may still write -- stop, and end with
-`STATUS: BLOCKED` naming that child and its unit. Before that stop, probe the worktree its prompt
-names, read-only: `git -C "{child-worktree}" rev-parse HEAD`, `git -C "{child-worktree}"
---no-optional-locks status --porcelain` and `git -C "{child-worktree}" --no-optional-locks diff HEAD`
-piped to `git hash-object --stdin` (a `fatal:` line fails the probe), against the previous probe (taken right after launching the wave, then at
-each bound; lacking one, the first bound's probe sets it and grants a window). Per wave, while any
-child shows a change, log one wait line and grant one more 60-wait window; stop when a whole window
-passes with no change, or at a ceiling of 3 windows (60 minutes) per wave, naming which fired (`no
-progress for one window` or `ceiling reached while progressing`) and every unchanged child. Children
-sharing a worktree progress together; a child whose prompt names no worktree counts as unchanged. A
-failed wait call counts as no wait but ends its window, and the probe runs as at any bound; a failed probe command counts
-as no change, never retried in another form. Read-only units keep the first-bound self-judge. A wait
-call that is blocked or fails is not a wait and never counts toward the bound; never retry it in
-another form (a longer, wrapped or backgrounded sleep): treat every child still outstanding as
-silent at the bound. A reply that ends without a tool call ends the turn.
 
 {context-pack}
 

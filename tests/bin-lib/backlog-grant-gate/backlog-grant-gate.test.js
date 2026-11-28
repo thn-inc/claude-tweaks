@@ -8,7 +8,14 @@ const {
   computePhaseA,
   resolveSubIssueNumbers,
   computeOutlook,
+  fetchAllRecords,
 } = require('../../../plugin/bin/lib/backlog-grant-gate/backlog-grant-gate');
+const recordSnapshot = require('../../../plugin/bin/lib/issues/record-snapshot');
+const { GH_TIMEOUT_MS, GH_BATCH_TIMEOUT_MS } = require('../../../plugin/bin/lib/shared-primitives');
+
+// computeOutlook grades trust on the real clock, so a closed fixture must sit
+// inside trustRows' default 30-day evaluation window to form a cell.
+const CLOSED_20_DAYS_AGO = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString();
 
 function issue(number, overrides = {}) {
   return {
@@ -25,7 +32,7 @@ test('filterCandidates drops human-filed, already-granted, in-progress, and bloc
     issue(4, { labels: ['by:code-health', 'ready', 'bot:in-progress'] }), // claimed, dropped
     issue(5, { labels: ['by:code-health', 'ready'], body: 'Blocked by #50' }), // open blocker, dropped
     issue(6, { labels: ['by:code-health', 'ready'], body: 'Blocked by #999' }), // closed/unknown blocker, survives
-  ], openNumbers);
+  ], openNumbers, new Map());
   assert.deepStrictEqual(candidates.map((c) => c.number), [1, 6]);
 });
 
@@ -166,7 +173,9 @@ test('#4505: resolveSubIssueNumbers (native) sends only the owner/repo calls thr
 
 // --- computeOutlook: the full Step 0 -> Step 2 Phase A pipeline ---
 
-// computeOutlook's three gh fetches, keyed by args[3]. There is deliberately
+// computeOutlook's three gh fetches, keyed by args[3], plus the two
+// author-association enrichment calls (`repo view`, `api graphql`) that run
+// only when a record carries an `Origin:` line. There is deliberately
 // no `--state open` case: the open-issue set the Blocked-by filter reads is
 // derived from the `--state all` rows' own `state` field, never a second fetch.
 function ghRunner({ candidates = [], records = [], parents = [] }) {
@@ -174,6 +183,8 @@ function ghRunner({ candidates = [], records = [], parents = [] }) {
     if (args[3] === 'ready') return JSON.stringify(candidates);
     if (args[3] === 'parent-issue') return JSON.stringify(parents);
     if (args[3] === 'all') return JSON.stringify(records);
+    if (args[0] === 'repo' && args[1] === 'view') return JSON.stringify({ owner: { login: 'o' }, name: 'r' });
+    if (args[0] === 'api' && args[1] === 'graphql') return JSON.stringify({ data: { repository: {} } });
     throw new Error(`unexpected gh call: ${JSON.stringify(args)}`);
   };
 }
@@ -191,7 +202,7 @@ test('computeOutlook: ceiling clears but zero candidates are eligible -> zero-el
   const runner = ghRunner({ candidates });
   const gitRunner = () => '';
   const out = computeOutlook(
-    { ceiling: 'unattended', grantOriginationEnabled: true, windowDays: 14 },
+    { ceiling: 'unattended', grantOriginationEnabled: true, trust: { 'trust-revert-window-days': 14 } },
     { limit: 100, workLinks: 'body-text', integrationBranch: 'main', runner, gitRunner },
   );
   assert.strictEqual(out.shortcut, 'zero-eligible');
@@ -204,12 +215,12 @@ test('computeOutlook: a clean-trust class produces an eligible candidate (matche
   // 8 closed, approved, non-batch records in the same class -> clean cell
   // (trust.js: MIN_SAMPLES=8, MIN_VERDICTS=5, no changesRequested/negativeEvidence/followUps).
   const records = Array.from({ length: 8 }, (_, i) => issue(100 + i, {
-    labels: ['by:code-health', 'risk:low', 'demo:approved'], state: 'CLOSED', closedAt: '2026-01-01T00:00:00Z',
+    labels: ['by:code-health', 'risk:low', 'demo:approved'], state: 'CLOSED', closedAt: CLOSED_20_DAYS_AGO,
   }));
   const runner = ghRunner({ candidates, records });
   const gitRunner = () => '';
   const out = computeOutlook(
-    { ceiling: 'unattended', grantOriginationEnabled: true, windowDays: 14 },
+    { ceiling: 'unattended', grantOriginationEnabled: true, trust: { 'trust-revert-window-days': 14 } },
     { limit: 100, workLinks: 'body-text', integrationBranch: 'main', runner, gitRunner },
   );
   assert.strictEqual(out.shortcut, null);
@@ -224,19 +235,209 @@ test('computeOutlook: a sub-issue is excluded from trustRows\' cell totals (neve
   // 8 real closed+approved records, plus one decomposed sub-issue that would
   // otherwise dilute/undercount the same cell if it weren't excluded.
   const graded = Array.from({ length: 8 }, (_, i) => issue(100 + i, {
-    labels: ['by:code-health', 'risk:low', 'demo:approved'], state: 'CLOSED', closedAt: '2026-01-01T00:00:00Z',
+    labels: ['by:code-health', 'risk:low', 'demo:approved'], state: 'CLOSED', closedAt: CLOSED_20_DAYS_AGO,
   }));
-  const subIssue = issue(200, { labels: ['by:code-health', 'risk:low'], state: 'CLOSED', closedAt: '2026-01-01T00:00:00Z' });
+  const subIssue = issue(200, { labels: ['by:code-health', 'risk:low'], state: 'CLOSED', closedAt: CLOSED_20_DAYS_AGO });
   const records = [...graded, subIssue];
   const parents = [{ number: 300, body: '- [ ] #200' }];
   const runner = ghRunner({ candidates, records, parents });
   const gitRunner = () => '';
   const out = computeOutlook(
-    { ceiling: 'unattended', grantOriginationEnabled: true, windowDays: 14 },
+    { ceiling: 'unattended', grantOriginationEnabled: true, trust: { 'trust-revert-window-days': 14 } },
     { limit: 100, workLinks: 'body-text', integrationBranch: 'main', runner, gitRunner },
   );
   const row = out.trustRows.find((r) => r.key === 'producer:code-health|low');
   assert.strictEqual(row.total, 8); // #200 excluded — hasParent: true
   assert.strictEqual(row.verdict, 'clean');
   assert.deepStrictEqual(out.eligible, [1]);
+});
+
+// --- #4793: a body-declared foreign blocker ('Blocked by owner/name#N') blocks the pre-pass ---
+
+const FOREIGN_LABELS = ['by:code-health', 'ready'];
+
+test('#4793: filterCandidates drops a candidate whose foreign blocker is OPEN or unreadable, keeps a CLOSED one, and rejects a missing map', () => {
+  const issues = [
+    issue(7, { labels: FOREIGN_LABELS, body: 'Blocked by other/repo#7' }),
+    issue(8, { labels: FOREIGN_LABELS, body: 'Blocked by other/repo#8' }),
+    issue(9, { labels: FOREIGN_LABELS, body: 'Blocked by other/repo#9' }),
+  ];
+  const foreign = new Map([
+    [7, [{ number: 7, repository: 'other/repo', state: 'OPEN' }]],
+    [8, [{ number: 8, repository: 'other/repo', state: null }]],
+    [9, [{ number: 9, repository: 'other/repo', state: 'CLOSED' }]],
+  ]);
+  assert.deepStrictEqual(filterCandidates(issues, new Set(), foreign).map((c) => c.number), [9]);
+  assert.deepStrictEqual(filterCandidates(issues, new Set(), new Map()).map((c) => c.number), [7, 8, 9]);
+  assert.throws(() => filterCandidates(issues, new Set()), { name: 'TypeError', message: /foreignByRecord must be a Map/ });
+  assert.throws(() => filterCandidates(issues, new Set(), {}), { name: 'TypeError', message: /foreignByRecord must be a Map/ });
+});
+
+test('#4793: a foreign blocker never collides with this repository\'s same bare number', () => {
+  const rec = issue(1, { labels: FOREIGN_LABELS, body: 'Blocked by #7\nBlocked by other/repo#7' });
+  const closed = new Map([[1, [{ number: 7, repository: 'other/repo', state: 'CLOSED' }]]]);
+  const open = new Map([[1, [{ number: 7, repository: 'other/repo', state: 'OPEN' }]]]);
+  // This-repo #7 open, foreign other/repo#7 CLOSED: blocked by the local one only.
+  assert.deepStrictEqual(filterCandidates([rec], new Set([7]), closed), []);
+  // This-repo #7 not open, foreign other/repo#7 OPEN: blocked by the foreign one only.
+  assert.deepStrictEqual(filterCandidates([rec], new Set(), open), []);
+  // Neither blocks: this-repo #7 not open, foreign other/repo#7 CLOSED.
+  assert.deepStrictEqual(filterCandidates([rec], new Set(), closed).map((c) => c.number), [1]);
+});
+
+function foreignOutlook(candidates, foreignDeps) {
+  return computeOutlook(
+    { ceiling: 'unattended', grantOriginationEnabled: true, trust: { 'trust-revert-window-days': 14 } },
+    {
+      limit: 100, workLinks: 'body-text', integrationBranch: 'main', runner: ghRunner({ candidates }), gitRunner: () => '', foreignDeps,
+    },
+  );
+}
+
+test('#4793: computeOutlook makes one batched foreign state lookup for several candidates, and none when no candidate declares a foreign ref', () => {
+  const spawned = [];
+  const spawn = (argv) => {
+    spawned.push(argv);
+    return { status: 0, stdout: '{"other/repo#1":"OPEN","acme/x#2":"CLOSED"}\n' };
+  };
+  const out = foreignOutlook([
+    issue(1, { labels: FOREIGN_LABELS, body: 'Blocked by other/repo#1' }),
+    issue(2, { labels: FOREIGN_LABELS, body: 'Blocked by acme/x#2' }),
+    issue(3, { labels: FOREIGN_LABELS, body: 'Blocked by #50' }),
+  ], { spawn, stderr: () => {} });
+  assert.strictEqual(spawned.length, 1);
+  assert.deepStrictEqual(out.candidates.map((c) => c.number), [2, 3]);
+
+  const none = [];
+  const plain = foreignOutlook([issue(1, { labels: FOREIGN_LABELS }), issue(2, { labels: FOREIGN_LABELS, body: 'Blocked by #50' })], {
+    spawn: (argv) => { none.push(argv); return { status: 0, stdout: '{}\n' }; },
+    stderr: () => {},
+  });
+  assert.strictEqual(none.length, 0);
+  assert.deepStrictEqual(plain.candidates.map((c) => c.number), [1, 2]);
+});
+
+test('#4793: computeOutlook looks up only the foreign refs of candidates that survive the cheap label filters', () => {
+  const spawned = [];
+  const out = foreignOutlook([
+    issue(1, { labels: ['ready'], body: 'Blocked by dropped/human#1' }), // human-filed, dropped before the lookup
+    issue(2, { labels: [...FOREIGN_LABELS, 'auto:build'], body: 'Blocked by dropped/granted#2' }), // already granted
+    issue(3, { labels: FOREIGN_LABELS, body: 'Blocked by kept/repo#3' }),
+  ], { spawn: (argv) => { spawned.push(argv); return { status: 0, stdout: '{"kept/repo#3":"CLOSED"}\n' }; }, stderr: () => {} });
+  assert.strictEqual(spawned.length, 1);
+  assert.strictEqual(spawned[0][1], 'kept/repo#3');
+  assert.deepStrictEqual(out.candidates.map((c) => c.number), [3]);
+});
+
+test('#4793: a candidate already blocked by an open this-repository #N makes no foreign lookup, even when its body also declares a foreign ref', () => {
+  const spawned = [];
+  const out = computeOutlook(
+    { ceiling: 'unattended', grantOriginationEnabled: true, trust: { 'trust-revert-window-days': 14 } },
+    {
+      limit: 100,
+      workLinks: 'body-text',
+      integrationBranch: 'main',
+      runner: ghRunner({
+        candidates: [issue(1, { labels: FOREIGN_LABELS, body: 'Blocked by #50\nBlocked by other/repo#9' })],
+        records: [issue(50, { state: 'OPEN' })],
+      }),
+      gitRunner: () => '',
+      foreignDeps: { spawn: (argv) => { spawned.push(argv); return { status: 0, stdout: '{}\n' }; }, stderr: () => {} },
+    },
+  );
+  assert.deepStrictEqual(out.candidates, []);
+  assert.strictEqual(spawned.length, 0);
+});
+
+test('#4793: computeOutlook fails closed on a failing lookup: the candidate is excluded and one Warning line reaches stderr', () => {
+  const warnings = [];
+  const out = foreignOutlook(
+    [issue(1, { labels: FOREIGN_LABELS, body: 'Blocked by other/repo#1' })],
+    { spawn: () => ({ status: 1, stdout: '', stderr: 'boom' }), stderr: (s) => warnings.push(s) },
+  );
+  assert.deepStrictEqual(out.candidates, []);
+  assert.strictEqual(warnings.length, 1);
+  assert.match(warnings[0], /^Warning: /);
+});
+
+// --- #4577: the live fetch is enriched with each Origin record's author association before it is cached ---
+
+const ORIGIN_RECORD = { ...issue(7, { body: 'Origin: by:code-health' }), state: 'OPEN', labels: [] };
+
+function enrichmentRunner({ graphql, calls = [] }) {
+  return (args, opts) => {
+    calls.push({ args, opts });
+    if (args[0] === 'issue') return JSON.stringify([ORIGIN_RECORD]);
+    if (args[0] === 'repo' && args[1] === 'view') return JSON.stringify({ owner: { login: 'resolved-owner' }, name: 'resolved-repo' });
+    if (args[0] === 'api' && args[1] === 'graphql') return graphql(args);
+    throw new Error(`unexpected gh call: ${JSON.stringify(args)}`);
+  };
+}
+
+function withSnapshotPath(fn) {
+  const sessionId = `enrich-test-${process.pid}-${Date.now()}`;
+  const snapPath = recordSnapshot.snapshotPath(sessionId);
+  try {
+    return fn(sessionId, snapPath);
+  } finally {
+    try { require('fs').unlinkSync(snapPath); } catch { /* absent */ }
+  }
+}
+
+test('#4577: fetchAllRecords enriches a live fetch before caching', () => {
+  withSnapshotPath((sessionId, snapPath) => {
+    const runner = enrichmentRunner({ graphql: () => JSON.stringify({ data: { repository: { i7: { authorAssociation: 'NONE' } } } }) });
+    const records = fetchAllRecords({ limit: 100, runner, sessionId, ttlSeconds: 60 });
+    assert.strictEqual(records[0].authorAssociation, 'NONE');
+    assert.strictEqual(recordSnapshot.readSnapshot(snapPath)[0].authorAssociation, 'NONE');
+  });
+});
+
+test('#4577: a fresh cached snapshot is returned as written, with no list or association call', () => {
+  withSnapshotPath((sessionId, snapPath) => {
+    const calls = [];
+    const runner = enrichmentRunner({ calls, graphql: () => JSON.stringify({ data: { repository: { i7: { authorAssociation: 'NONE' } } } }) });
+    fetchAllRecords({ limit: 100, runner, sessionId, ttlSeconds: 60 });
+    const firstCalls = calls.length;
+    assert.ok(firstCalls > 0, 'the first read fetched and enriched');
+    const again = fetchAllRecords({ limit: 100, runner, sessionId, ttlSeconds: 60 });
+    assert.strictEqual(calls.length, firstCalls, 'the second read made no gh call');
+    assert.strictEqual(again[0].authorAssociation, 'NONE');
+  });
+});
+
+test('#4577: a failed association batch still returns and caches the records, with one stderr warning', () => {
+  withSnapshotPath((sessionId, snapPath) => {
+    const runner = enrichmentRunner({ graphql: () => { throw new Error('boom'); } });
+    const lines = [];
+    const records = fetchAllRecords({ limit: 100, runner, sessionId, ttlSeconds: 60, stderr: (s) => lines.push(s) });
+    assert.strictEqual(records.length, 1);
+    assert.strictEqual('authorAssociation' in records[0], false);
+    assert.strictEqual('authorAssociation' in recordSnapshot.readSnapshot(snapPath)[0], false);
+    assert.strictEqual(lines.length, 1);
+    assert.match(lines[0], /^author-association enrichment incomplete \(1 batch\(es\) failed; first cause: boom\)/);
+  });
+});
+
+test('#4577: computeOutlook never threads fetch.owner into the association query', () => {
+  const calls = [];
+  const runner = enrichmentRunner({ calls, graphql: () => JSON.stringify({ data: { repository: { i7: { authorAssociation: 'NONE' } } } }) });
+  computeOutlook(
+    { ceiling: 'unattended', grantOriginationEnabled: true, trust: { 'trust-revert-window-days': 14 } },
+    { limit: 100, workLinks: 'body-text', integrationBranch: 'main', owner: 'other', repo: 'elsewhere', runner, gitRunner: () => '' , stderr: () => {} },
+  );
+  const gql = calls.find((c) => c.args[0] === 'api' && c.args[1] === 'graphql');
+  assert.ok(gql, 'an association query was made');
+  assert.ok(gql.args.includes('owner=resolved-owner'), JSON.stringify(gql.args));
+  assert.ok(!gql.args.includes('owner=other'));
+});
+
+test('#4577: the runner wrapper bounds the association batch with GH_BATCH_TIMEOUT_MS and other calls with GH_TIMEOUT_MS', () => {
+  const calls = [];
+  const runner = enrichmentRunner({ calls, graphql: () => JSON.stringify({ data: { repository: { i7: { authorAssociation: 'NONE' } } } }) });
+  fetchAllRecords({ limit: 100, runner, sessionId: null, ttlSeconds: 60 });
+  const gql = calls.find((c) => c.args[0] === 'api' && c.args[1] === 'graphql');
+  assert.deepStrictEqual(gql.opts, { timeout: GH_BATCH_TIMEOUT_MS });
+  const view = calls.find((c) => c.args[0] === 'repo');
+  assert.deepStrictEqual(view.opts, { timeout: GH_TIMEOUT_MS });
 });

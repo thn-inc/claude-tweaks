@@ -100,23 +100,26 @@ function localDate() {
 }
 
 const realDeps = {
-  git: (args) => {
+  git: (args, { cwd = process.cwd(), env = process.env } = {}) => {
     try {
-      return execFileSync('git', args, { cwd: process.cwd(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim();
+      return execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim();
     } catch {
       return null;
     }
   },
-  lookupDecline: (fingerprint) => store.lookupDecline(fingerprint),
+  lookupDecline: (fingerprint, { cwd } = {}) => store.lookupDecline(fingerprint, { cwd }),
   today: localDate,
-  stdout: process.stdout,
-  stderr: process.stderr,
+  stdout: (s) => process.stdout.write(s),
+  stderr: (s) => process.stderr.write(s),
+  cwd: () => process.cwd(),
+  get env() { return process.env; },
 };
 
-function run(argv, deps) {
+function run(argv, overrides = {}) {
+  const deps = { ...realDeps, ...overrides };
   const opts = parseArgs(argv);
-  if (opts.help) { deps.stdout.write(USAGE); return 0; }
-  if (opts.error) { deps.stderr.write(`plan-retention.js: ${opts.error}\n${USAGE}`); return 2; }
+  if (opts.help) { deps.stdout(USAGE); return 0; }
+  if (opts.error) { deps.stderr(`plan-retention.js: ${opts.error}\n${USAGE}`); return 2; }
 
   const today = deps.today();
   // A failed git run (null, or a throw) and a plan git has no add commit for both read as
@@ -124,22 +127,22 @@ function run(argv, deps) {
   let probeFailures = 0;
   const git = (args) => {
     let out;
-    try { out = deps.git(args); } catch (err) { probeFailures += 1; throw err; }
+    try { out = deps.git(args, { cwd: deps.cwd(), env: deps.env }); } catch (err) { probeFailures += 1; throw err; }
     if (out === null) probeFailures += 1;
     return out;
   };
   const plans = opts.plans.map((plan) => ({ plan, firstAdded: firstAddedDate(plan, git) }));
   if (probeFailures > 0) {
-    deps.stderr.write(`plan-retention.js: git failed for ${probeFailures} of ${plans.length} plan(s); read as uncommitted and kept\n`);
+    deps.stderr(`plan-retention.js: git failed for ${probeFailures} of ${plans.length} plan(s); read as uncommitted and kept\n`);
   }
   const routed = routePlans({
     retention: opts.retention,
     plans,
     today,
     cited: opts.cited.length > 0 ? new Set(opts.cited) : null,
-    lookupDecline: () => deps.lookupDecline(archiveDeclineFingerprint()),
+    lookupDecline: () => deps.lookupDecline(archiveDeclineFingerprint(), { cwd: deps.cwd() }),
   });
-  deps.stdout.write(`${JSON.stringify({
+  deps.stdout(`${JSON.stringify({
     retention: opts.retention,
     today,
     cutoffDays: CUTOFF_DAYS,

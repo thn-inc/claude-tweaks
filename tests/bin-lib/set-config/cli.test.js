@@ -2,16 +2,18 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { run, renderManifestoFyi } = require('../../../plugin/bin/set-config');
 const { readText } = require('../../helpers/read-skill');
+const { STARTING_LISTS } = require('../../../plugin/bin/lib/station-events/plan');
 
 // Same anchoring fixture shape as tests/bin-lib/stage-item/cli.test.js: a
 // fake main checkout (.git directory) holding the real run dir, plus a
 // worktree-local shadow copy (.git FILE) that must be refused.
 function fixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sccli-'));
+  const root = scratchDir('sccli-');
   const main = path.join(root, 'main');
   const runDir = path.join(main, '.claude-tweaks', 'pipelines', '2026-08-20T090000-spec-12');
   const shadow = path.join(main, '.claude', 'worktrees', 'flow-spec-12', '.claude-tweaks', 'pipelines', '2026-08-20T090000-spec-12');
@@ -46,6 +48,20 @@ test('cli: success path writes the lever and prints the config.yml path', () => 
   assert.ok(out.join('').includes('ceremony-profile: fast-lane -> standard'));
 });
 
+test('a ceremony change during wrap-up writes no replanned', () => {
+  const { main, runDir } = fixture();
+  const logFile = path.join(main, '.claude-tweaks', 'station-events.jsonl');
+  fs.writeFileSync(logFile, JSON.stringify({
+    v: 1, repoName: 'acme/w', recordNumber: 7, kind: 'planned', station: 'build', lane: 'unknown',
+    runId: path.basename(runDir), payload: { stations: STARTING_LISTS['fast-lane'] },
+  }) + '\n');
+  const before = fs.readFileSync(logFile);
+  const { deps } = fakeDeps(main);
+  assert.equal(run(['--run', runDir, '--key', 'ceremony-profile', '--value', 'standard'], deps), 0);
+  assert.ok(fs.readFileSync(path.join(runDir, 'config.yml'), 'utf8').includes('ceremony-profile: standard'));
+  assert.ok(fs.readFileSync(logFile).equals(before));
+});
+
 test('cli: missing --run/--key/--value is exit 2', () => {
   const { main, runDir } = fixture();
   assert.equal(run(['--key', 'mode', '--value', 'auto'], fakeDeps(main).deps), 2);
@@ -56,7 +72,7 @@ test('cli: missing --run/--key/--value is exit 2', () => {
 test('cli: a key outside the lever enum is exit 2 and names the enum source', () => {
   const { main, runDir } = fixture();
   const { deps, err } = fakeDeps(main);
-  assert.equal(run(['--run', runDir, '--key', 'spec', '--value', '13'], deps), 2);
+  assert.equal(run(['--run', runDir, '--key', 'created', '--value', '13'], deps), 2);
   const msg = err.join('');
   assert.ok(/not a config\.yml policy lever/.test(msg), msg);
   assert.ok(msg.includes('ceremony-profile'), 'error should list the valid levers');
@@ -120,7 +136,7 @@ test('cli: --set validates the full set before writing any — one invalid value
 test('cli: --set with an unknown key blocks the whole batch and names the canonical lever set', () => {
   const { main, runDir } = fixture();
   const { deps, err } = fakeDeps(main);
-  const code = run(['--run', runDir, '--set', 'mode=hybrid,spec=13'], deps);
+  const code = run(['--run', runDir, '--set', 'mode=hybrid,created=13'], deps);
   assert.equal(code, 2);
   const msg = err.join('');
   assert.ok(/not a config\.yml policy lever/.test(msg));
@@ -163,10 +179,10 @@ test('cli: a dangling --set with no value is reported as a --set problem, not mi
 test('cli: batch validation errors name the offending --set entry, not bare --key/--value', () => {
   const { main, runDir } = fixture();
   const { deps, err } = fakeDeps(main);
-  const code = run(['--run', runDir, '--set', 'mode=hybrid,spec=13'], deps);
+  const code = run(['--run', runDir, '--set', 'mode=hybrid,created=13'], deps);
   assert.equal(code, 2);
   const msg = err.join('');
-  assert.ok(msg.includes('--set entry "spec=13"'), 'should name the offending --set entry');
+  assert.ok(msg.includes('--set entry "created=13"'), 'should name the offending --set entry');
   assert.ok(/not a config\.yml policy lever/.test(msg), 'single-key wording is still reused after the prefix');
 });
 
@@ -240,7 +256,30 @@ test('cli: an invalid integration-model pin value is exit 2 and writes nothing',
 test('cli: a batch carrying an unknown non-pin extra key alongside the 13 levers is exit 2', () => {
   const { main, runDir } = fixture();
   const { deps } = fakeDeps(main);
-  assert.equal(run(['--run', runDir, '--set', FULL_MANIFESTO_BATCH_AUTO + ',spec=12'], deps), 2);
+  assert.equal(run(['--run', runDir, '--set', FULL_MANIFESTO_BATCH_AUTO + ',created=12'], deps), 2);
+});
+
+test('AC1.1: --set accepts spec={n} and writes spec: {n} to config.yml', () => {
+  const { main, runDir } = fixture();
+  const { deps } = fakeDeps(main);
+  assert.equal(run(['--run', runDir, '--set', 'mode=auto,spec=5347'], deps), 0);
+  assert.match(fs.readFileSync(path.join(runDir, 'config.yml'), 'utf8'), /^spec: 5347$/m);
+});
+
+test('AC1.1: --set spec=abc is exit 2 naming the allowed shape, and writes nothing', () => {
+  const { main, runDir } = fixture();
+  const before = fs.readFileSync(path.join(runDir, 'config.yml'), 'utf8');
+  const { deps, err } = fakeDeps(main);
+  assert.equal(run(['--run', runDir, '--set', 'mode=hybrid,spec=abc'], deps), 2);
+  assert.match(err.join(''), /--value "abc" is not valid for spec \(allowed: a positive integer record number\)/);
+  assert.equal(fs.readFileSync(path.join(runDir, 'config.yml'), 'utf8'), before);
+});
+
+test('AC1.1: --key spec --value {n} writes the pin from a single-key call', () => {
+  const { main, runDir } = fixture();
+  const { deps } = fakeDeps(main);
+  assert.equal(run(['--run', runDir, '--key', 'spec', '--value', '5347'], deps), 0);
+  assert.match(fs.readFileSync(path.join(runDir, 'config.yml'), 'utf8'), /^spec: 5347$/m);
 });
 
 test('cli: a full 13-lever --set batch with mode=hybrid does NOT print the auto FYI table', () => {
@@ -399,4 +438,91 @@ test('AC3.1: a failed append keeps exit 0 and stdout unchanged, adding one stder
   assert.match(err[0], /^set-config\.js: could not append the decisions\.md entry .*disk full\n$/);
   assert.ok(err[0].includes(`levers written to ${file}`), 'the stderr line names the entry to hand-log');
   assert.ok(!fs.existsSync(path.join(runDir, 'decisions.md')));
+});
+
+// --- run manifest fill (#5903): a Manifesto batch fills lane, any ceremony-profile write fills ceremonyProfile ---
+
+const readManifest = (runDir) => JSON.parse(fs.readFileSync(path.join(runDir, 'manifest.json'), 'utf8'));
+
+test('manifest: a full 13-lever --set batch with mode=hybrid (the confirm/hybrid Manifesto) fills lane standard and ceremonyProfile', () => {
+  const { main, runDir } = fixture();
+  const { deps } = fakeDeps(main);
+  const batch = FULL_MANIFESTO_BATCH_AUTO.replace('mode=auto', 'mode=hybrid');
+  assert.equal(run(['--run', runDir, '--set', batch], deps), 0);
+  const m = readManifest(runDir);
+  assert.equal(m.lane, 'standard');
+  assert.equal(m.ceremonyProfile, 'standard');
+});
+
+test('manifest: a full 13-lever mode=auto batch plus the run pins fills lane standard too', () => {
+  const { main, runDir } = fixture();
+  const { deps } = fakeDeps(main);
+  assert.equal(run(['--run', runDir, '--set', FULL_MANIFESTO_BATCH_AUTO + ',integration-model=pr-first,spec=12'], deps), 0);
+  assert.equal(readManifest(runDir).lane, 'standard');
+});
+
+test('manifest: a partial --set batch with only ceremony-profile=standard fills ceremonyProfile and leaves lane unknown', () => {
+  const { main, runDir } = fixture();
+  const { deps } = fakeDeps(main);
+  assert.equal(run(['--run', runDir, '--set', 'ceremony-profile=standard'], deps), 0);
+  const m = readManifest(runDir);
+  assert.equal(m.ceremonyProfile, 'standard');
+  assert.equal(m.lane, 'unknown');
+});
+
+test('manifest: the express five-key configSet fills ceremonyProfile fast-lane and leaves lane untouched', () => {
+  const { main, runDir } = fixture();
+  const { deps } = fakeDeps(main);
+  const configSet = 'mode=auto,ceremony-profile=fast-lane,integration-model=pr-first,merge-verification=merge-when-green,spec=5903';
+  assert.equal(run(['--run', runDir, '--set', configSet], deps), 0);
+  const m = readManifest(runDir);
+  assert.equal(m.ceremonyProfile, 'fast-lane');
+  assert.equal(m.lane, 'unknown');
+});
+
+test('manifest: a 13-entry batch missing one lever (plus the pin) fills no lane', () => {
+  const { main, runDir } = fixture();
+  const { deps } = fakeDeps(main);
+  const batch = FULL_MANIFESTO_BATCH_AUTO.replace(',merge-authorization=ask', '') + ',integration-model=pr-first';
+  assert.equal(run(['--run', runDir, '--set', batch], deps), 0);
+  assert.equal(readManifest(runDir).lane, 'unknown');
+});
+
+test('manifest: a full batch never overwrites an already-known lane', () => {
+  const { main, runDir } = fixture();
+  fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify({ v: 1, runId: path.basename(runDir), lane: 'express', ceremonyProfile: null }));
+  const { deps } = fakeDeps(main);
+  assert.equal(run(['--run', runDir, '--set', FULL_MANIFESTO_BATCH_AUTO], deps), 0);
+  assert.equal(readManifest(runDir).lane, 'express');
+});
+
+test('manifest: a failing full --set batch (exit 3) fills no lane', () => {
+  const { main, runDir } = fixture();
+  fs.rmSync(path.join(runDir, 'config.yml'));
+  fs.mkdirSync(path.join(runDir, 'config.yml'));
+  const { deps } = fakeDeps(main);
+  assert.equal(run(['--run', runDir, '--set', FULL_MANIFESTO_BATCH_AUTO], deps), 3);
+  assert.ok(!fs.existsSync(path.join(runDir, 'manifest.json')), 'a failed batch fills no lane, and creates no manifest');
+});
+
+test('manifest: a fill failure leaves the --set batch output, exit code and config.yml unchanged', () => {
+  const { mock } = require('node:test');
+  const runManifest = require('../../../plugin/bin/lib/run-manifest/write');
+  const base = fixture();
+  const ref = fakeDeps(base.main);
+  const refCode = run(['--run', base.runDir, '--set', FULL_MANIFESTO_BATCH_AUTO], ref.deps);
+  const refConfig = fs.readFileSync(path.join(base.runDir, 'config.yml'), 'utf8');
+
+  const { main, runDir } = fixture();
+  const { deps, out, err } = fakeDeps(main);
+  const fill = mock.method(runManifest, 'fillRunManifest', () => { throw new Error('manifest writer exploded'); });
+  try {
+    assert.equal(run(['--run', runDir, '--set', FULL_MANIFESTO_BATCH_AUTO], deps), refCode);
+  } finally {
+    fill.mock.restore();
+  }
+  assert.ok(fill.mock.callCount() >= 2, 'both the ceremony-profile hook and the lane fill were attempted');
+  assert.equal(fs.readFileSync(path.join(runDir, 'config.yml'), 'utf8'), refConfig);
+  assert.equal(out.join('').split(runDir).join('<run>'), ref.out.join('').split(base.runDir).join('<run>'));
+  assert.deepEqual(err, []);
 });

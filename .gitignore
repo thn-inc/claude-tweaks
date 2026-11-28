@@ -10,11 +10,13 @@ node_modules/
 !.claude-tweaks/pipelines/*/
 .claude-tweaks/pipelines/*/*
 !.claude-tweaks/pipelines/*/work/
-!.claude-tweaks/pipelines/*/work/**
+.claude-tweaks/pipelines/*/work/*
+!.claude-tweaks/pipelines/*/work/*-spec.md
 !.claude-tweaks/pipelines/*/spec-*/
 .claude-tweaks/pipelines/*/spec-*/*
 !.claude-tweaks/pipelines/*/spec-*/work/
-!.claude-tweaks/pipelines/*/spec-*/work/**
+.claude-tweaks/pipelines/*/spec-*/work/*
+!.claude-tweaks/pipelines/*/spec-*/work/*-spec.md
 # Tidy standalone runs commit their own audit files (#1493) — top-level pipelines
 # depth only, never spec-*/-nested (a tidy standalone run is never spec-nested).
 !.claude-tweaks/pipelines/*-tidy-standalone*/decisions.md
@@ -31,11 +33,13 @@ node_modules/
 !.claude-tweaks/pipelines/archive/*/
 .claude-tweaks/pipelines/archive/*/*
 !.claude-tweaks/pipelines/archive/*/work/
-!.claude-tweaks/pipelines/archive/*/work/**
+.claude-tweaks/pipelines/archive/*/work/*
+!.claude-tweaks/pipelines/archive/*/work/*-spec.md
 !.claude-tweaks/pipelines/archive/*/spec-*/
 .claude-tweaks/pipelines/archive/*/spec-*/*
 !.claude-tweaks/pipelines/archive/*/spec-*/work/
-!.claude-tweaks/pipelines/archive/*/spec-*/work/**
+.claude-tweaks/pipelines/archive/*/spec-*/work/*
+!.claude-tweaks/pipelines/archive/*/spec-*/work/*-spec.md
 .claude-tweaks/research/
 # Local finding caches — all four health skills write .claude-tweaks/{skill}/cache.json
 # (plugin/bin/lib/health-core/cache.js). Listed individually, never as a blanket
@@ -54,6 +58,8 @@ node_modules/
 .claude-tweaks/reconcile-cache.json
 .claude-tweaks/reconcile-background-status.json
 .claude-tweaks/wrap-up-outcomes.tsv
+.claude-tweaks/station-events.jsonl
+.claude-tweaks/station-events.jsonl.lock
 # Captured playwright-cli session-state files (cookies/localStorage) for QA story auth —
 # local secrets, never committed. See skills/stories/auth-resolution.md.
 .claude-tweaks/auth-state/

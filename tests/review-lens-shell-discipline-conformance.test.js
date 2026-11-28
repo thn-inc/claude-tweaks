@@ -95,7 +95,12 @@ test('AC1.1: the debate, refutation, and gap-sweep templates each carry the SHEL
   }
 });
 
-test('AC1.1: the Step 3.7 tiebreak dispatch template carries the SHELL DISCIPLINE placeholder', () => {
+test('AC1.1: each Step 3.7 tiebreak dispatch template carries the SHELL DISCIPLINE placeholder', () => {
   const sec = section(read('review', 'step3-tiebreak.md'), '## Dispatch');
-  assert.equal((sec.match(PLACEHOLDER) || []).length, 1, 'the tiebreak Dispatch template must carry exactly one SHELL DISCIPLINE placeholder');
+  // #5540: the single-finding template, then the chunk template.
+  const blocks = [...sec.matchAll(/```[a-z]*\n([\s\S]*?)\n```/g)].map((m) => m[1]);
+  assert.equal(blocks.length, 2, 'the tiebreak Dispatch section must hold the single-finding and the chunk template');
+  blocks.forEach((block, i) => {
+    assert.equal((block.match(PLACEHOLDER) || []).length, 1, `tiebreak Dispatch template ${i + 1} must carry exactly one SHELL DISCIPLINE placeholder`);
+  });
 });

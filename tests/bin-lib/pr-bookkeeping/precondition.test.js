@@ -2,6 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -12,21 +13,21 @@ const { readText } = require('../../helpers/read-skill');
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('../../helpers/strip-comments');
 
 function gitRepoWithCommit() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-prbk-'));
+  const dir = scratchDir('ct-prbk-');
   execFileSync('git', ['-C', dir, 'init', '-q']);
   execFileSync('git', ['-C', dir, 'commit', '--allow-empty', '-m', 'init', '-q']);
   return fs.realpathSync(dir);
 }
 
 function linkedWorktreeOf(main) {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-prbk-wtparent-'));
+  const parent = scratchDir('ct-prbk-wtparent-');
   const wt = path.join(parent, 'wt');
   execFileSync('git', ['-C', main, 'worktree', 'add', '-q', wt, '-b', `wt-branch-${path.basename(parent)}`]);
   return fs.realpathSync(wt);
 }
 
 function makeRunDir(id) {
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-prbk-run-'));
+  const project = scratchDir('ct-prbk-run-');
   const runDir = path.join(project, '.claude-tweaks', 'pipelines', id);
   fs.mkdirSync(runDir, { recursive: true });
   return runDir;
@@ -174,6 +175,54 @@ test('checkPrBookkeepingPrecondition: DENY when pr-first, worktree stamped, no P
   assert.match(r.message, /pr-early-run-lifecycle/);
 });
 
+// AC9.2 (#3974), captured before the change: precondition.js binds
+// hasMaterializeCommit at require time, so the throwing stand-in is swapped into
+// pre-tool-use.js's exports before a fresh copy of precondition.js loads.
+test('AC9.2 precondition returns materialize-check-failed when hasMaterializeCommit throws', () => {
+  const pre = require('../../../plugin/bin/lib/hooks/pre-tool-use');
+  const preconditionPath = require.resolve('../../../plugin/bin/lib/pr-bookkeeping/precondition');
+  const original = pre.hasMaterializeCommit;
+  const cached = require.cache[preconditionPath];
+  let fresh;
+  try {
+    pre.hasMaterializeCommit = () => { throw new Error('git exploded'); };
+    delete require.cache[preconditionPath];
+    fresh = require(preconditionPath);
+  } finally {
+    pre.hasMaterializeCommit = original;
+    require.cache[preconditionPath] = cached;
+  }
+  const runId = '2026-09-17T000022-spec-3974';
+  const main = gitRepoWithCommit();
+  const wt = linkedWorktreeOf(main);
+  const runDir = makeRunDir(runId);
+  writeRunState(runDir, { status: 'active', worktree: wt });
+  assert.deepStrictEqual(fresh.checkPrBookkeepingPrecondition({ runDir, cwd: wt }),
+    { ok: true, reason: 'materialize-check-failed' });
+});
+
+// AC1.1 (#3974): the header committed only at the archived path. precondition.js
+// carries no copy of the live/archived rule; it reads through hasMaterializeCommit.
+test('AC1.1 precondition.js reports no-pr-stamp for an archived-only materialize', () => {
+  const runId = '2026-09-17T000023-spec-3974';
+  const main = gitRepoWithCommit();
+  fs.mkdirSync(path.join(main, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(main, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
+  execFileSync('git', ['-C', main, 'add', '.claude-tweaks/policy.yml']);
+  execFileSync('git', ['-C', main, 'commit', '-m', 'policy', '-q']);
+  const wt = linkedWorktreeOf(main);
+  const rel = `.claude-tweaks/pipelines/archive/${runId}/work/1-spec.md`;
+  fs.mkdirSync(path.dirname(path.join(wt, ...rel.split('/'))), { recursive: true });
+  fs.writeFileSync(path.join(wt, ...rel.split('/')), 'spec\n');
+  execFileSync('git', ['-C', wt, 'add', '-f', rel]);
+  execFileSync('git', ['-C', wt, 'commit', '-m', 'materialize (archived)', '-q']);
+  const runDir = makeRunDir(runId);
+  writeRunState(runDir, { status: 'active', worktree: wt });
+  const r = checkPrBookkeepingPrecondition({ runDir, cwd: wt });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.reason, 'no-pr-stamp');
+});
+
 // #2664: a multi-spec /flow run hands each spec's skills a PER-SPEC
 // $PIPELINE_RUN_DIR ({parent-run-id}/spec-{N}/, flow/multi-spec.md's env-var
 // table), and materialize commits that spec's file at
@@ -202,6 +251,23 @@ test('checkPrBookkeepingPrecondition (#2664): a multi-spec per-spec runDir recog
   assert.strictEqual(r.ok, false);
   assert.strictEqual(r.reason, 'no-worktree-stamp');
   assert.match(r.message, /record-worktree/);
+});
+
+// AC2.1 (#3974): the multi-spec shape, header committed only at the archived path.
+test('AC2.1 precondition.js recognizes a per-spec runDir whose header is archived-only -> no-worktree-stamp', () => {
+  const parentId = '2026-09-17T000024-spec-7-8';
+  const main = gitRepoWithCommit();
+  const wt = linkedWorktreeOf(main);
+  const rel = `.claude-tweaks/pipelines/archive/${parentId}/spec-7/work/7-spec.md`;
+  fs.mkdirSync(path.dirname(path.join(wt, ...rel.split('/'))), { recursive: true });
+  fs.writeFileSync(path.join(wt, ...rel.split('/')), 'spec\n');
+  execFileSync('git', ['-C', wt, 'add', '-f', rel]);
+  execFileSync('git', ['-C', wt, 'commit', '-m', 'materialize 7 (archived)', '-q']);
+  const runDir = path.join(makeRunDir(parentId), 'spec-7');
+  fs.mkdirSync(runDir, { recursive: true });
+  const r = checkPrBookkeepingPrecondition({ runDir, cwd: wt });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.reason, 'no-worktree-stamp');
 });
 
 test('checkPrBookkeepingPrecondition (#2664): a stamped multi-spec per-spec runDir passes as pr-stamped-or-exempt', () => {
@@ -272,7 +338,7 @@ test('checkPrBookkeepingPrecondition (#2664): a spec-* dir whose parent is NOT r
   // Not a multi-spec child (same rule as pre-tool-use.js's perSpecPathspec),
   // so its materialize path is the ordinary single-record one rooted at spec-7.
   commitMaterializeFile(wt, 'spec-7');
-  const notARun = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-prbk-notarun-'));
+  const notARun = scratchDir('ct-prbk-notarun-');
   writeRunState(notARun, { status: 'active', worktree: wt, pr: { number: 1, url: 'https://example.com/1' } });
   const runDir = path.join(notARun, 'spec-7');
   fs.mkdirSync(runDir, { recursive: true });

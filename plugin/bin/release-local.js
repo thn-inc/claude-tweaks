@@ -31,11 +31,12 @@ const { conventionalHistory } = require('./lib/release-local/commits.js');
 const { bumpPart } = require('./lib/release-local/bump.js');
 const manifest = require('./lib/release-local/manifest.js');
 const { renderSection, prependSection, parseGitHubRemote } = require('./lib/release-local/changelog.js');
+const { prepareTrim, firstLine } = require('./lib/changelog-release-trim.js');
 const { precheck } = require('./lib/release/precheck.js');
 const { guardReleasableTree, pushAfterAncestryCheck } = require('./lib/release/run.js');
 const { resolvePolicyKeys } = require('./lib/policy-schema.js');
 const { withIndexLockRetry } = require('./lib/git-retry.js');
-const { isPathContained } = require('./lib/shared-primitives.js');
+const { isPathContained, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives.js');
 const { lstatType } = require('./lib/path-guard');
 
 const USAGE = [
@@ -124,8 +125,64 @@ function planLines({ version, part, history, hook, edits, unconventional, releas
   return lines;
 }
 
-function run(argv, deps) {
+// `changelog-max-releases` (#5563): once the release has fully landed (commit, tag, push and
+// hook), the trimmed CHANGELOG.md goes in its own commit — the tag and the pushed release commit
+// keep the full file the footer points at. The release commit is on the local branch by now, so
+// the ancestry proof reads it. With an origin the trim commit is pushed the way the release was;
+// without one it stays local. A trim never changes the release's outcome: any failure drops its
+// own commit if one landed, puts the file and the index back, and prints one line.
+function trimAfterRelease(deps, { policyRaw, branch, hasOrigin }) {
+  let original = null;
+  const progress = { written: false, committed: false };
+  try {
+    original = deps.readFile('CHANGELOG.md');
+    const trimmed = prepareTrim({
+      text: original,
+      readPolicy: () => policyRaw,
+      git: deps.git,
+      ancestorRefs: [`refs/heads/${branch}`],
+      stderr: deps.stderr,
+      trim: deps.trimChangelog,
+    });
+    if (!trimmed) return;
+    progress.written = true;
+    deps.writeFile('CHANGELOG.md', trimmed.text);
+    deps.git(['add', '--', 'CHANGELOG.md']);
+    withIndexLockRetry(deps.git)(['commit', '-m', `chore: trim CHANGELOG.md to the newest ${trimmed.count} releases`]);
+    progress.committed = true;
+    if (hasOrigin) {
+      pushAfterAncestryCheck(deps, { branch, refs: [branch], onDiverged: `origin/${branch} moved since the release push` });
+    }
+  } catch (err) {
+    // A push that reached origin but errored client-side leaves the local branch one commit
+    // behind origin after the drop below; the next release's pre-check surfaces it.
+    let restored = true;
+    try {
+      if (progress.committed) withIndexLockRetry(deps.git)(['reset', '--soft', 'HEAD~1']);
+      if (progress.written) {
+        deps.writeFile('CHANGELOG.md', original);
+        deps.git(['add', '--', 'CHANGELOG.md']);
+      }
+    } catch {
+      restored = false;
+    }
+    const reason = firstLine((err && err.message) || err);
+    deps.stderr(`changelog trim: failed (${reason}); ${restored ? 'file left untrimmed' : 'the restore also failed, CHANGELOG.md and the index may still hold the trimmed file'}\n`);
+  }
+}
+
+function run(argv, deps = {}) {
   const opts = parseArgs(argv);
+  // --root resolves against the injected cwd; a root-bound member the caller did not
+  // supply (git, readFile, ...) is built for that root with the injected env.
+  const baseCwd = (deps.cwd || realDeps.cwd)();
+  const root = opts.root ? path.resolve(baseCwd, opts.root) : baseCwd;
+  const d0 = { ...realDeps, ...deps };
+  let stat;
+  try { stat = fs.statSync(root); } catch { stat = null; }
+  if (!stat || !stat.isDirectory()) { d0.stderr(`root is not a directory: ${root}\n${USAGE}\n`); return 2; }
+  const bound = defaultDeps(root, { env: d0.env });
+  deps = { ...bound, ...d0 };
   if (opts.error) { deps.stderr(`${opts.error}\n${USAGE}\n`); return 2; }
   if (opts.help) { deps.stdout(`${USAGE}\n`); return 0; }
 
@@ -222,13 +279,21 @@ function run(argv, deps) {
       stage = 'pushed';
     }
     if (hook) {
-      const code = deps.runHook(hook);
+      // A real run (the CLI's io is the process's own) hands the hook inherited stdio so
+      // TTY prompts (an npm OTP) work and output streams live; injected io gets the hook's
+      // output captured and routed through deps instead, so in-process callers see it.
+      const live = deps.stdout === realDeps.stdout && deps.stderr === realDeps.stderr;
+      const hookResult = deps.runHook(hook, { cwd: root, env: deps.env, inherit: live });
+      if (hookResult.stdout) deps.stdout(hookResult.stdout);
+      if (hookResult.stderr) deps.stderr(hookResult.stderr);
+      const code = hookResult.status;
       if (code !== 0) {
         deps.stderr(`partial: v${version} is committed, tagged${hasOrigin ? ' and pushed' : ''}; the release-hook exited ${code}. ` +
           `Do NOT re-run release-local (the tag is final). Recover: re-run the hook alone: ${hook}\n`);
         return 5;
       }
     }
+    trimAfterRelease(deps, { policyRaw, branch, hasOrigin });
     deps.stdout(`released v${version}\n`);
     return 0;
   } catch (err) {
@@ -342,10 +407,34 @@ function writeInsideRoot(root, p, text, { constants = fs.constants } = {}) {
   }
 }
 
-function defaultDeps(root) {
+// The hook is the project's own shell command (policy release-hook) — a
+// shell string by design; its exit code becomes this CLI's exit 5. With `inherit`
+// (a real run) it gets the process's own stdio, so a TTY prompt works and output
+// streams live. Otherwise output is piped back so `run` routes it through
+// deps.stdout/deps.stderr (inherited stdio would write straight to the host
+// process's fds when called in-process).
+function runHook(cmd, { cwd, env, inherit = false } = {}) {
+  if (inherit) {
+    const r = spawnSync(cmd, { cwd, env, shell: true, stdio: 'inherit', windowsHide: true });
+    return { status: r.status === null ? 1 : r.status, stdout: '', stderr: '' };
+  }
+  const r = spawnSync(cmd, { cwd, env, shell: true, stdio: ['inherit', 'pipe', 'pipe'], encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true });
+  return { status: r.status === null ? 1 : r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
+}
+
+const realDeps = {
+  cwd: () => process.cwd(),
+  get env() { return process.env; },
+  today: () => new Date().toISOString().slice(0, 10),
+  stdout: (t) => process.stdout.write(t),
+  stderr: (t) => process.stderr.write(t),
+  runHook,
+};
+
+function defaultDeps(root, { env } = {}) {
   const abs = (p) => path.join(root, p);
   return {
-    git: (args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }),
+    git: (args) => execFileSync('git', args, { cwd: root, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }),
     readFile: (p) => { try { return fs.readFileSync(abs(p), 'utf8'); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } },
     writeFile: (p, text) => writeInsideRoot(root, p, text),
     // manifest.js's glob targets (ruby's `*.gemspec`, dotnet's `*.csproj` — the
@@ -376,24 +465,12 @@ function defaultDeps(root) {
       }
       return entries.filter((f) => f.endsWith('.md')).map((f) => `docs/superpowers/plans/${f}`);
     },
-    // The hook is the project's own shell command (policy release-hook) — a
-    // shell string by design; its exit code becomes this CLI's exit 5.
-    runHook: (cmd) => { const r = spawnSync(cmd, { cwd: root, shell: true, stdio: 'inherit', windowsHide: true }); return r.status === null ? 1 : r.status; },
-    today: () => new Date().toISOString().slice(0, 10),
-    stdout: (t) => process.stdout.write(t),
-    stderr: (t) => process.stderr.write(t),
+    today: realDeps.today,
+    stdout: realDeps.stdout,
+    stderr: realDeps.stderr,
   };
 }
 
-function main(argv) {
-  const opts = parseArgs(argv);
-  const root = opts.root ? path.resolve(opts.root) : process.cwd();
-  let stat;
-  try { stat = fs.statSync(root); } catch { stat = null; }
-  if (!stat || !stat.isDirectory()) { process.stderr.write(`root is not a directory: ${root}\n${USAGE}\n`); return 2; }
-  return run(argv, defaultDeps(root));
-}
+module.exports = { run, parseArgs, defaultDeps, realDeps, writeInsideRoot, USAGE };
 
-if (require.main === module) process.exitCode = main(process.argv.slice(2));
-
-module.exports = { run, parseArgs, defaultDeps, writeInsideRoot, USAGE };
+if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

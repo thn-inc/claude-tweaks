@@ -1,0 +1,1039 @@
+'use strict';
+// #4347: verify.js taking a declared suite's full-run verdict from the PR's CI
+// job on HEAD. `gh` is a fake script first on PATH — the runner seam's real
+// spawn, never the network. POSIX only: a PATH shim named `gh` is not
+// spawnable by execFileSync on win32 (no .exe/.cmd), and ci-source.test.js
+// covers the same branches through the injected runner on every platform.
+// Tests that do not depend on the fake `gh` running are not skipped on win32.
+const { test } = require('node:test');
+const assert = require('node:assert');
+const path = require('path');
+const os = require('os');
+const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
+const { execFile, execFileSync, spawn, spawnSync } = require('child_process');
+
+const { slotEnv } = require('../../helpers/suite-slot-env');
+const { anchoredRunDir } = require('./cli-helpers');
+const { derivePhases } = require('../../../plugin/bin/lib/timing/derive');
+const { initRepo } = require('../../helpers/git-fixtures');
+const { encodeImpactMap, DEFAULT_MAP_NAME } = require('../../../plugin/bin/lib/verify/impact.js');
+
+const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'verify.js');
+const SKIP = process.platform === 'win32' ? 'a PATH shim named gh is not spawnable on win32' : false;
+
+function tmpDir() { return fs.realpathSync(scratchDir('verify-ci-test-')); }
+
+const FAKE_GH = `#!/usr/bin/env node
+const fs = require('fs');
+const a = process.argv.slice(2);
+if (process.env.FAKE_GH_CALLS) fs.appendFileSync(process.env.FAKE_GH_CALLS, a.join(' ') + '\\n');
+const ep = a[1] || '';
+const mode = process.env.FAKE_GH_MODE;
+const out = (v) => process.stdout.write(JSON.stringify(v));
+let m;
+if ((m = ep.match(/commits\\/([0-9a-f]{40})\\/pulls$/))) {
+  if (process.env.FAKE_GH_UNPUSHED_AFTER) {
+    const pulls = fs.readFileSync(process.env.FAKE_GH_CALLS, 'utf8').split('\\n').filter((l) => /\\/pulls$/.test(l)).length;
+    if (pulls > 1) { process.stderr.write('gh: No commit found for SHA: ' + m[1] + ' (HTTP 422)'); process.exit(1); }
+    out([]); process.exit(0);
+  }
+  if (mode === 'unpushed') { process.stderr.write('gh: No commit found for SHA: ' + m[1] + ' (HTTP 422)'); process.exit(1); }
+  out(mode === 'nopr' ? [] : [{ number: 7, state: 'open', head: { sha: m[1] } }]);
+}
+else if (/pulls\\/7$/.test(ep)) out({ number: 7, mergeable_state: 'clean' });
+else if ((m = ep.match(/runs\\?head_sha=([0-9a-f]{40})/))) out({ workflow_runs: [{ id: 41, head_sha: m[1], status: 'completed', html_url: process.env.FAKE_GH_NO_RUN_URL ? undefined : 'https://example.test/runs/41' }] });
+else if (/runs\\/41\\/jobs/.test(ep)) out({ jobs: (process.env.FAKE_GH_JOBS || 'test').split(',').map((name) => ({ id: name === 'test' ? 99 : 98, name, status: 'completed', conclusion: mode === 'red' && !(process.env.FAKE_GH_GREEN || '').split(',').includes(name) ? 'failure' : 'success', started_at: '2026-10-25T17:27:00Z', completed_at: '2026-10-25T17:30:30Z', html_url: 'https://example.test/job/' + (name === 'test' ? 99 : 98) })) });
+else if (/jobs\\/(99|98)\\/logs$/.test(ep)) {
+  const flagged = a.includes('--allow-escape-sequences');
+  const logMode = process.env.FAKE_GH_LOG;
+  if (logMode === 'gone') { process.stderr.write('HTTP 410: Gone'); process.exit(1); }
+  if (logMode === 'old' && flagged) { process.stderr.write('unknown flag: --allow-escape-sequences'); process.exit(1); }
+  if (!logMode && !flagged) { process.stderr.write('the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway'); process.exit(1); }
+  process.stdout.write(fs.readFileSync(process.env.FAKE_GH_LOG_FILE, 'utf8'));
+}
+else { process.stderr.write('unexpected gh ' + a.join(' ')); process.exit(1); }
+`;
+
+function fakeGhEnv(mode, logFile, extra = {}) {
+  const bin = tmpDir();
+  fs.writeFileSync(path.join(bin, 'gh'), FAKE_GH, { mode: 0o755 });
+  const calls = path.join(tmpDir(), 'calls.txt');
+  // CT_TEST_SUITE_SLOT_HELD=1 (#5119): the child skips the machine-wide suite slot exactly as under
+  // tools/run-tests.js, so a direct `node --test` of this file never queues on the real lock;
+  // withSlots() strips it again for the tests that exercise the slot.
+  const env = {
+    ...process.env, PATH: [bin, path.dirname(process.execPath), process.env.PATH].join(path.delimiter),
+    FAKE_GH_MODE: mode, FAKE_GH_CALLS: calls, FAKE_GH_LOG_FILE: logFile || '', CT_TEST_SUITE_SLOT_HELD: '1', ...extra,
+  };
+  delete env.NODE_TEST_CONTEXT;
+  return { env, calls };
+}
+
+function runCli(args, { cwd, env }) {
+  return new Promise((resolve) => {
+    execFile(process.execPath, [CLI, ...args], { maxBuffer: 10 * 1024 * 1024, cwd, env },
+      (err, stdout, stderr) => resolve({ code: err ? err.code : 0, stdout, stderr }));
+  });
+}
+
+// A repo whose base commit carries a test failing for an environment reason,
+// and a HEAD commit adding the declaration (with or without a ci block).
+function repoWith({ ci = true, extraFiles = {}, declExtra = {} } = {}) {
+  const repo = tmpDir();
+  const git = (...a) => execFileSync('git', a, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  initRepo(repo, { name: 'verify test', email: 'verify-test@example.invalid', cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  fs.mkdirSync(path.join(repo, 'tests'));
+  fs.writeFileSync(path.join(repo, 'tests', 'env.test.js'), "require('node:test')('env', () => { throw new Error('env-specific'); });\n");
+  fs.writeFileSync(path.join(repo, 'tests', 'ok.test.js'), "require('node:test')('ok', () => {});\n");
+  git('add', '.');
+  git('commit', '-q', '-m', 'base');
+  const baseSha = git('rev-parse', 'HEAD').trim();
+  const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+  git('checkout', '-q', '-b', 'feature');
+  const decl = {
+    checks: { tests: 'npm test' },
+    retry: { tests: 'node --test --test-reporter=tap {file}' },
+    rules: [{ match: '**', suites: '*', static: true }],
+    ...(ci ? { ci: { tests: { workflow: 'test.yml', job: 'test', waitSeconds: 5, pollSeconds: 1 } } } : {}),
+    ...declExtra,
+  };
+  fs.mkdirSync(path.join(repo, '.claude-tweaks'));
+  fs.writeFileSync(path.join(repo, '.claude-tweaks', 'verify-scope.json'), JSON.stringify(decl));
+  for (const [rel, body] of Object.entries(extraFiles)) fs.writeFileSync(path.join(repo, rel), body);
+  git('add', '.');
+  git('commit', '-q', '-m', 'head');
+  return { repo, git, baseSha, branch, gitDir: path.join(repo, '.git') };
+}
+
+// The CI job's log for `files`: a real TAP run in the repo, every line
+// timestamp-prefixed and the checkout root spelled as the runner's.
+function ciLogOf(r, files) {
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  const run = spawnSync(process.execPath, ['--test', '--test-reporter=tap', ...files], { cwd: r.repo, encoding: 'utf8', env });
+  const text = run.stdout.split(r.repo).join('/home/runner/work/proj/proj');
+  const file = path.join(tmpDir(), 'job.log');
+  fs.writeFileSync(file, text.split('\n').map((l) => `2026-10-25T17:28:00.1234567Z ${l}`).join('\n'));
+  return file;
+}
+
+function markerCommand(marker) {
+  return `node -e "require('fs').writeFileSync(process.argv[1], String(1))" "${marker}"`;
+}
+function localMarkerCmd(marker) {
+  return `tests=${markerCommand(marker)}`;
+}
+const KEY = { localRuns: 'on-request' };
+
+function ciRunDir(r) {
+  fs.mkdirSync(path.join(r.gitDir, 'info'), { recursive: true });
+  fs.appendFileSync(path.join(r.gitDir, 'info', 'exclude'), '.claude-tweaks/pipelines/\n');
+  return anchoredRunDir(r.repo);
+}
+const eventsOf = (runDir) => fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+function timingEntry(runDir) {
+  const events = [{ type: 'skill_invoked', skill: 'claude-tweaks:test', ts: '2000-01-01T00:00:00.000Z' }, ...eventsOf(runDir)];
+  return derivePhases({ events, now: new Date(Date.now() + 60000) }).phases.find((p) => p.phase === 'test').verify[0];
+}
+
+const readJson = (p) => JSON.parse(fs.readFileSync(p, 'utf8'));
+const reportOf = (r) => readJson(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'));
+const stampOf = (r) => readJson(path.join(r.gitDir, 'claude-tweaks-verify-pass.json'));
+
+test('a green CI job on HEAD writes a full pass stamp with source ci and runs no local suite (#4347 AC1)', { skip: SKIP }, async () => {
+  const r = repoWith();
+  const { env } = fakeGhEnv('green', ciLogOf(r, ['tests/ok.test.js']));
+  const marker = path.join(tmpDir(), 'ran-locally');
+  const res = await runCli(['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', r.branch, '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(!fs.existsSync(marker), 'the local suite must not run when CI answered');
+  assert.match(res.stdout, /^CI: tests — taken from test\.yml \/ test run 41 on HEAD \(success, https:\/\/example\.test\/runs\/41\)$/m);
+  const stamp = stampOf(r);
+  assert.strictEqual(stamp.scope, 'full');
+  assert.strictEqual(stamp.source, 'ci');
+  assert.deepStrictEqual(stamp.ci, { tests: { runId: 41, runUrl: 'https://example.test/runs/41' } });
+  const report = reportOf(r);
+  assert.strictEqual(report.ci[0].used, true);
+  assert.strictEqual(report.checks.tests.ci.runId, 41);
+  const status = JSON.parse((await runCli(['--stamp-status'], { cwd: r.repo, env })).stdout);
+  assert.strictEqual(status.verifiedHead, true);
+  assert.strictEqual(status.match, true);
+  assert.strictEqual(status.source, 'ci');
+});
+
+test('a red CI run whose only failure is red at the fork point is a baseline pass, re-running only that file (#4347 AC2)', { skip: SKIP }, async () => {
+  const r = repoWith();
+  const { env } = fakeGhEnv('red', ciLogOf(r, ['tests/env.test.js', 'tests/ok.test.js']));
+  const marker = path.join(tmpDir(), 'ran-locally');
+  const res = await runCli(['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', r.branch, '--baseline', r.baseSha, '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(!fs.existsSync(marker), 'the local full suite must not run');
+  const report = reportOf(r);
+  assert.strictEqual(report.baselineAdjudicated.verdict, 'pass');
+  assert.deepStrictEqual(report.baselineAdjudicated.failingFiles, ['tests/env.test.js']);
+  assert.deepStrictEqual(report.baselineAdjudicated.baselineFailing, ['tests/env.test.js']);
+  const stamp = stampOf(r);
+  assert.strictEqual(stamp.source, 'ci');
+  assert.ok(stamp.baseline, 'an adjudicated CI pass keeps the baseline marker');
+});
+
+test('a red CI run with a real failure fails verification and names the failing test from the CI log (#4347 AC3)', { skip: SKIP }, async () => {
+  const r = repoWith({ extraFiles: { 'tests/new.test.js': "require('node:test')('brand new check', () => { throw new Error('regressed'); });\n" } });
+  const { env } = fakeGhEnv('red', ciLogOf(r, ['tests/new.test.js', 'tests/ok.test.js']));
+  const marker = path.join(tmpDir(), 'ran-locally');
+  const res = await runCli(['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', r.branch, '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 1, res.stdout + res.stderr);
+  assert.ok(!fs.existsSync(marker));
+  assert.match(res.stdout, /### tests failing region/);
+  assert.match(res.stdout, /brand new check/);
+  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass.json')), 'a failing run never stamps');
+});
+
+test('HEAD with no CI run to take falls back to the local full run and names why in report.json (#4347 AC4)', { skip: SKIP }, async () => {
+  const r = repoWith();
+  const { env } = fakeGhEnv('nopr', '');
+  const marker = path.join(tmpDir(), 'ran-locally');
+  const res = await runCli(['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', r.branch, '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(fs.existsSync(marker), 'the suite must run locally');
+  assert.match(res.stdout, /^CI: tests — ran locally \(no-open-pr-at-head\)$/m);
+  assert.strictEqual(reportOf(r).ci[0].fallback, 'no-open-pr-at-head');
+  assert.strictEqual(stampOf(r).source, undefined, 'a local pass carries no source');
+});
+
+test('a dirty tree never takes CI, which never saw the edits — no gh call at all (#4347)', { skip: SKIP }, async () => {
+  const r = repoWith();
+  const { env, calls } = fakeGhEnv('green', '');
+  fs.writeFileSync(path.join(r.repo, 'tests', 'ok.test.js'), "require('node:test')('ok edited', () => {});\n");
+  const marker = path.join(tmpDir(), 'ran-locally');
+  await runCli(['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', r.branch, '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.ok(fs.existsSync(marker));
+  assert.strictEqual(reportOf(r).ci[0].fallback, 'dirty-tree');
+  assert.ok(!fs.existsSync(calls), 'gh must not be called for a dirty tree');
+});
+
+test('without a ci block, report, stamp and stdout carry nothing new and gh is never called (#4347 AC5)', { skip: SKIP }, async () => {
+  const r = repoWith({ ci: false });
+  const { env, calls } = fakeGhEnv('green', '');
+  const marker = path.join(tmpDir(), 'ran-locally');
+  const res = await runCli(['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', r.branch, '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(fs.existsSync(marker));
+  assert.ok(!/^CI:/m.test(res.stdout));
+  assert.ok(!('ci' in reportOf(r)));
+  assert.ok(!('ci' in reportOf(r).checks.tests));
+  const stamp = stampOf(r);
+  assert.ok(!('source' in stamp) && !('ci' in stamp));
+  const status = JSON.parse((await runCli(['--stamp-status'], { cwd: r.repo, env })).stdout);
+  assert.ok(!('source' in status) && !('ci' in status));
+  assert.ok(!fs.existsSync(calls));
+});
+
+test('AC7: a CI-answered run\'s verify event and timing entry carry ci and local: false (#5369)', { skip: SKIP }, async () => {
+  const r = repoWith();
+  const { env } = fakeGhEnv('green', ciLogOf(r, ['tests/ok.test.js']));
+  const runDir = ciRunDir(r);
+  const res = await runCli(['--run', runDir, '--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', r.branch, '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  const [ev] = eventsOf(runDir).filter((e) => e.type === 'verify');
+  assert.deepStrictEqual(ev.ci, [{ suite: 'tests', used: true, fallback: null, dirtyExempt: null }]);
+  assert.strictEqual(ev.local, false);
+  assert.strictEqual(Object.hasOwn(ev, 'noVerdict'), false);
+  const entry = timingEntry(runDir);
+  assert.deepStrictEqual(entry.ci, ev.ci);
+  assert.strictEqual(entry.local, false);
+});
+
+test('AC7: a suite that fell back to a local run records used: false and the named fallback (#5369)', { skip: SKIP }, async () => {
+  const r = repoWith();
+  const { env } = fakeGhEnv('nopr', '');
+  const runDir = ciRunDir(r);
+  const res = await runCli(['--run', runDir, '--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', r.branch, '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  const [ev] = eventsOf(runDir).filter((e) => e.type === 'verify');
+  assert.deepStrictEqual(ev.ci, [{ suite: 'tests', used: false, fallback: 'no-open-pr-at-head', dirtyExempt: null }]);
+});
+
+test('AC7: a run with no ci block carries local but no ci key (#5369)', async () => {
+  const r = repoWith({ ci: false });
+  const runDir = ciRunDir(r);
+  const { env } = fakeGhEnv('green', '');
+  const res = await runCli(['--run', runDir, '--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', r.branch, '--local', '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  const [ev] = eventsOf(runDir).filter((e) => e.type === 'verify');
+  assert.strictEqual(ev.local, true);
+  assert.strictEqual(Object.hasOwn(ev, 'ci'), false);
+});
+
+// #5119: the suite slot around CI-answered suites. slotEnv() strips the CT_TEST_SUITE_SLOT_HELD=1
+// this suite's runner sets; the slot dir does not exist beforehand, so a run that never tried for a
+// slot leaves it uncreated.
+const withSlots = (env, dir) => slotEnv(dir, {}, env);
+
+test('a green CI suite takes no slot (#5119)', { skip: SKIP }, async () => {
+  const r = repoWith();
+  const { env } = fakeGhEnv('green', ciLogOf(r, ['tests/ok.test.js']));
+  const dir = path.join(tmpDir(), 'slots');
+  const res = await runCli(['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', r.branch, '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env: withSlots(env, dir) });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(!('slot' in reportOf(r)));
+  assert.strictEqual(fs.existsSync(dir), false, 'no slot was tried for');
+});
+
+test('a red CI suite with no local retry takes no slot (#5119)', { skip: SKIP }, async () => {
+  const r = repoWith();
+  const { env } = fakeGhEnv('red', ciLogOf(r, ['tests/env.test.js', 'tests/ok.test.js']));
+  const dir = path.join(tmpDir(), 'slots');
+  const res = await runCli(['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', r.branch, '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env: withSlots(env, dir) });
+  assert.strictEqual(res.code, 1, res.stdout + res.stderr);
+  assert.strictEqual(reportOf(r).checks.tests.retryDecision.retry, false);
+  assert.ok(!('retrySlot' in reportOf(r).checks.tests), 'no retry hold, no retrySlot');
+  assert.strictEqual(fs.existsSync(dir), false, 'no slot was tried for');
+});
+
+test('a red CI suite\'s local flaky retry runs under a held subset-lane slot (#5119)', { skip: SKIP }, async () => {
+  const out = path.join(tmpDir(), 'held.txt');
+  const r = repoWith({
+    declExtra: {
+      flaky: { files: ['tests/env.test.js'] },
+      retry: { tests: `node -e "require('fs').writeFileSync(process.argv[1], String(process.env.CT_TEST_SUITE_SLOT_HELD))" "${out}" {file}` },
+    },
+  });
+  const { env } = fakeGhEnv('red', ciLogOf(r, ['tests/env.test.js', 'tests/ok.test.js']));
+  const dir = path.join(tmpDir(), 'slots');
+  const res = await runCli(['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', r.branch, '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env: withSlots(env, dir) });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  const report = reportOf(r);
+  assert.deepStrictEqual(report.checks.tests.flakyRetried, ['tests/env.test.js']);
+  const { waitedMs, ...retrySlot } = report.checks.tests.retrySlot;
+  assert.deepStrictEqual(retrySlot, { lane: 'subset', index: 0, slots: 1, source: 'default' }, 'the retry hold is recorded on the retried check');
+  assert.ok(Number.isInteger(waitedMs), String(waitedMs));
+  assert.ok(!('slot' in report), 'report.slot stays the checks hold\'s alone — no local check ran here');
+  assert.strictEqual(fs.readFileSync(out, 'utf8'), '1', 'the retry ran with the slot held');
+  assert.deepStrictEqual(fs.readdirSync(path.join(dir, 'subset')), [], 'the subset-lane slot was taken and freed');
+  assert.deepStrictEqual(fs.readdirSync(dir), ['subset'], 'never the full lane');
+});
+
+// #5368: a declared suite listed in subsetLaneSuites runs its own command on the subset lane.
+function listedDecl(m, extra = {}, listed = ['journeys']) {
+  return {
+    checks: { tests: { tests: 'npm test', journeys: markerCommand(m), ...extra } },
+    retry: { tests: 'node --test --test-reporter=tap {file}' },
+    localRuns: 'on-request',
+    ...(listed ? { subsetLaneSuites: listed } : {}),
+  };
+}
+const LISTED_ARGS = (r, more = []) => ['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', r.branch, ...more];
+
+test('AC1.1: a CI-answered run whose only local suite is listed takes the subset lane (#5368)', { skip: SKIP }, async () => {
+  const m = path.join(tmpDir(), 'm');
+  const r = repoWith({ declExtra: listedDecl(m) });
+  const { env } = fakeGhEnv('green', ciLogOf(r, ['tests/ok.test.js']));
+  const dir = path.join(tmpDir(), 'slots');
+  const res = await runCli(LISTED_ARGS(r), { cwd: r.repo, env: withSlots(env, dir) });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(fs.existsSync(m), 'journeys ran');
+  assert.strictEqual(reportOf(r).slot.lane, 'subset');
+  assert.deepStrictEqual(fs.readdirSync(dir), ['subset']);
+});
+
+test('AC3.1: the same run without subsetLaneSuites takes the full lane (#5368)', { skip: SKIP }, async () => {
+  const m = path.join(tmpDir(), 'm');
+  const r = repoWith({ declExtra: listedDecl(m, {}, null) });
+  const { env } = fakeGhEnv('green', ciLogOf(r, ['tests/ok.test.js']));
+  const res = await runCli(LISTED_ARGS(r), { cwd: r.repo, env: withSlots(env, path.join(tmpDir(), 'slots')) });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(fs.existsSync(m), 'journeys ran');
+  assert.strictEqual(reportOf(r).slot.lane, 'full');
+});
+
+test('AC3.2: a listed suite beside an unlisted declared suite still takes the full lane (#5368)', { skip: SKIP }, async () => {
+  const m = path.join(tmpDir(), 'm');
+  const m2 = path.join(tmpDir(), 'm2');
+  const r = repoWith({ declExtra: listedDecl(m, { other: markerCommand(m2) }) });
+  const { env } = fakeGhEnv('green', ciLogOf(r, ['tests/ok.test.js']));
+  const res = await runCli(LISTED_ARGS(r), { cwd: r.repo, env: withSlots(env, path.join(tmpDir(), 'slots')) });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(fs.existsSync(m) && fs.existsSync(m2), 'both ran');
+  assert.strictEqual(reportOf(r).slot.lane, 'full');
+});
+
+test('AC4.1: --cmd under a listed name takes the full lane (#5368)', { skip: SKIP }, async () => {
+  const m = path.join(tmpDir(), 'm');
+  const r = repoWith({ declExtra: listedDecl(m) });
+  const { env } = fakeGhEnv('green', ciLogOf(r, ['tests/ok.test.js']));
+  const res = await runCli(LISTED_ARGS(r, ['--cmd', `journeys=${markerCommand(m)}`]), { cwd: r.repo, env: withSlots(env, path.join(tmpDir(), 'slots')) });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(fs.existsSync(m), 'journeys ran');
+  assert.strictEqual(reportOf(r).slot.lane, 'full');
+});
+
+test('a SIGTERM during a CI-failed suite\'s local retry kills the retry and its forked grandchild, and frees its slot (#5119)', { skip: SKIP }, async () => {
+  const out = path.join(tmpDir(), 'retry-pid.txt');
+  const grandOut = path.join(tmpDir(), 'grandchild-pid.txt');
+  // The retry forks a grandchild that ignores SIGTERM, so only the group kill after the grace reaches it.
+  const script = path.join(tmpDir(), 'retry.js');
+  fs.writeFileSync(script, [
+    "const fs = require('fs');",
+    "const { spawn } = require('child_process');",
+    'const [out, grandOut] = process.argv.slice(2);',
+    "const grand = \"process.on('SIGTERM', () => {}); require('fs').writeFileSync(process.argv[1], String(process.pid)); setInterval(() => {}, 1000);\";",
+    "spawn(process.execPath, ['-e', grand, grandOut], { stdio: 'ignore', windowsHide: true });",
+    'fs.writeFileSync(out, String(process.pid));',
+    'setTimeout(() => {}, 30000);',
+  ].join('\n'));
+  const r = repoWith({
+    declExtra: {
+      flaky: { files: ['tests/env.test.js'] },
+      retry: { tests: `node "${script}" "${out}" "${grandOut}" {file}` },
+    },
+  });
+  const { env } = fakeGhEnv('red', ciLogOf(r, ['tests/env.test.js', 'tests/ok.test.js']));
+  const dir = path.join(tmpDir(), 'slots');
+  const child = spawn(process.execPath, [CLI, '--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', r.branch, '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], {
+    cwd: r.repo, env: withSlots(env, dir), stdio: 'ignore', timeout: 60000, killSignal: 'SIGKILL',
+  });
+  const exited = new Promise((resolve) => { child.on('exit', (c, s) => resolve([c, s])); });
+  const pause = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+  const pidIn = async (file) => {
+    for (const deadline = Date.now() + 20000; Date.now() < deadline;) {
+      const text = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+      if (/^\d+$/.test(text)) return Number(text);
+      await pause(50);
+    }
+    return NaN;
+  };
+  const retryPid = await pidIn(out);
+  const grandPid = await pidIn(grandOut);
+  assert.ok(Number.isInteger(retryPid) && Number.isInteger(grandPid), 'the retry and its grandchild started');
+  child.kill('SIGTERM');
+  const [code] = await exited;
+  const goneAfter = async (pid) => {
+    for (const deadline = Date.now() + 10000; Date.now() < deadline;) {
+      try { process.kill(pid, 0); } catch (err) { if (err.code === 'ESRCH') return true; }
+      await pause(50);
+    }
+    try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
+    return false;
+  };
+  const goneRetry = await goneAfter(retryPid);
+  const goneGrand = await goneAfter(grandPid);
+  assert.strictEqual(code, 143);
+  assert.ok(goneRetry, `the retry (pid ${retryPid}) was killed, not orphaned`);
+  assert.ok(goneGrand, `the retry's grandchild (pid ${grandPid}) was killed with its group, not orphaned`);
+  assert.deepStrictEqual(fs.readdirSync(path.join(dir, 'subset')), [], 'the subset-lane slot is freed');
+});
+
+// #5369: scoped runs under localRuns "on-request" — a CI-declared suite never runs on this machine without --local.
+const SCOPE = (r) => ['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', r.branch];
+const ciOf = (jobName) => ({ workflow: 'test.yml', job: jobName, waitSeconds: 5, pollSeconds: 1 });
+const TWO_SUITES = (otherMarker) => ({
+  ...KEY,
+  checks: { tests: { tests: 'npm test', other: markerCommand(otherMarker) } },
+  ci: { tests: ciOf('test'), other: ciOf('other') },
+});
+const NO_VERDICT_FIRST = (suite, why) => `verify.js: no verdict yet for suite "${suite}" — CI could not answer (${why}), and the declaration's localRuns "on-request" keeps it off this machine; no check ran and no pass stamp was written.`;
+const HNP_FIRST = (suite, sha) => `verify.js: no verdict yet for suite "${suite}" — CI could not answer (head-not-pushed): HEAD ${sha.slice(0, 9)} is not on the remote; no check ran and no pass stamp was written.`;
+const headOf = (r) => r.git('rev-parse', 'HEAD').trim();
+const PUSH_LINE = '  Push the branch (commit first if the tree is dirty), then re-run this command,';
+const callLines = (calls) => (fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').trim().split('\n') : []);
+
+test('AC1.1: under the key an unpushed HEAD exits 3 before any check, prints head-not-pushed and both ways on, writes no stamp (#5369)', { skip: SKIP }, async () => {
+  const r = repoWith({ declExtra: KEY });
+  const { env } = fakeGhEnv('unpushed', '');
+  const marker = path.join(tmpDir(), 'm');
+  // A previous run's report must not survive an exit 3 (it would read as this run's answer).
+  fs.mkdirSync(path.join(r.gitDir, 'claude-tweaks-verify'), { recursive: true });
+  fs.writeFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), '{"pass":true}\n');
+  const res = await runCli([...SCOPE(r), '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 3, res.stdout + res.stderr);
+  assert.ok(!fs.existsSync(marker), 'no check may run');
+  const [first, second, third] = res.stderr.split('\n');
+  assert.strictEqual(first, HNP_FIRST('tests', headOf(r)));
+  assert.strictEqual(second, PUSH_LINE);
+  assert.strictEqual(third, '  or re-run it with --local to run the suite on this machine.');
+  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass.json')));
+  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json')), 'exit 3 writes no report and removes the stale one');
+});
+
+test('AC1.2: under the key a green CI job on HEAD is taken from CI and the suite never runs here (#5369)', { skip: SKIP }, async () => {
+  const r = repoWith({ declExtra: KEY });
+  const { env } = fakeGhEnv('green', ciLogOf(r, ['tests/ok.test.js']));
+  const marker = path.join(tmpDir(), 'm');
+  const res = await runCli([...SCOPE(r), '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(!fs.existsSync(marker), 'the suite must not run here');
+  assert.strictEqual(stampOf(r).source, 'ci');
+});
+
+test('AC2.1: under the key --local makes no gh call and runs the suite here (#5369)', { skip: SKIP }, async () => {
+  const r = repoWith({ declExtra: KEY });
+  const { env, calls } = fakeGhEnv('green', ciLogOf(r, ['tests/ok.test.js']));
+  const marker = path.join(tmpDir(), 'm');
+  const res = await runCli([...SCOPE(r), '--local', '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(fs.existsSync(marker), 'the suite runs here');
+  assert.ok(!fs.existsSync(calls), 'gh must not be called');
+  assert.strictEqual(reportOf(r).ci[0].fallback, 'local-requested');
+  assert.match(res.stdout, /^CI: tests — ran locally \(local-requested\)$/m);
+});
+
+test('AC6.1: under the key a suite with no ci source runs here without --local (#5369)', { skip: SKIP }, async () => {
+  const testsMarker = path.join(tmpDir(), 'tests-m');
+  const otherMarker = path.join(tmpDir(), 'other-m');
+  const r = repoWith({
+    declExtra: { ...KEY, checks: { tests: { tests: 'npm test', other: markerCommand(otherMarker) } } },
+  });
+  const { env } = fakeGhEnv('green', ciLogOf(r, ['tests/ok.test.js']));
+  const res = await runCli([...SCOPE(r), '--cmd', localMarkerCmd(testsMarker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(!fs.existsSync(testsMarker), 'CI answered the ci-declared suite');
+  assert.ok(fs.existsSync(otherMarker), 'the suite without a ci source runs here');
+});
+
+test('two CI suites under the key, the first unanswered: exit 3 names it, the second is not-consulted and never fetched (#5369)', { skip: SKIP }, async () => {
+  const testsMarker = path.join(tmpDir(), 'tests-m');
+  const otherMarker = path.join(tmpDir(), 'other-m');
+  const r = repoWith({ declExtra: TWO_SUITES(otherMarker) });
+  const { env, calls } = fakeGhEnv('unpushed', '');
+  const runDir = ciRunDir(r);
+  const res = await runCli(['--run', runDir, ...SCOPE(r), '--cmd', localMarkerCmd(testsMarker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 3, res.stdout + res.stderr);
+  assert.strictEqual(res.stderr.split('\n')[0], HNP_FIRST('tests', headOf(r)));
+  const [ev] = eventsOf(runDir).filter((e) => e.type === 'verify');
+  assert.deepStrictEqual(ev.ci, [
+    { suite: 'tests', used: false, fallback: 'head-not-pushed', dirtyExempt: null },
+    { suite: 'other', used: false, fallback: 'not-consulted', dirtyExempt: null },
+  ]);
+  assert.strictEqual(callLines(calls).length, 1, `only the first suite's one request was made: ${callLines(calls)}`);
+  assert.ok(!fs.existsSync(testsMarker) && !fs.existsSync(otherMarker), 'neither suite ran here');
+});
+
+test('two CI suites under the key: the second unanswered one exits 3 naming it, neither runs here (#5369)', { skip: SKIP }, async () => {
+  const testsMarker = path.join(tmpDir(), 'tests-m');
+  const otherMarker = path.join(tmpDir(), 'other-m');
+  const r = repoWith({ declExtra: TWO_SUITES(otherMarker) });
+  const { env } = fakeGhEnv('green', ciLogOf(r, ['tests/ok.test.js']));
+  const res = await runCli([...SCOPE(r), '--cmd', localMarkerCmd(testsMarker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 3, res.stdout + res.stderr);
+  assert.strictEqual(res.stderr.split('\n')[0], NO_VERDICT_FIRST('other', 'ci-job-not-found'));
+  assert.ok(!fs.existsSync(testsMarker) && !fs.existsSync(otherMarker), 'neither suite ran here');
+});
+
+test('a red first suite and an unanswered second suite under the key exit 3 before any local retry (#5369)', { skip: SKIP }, async () => {
+  const build = (declKey) => {
+    const retryMarker = path.join(tmpDir(), 'retry-m');
+    const otherMarker = path.join(tmpDir(), 'other-m');
+    const testsMarker = path.join(tmpDir(), 'tests-m');
+    const r = repoWith({
+      declExtra: {
+        ...declKey,
+        checks: { tests: { tests: 'npm test', other: markerCommand(otherMarker) } },
+        ci: { tests: ciOf('test'), other: ciOf('other') },
+        flaky: { files: ['tests/env.test.js'], maxRetries: 1 },
+        retry: { tests: `${markerCommand(retryMarker)} {file}` },
+      },
+    });
+    const { env } = fakeGhEnv('red', ciLogOf(r, ['tests/env.test.js', 'tests/ok.test.js']));
+    return { r, env, retryMarker, otherMarker, testsMarker };
+  };
+  const keyed = build(KEY);
+  const res = await runCli([...SCOPE(keyed.r), '--cmd', localMarkerCmd(keyed.testsMarker)], { cwd: keyed.r.repo, env: keyed.env });
+  assert.strictEqual(res.code, 3, res.stdout + res.stderr);
+  assert.strictEqual(res.stderr.split('\n')[0], NO_VERDICT_FIRST('other', 'ci-job-not-found'));
+  assert.ok(!fs.existsSync(keyed.retryMarker), 'no retry ran before the no-verdict exit');
+  assert.ok(!fs.existsSync(keyed.testsMarker) && !fs.existsSync(keyed.otherMarker), 'neither suite ran here');
+  // Control: without the key the identical repo reaches the in-loop retry.
+  const plain = build({});
+  await runCli([...SCOPE(plain.r), '--cmd', localMarkerCmd(plain.testsMarker)], { cwd: plain.r.repo, env: plain.env });
+  assert.ok(fs.existsSync(plain.retryMarker), 'without the key the retry runs, so the fixture does reach it');
+});
+
+test('under the key a red CI suite\'s flaky retry runs after every suite answered, here, and is recorded (#5369)', { skip: SKIP }, async () => {
+  const retryMarker = path.join(tmpDir(), 'retry-m');
+  const otherMarker = path.join(tmpDir(), 'other-m');
+  const r = repoWith({
+    declExtra: {
+      ...TWO_SUITES(otherMarker),
+      flaky: { files: ['tests/env.test.js'], maxRetries: 1 },
+      retry: { tests: `${markerCommand(retryMarker)} {file}` },
+    },
+  });
+  const { env } = fakeGhEnv('red', ciLogOf(r, ['tests/env.test.js', 'tests/ok.test.js']), { FAKE_GH_JOBS: 'test,other', FAKE_GH_GREEN: 'other' });
+  const res = await runCli([...SCOPE(r), '--cmd', localMarkerCmd(path.join(tmpDir(), 'tests-m'))], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(fs.existsSync(retryMarker), 'the deferred retry ran');
+  assert.strictEqual(reportOf(r).checks.tests.retryDecision.retry, true);
+  assert.deepStrictEqual(reportOf(r).checks.tests.flakyRetried, ['tests/env.test.js']);
+  assert.ok(!fs.existsSync(otherMarker), 'CI answered the second suite');
+});
+
+test('under the key a stale baseline worktree warning is printed after the no-verdict lines, never before (#5369)', { skip: SKIP }, async () => {
+  const r = repoWith({ declExtra: KEY });
+  const { env } = fakeGhEnv('unpushed', '');
+  const staleParent = fs.realpathSync(scratchDir('ct-verify-base-'));
+  r.git('worktree', 'add', '--detach', path.join(staleParent, 'wt'), 'HEAD');
+  const res = await runCli([...SCOPE(r), '--baseline', 'HEAD', '--baseline-cmd', 'tests=node -e 0 {file}', '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 3, res.stdout + res.stderr);
+  const lines = res.stderr.split('\n');
+  assert.strictEqual(lines[0], HNP_FIRST('tests', headOf(r)));
+  assert.match(lines[3], /^verify\.js: a stale baseline scratch worktree is registered at /);
+});
+
+test('without the key a stale baseline worktree warning on an unpushed HEAD is printed after the no-verdict lines, never before (#5800)', { skip: SKIP }, async () => {
+  const r = repoWith();
+  const { env } = fakeGhEnv('unpushed', '');
+  const staleParent = fs.realpathSync(scratchDir('ct-verify-base-'));
+  r.git('worktree', 'add', '--detach', path.join(staleParent, 'wt'), 'HEAD');
+  const res = await runCli([...SCOPE(r), '--baseline', 'HEAD', '--baseline-cmd', 'tests=node -e 0 {file}', '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 3, res.stdout + res.stderr);
+  const lines = res.stderr.split('\n');
+  assert.strictEqual(lines[0], HNP_FIRST('tests', headOf(r)));
+  assert.match(lines[3], /^verify\.js: a stale baseline scratch worktree is registered at /);
+});
+
+test('without the key the stale baseline warning precedes a --scope usage error and one from an unreadable declaration (#5369 AC4)', { skip: SKIP }, async () => {
+  const r = repoWith();
+  const { env } = fakeGhEnv('unpushed', '');
+  const staleParent = fs.realpathSync(scratchDir('ct-verify-base-'));
+  r.git('worktree', 'add', '--detach', path.join(staleParent, 'wt'), 'HEAD');
+  const base = ['--baseline', 'HEAD', '--baseline-cmd', 'tests=node -e 0 {file}'];
+  const stale = /^verify\.js: a stale baseline scratch worktree is registered at /;
+  const badCmd = await runCli([...SCOPE(r), ...base, '--cmd', 'nosuchsuite=node -e 0'], { cwd: r.repo, env });
+  assert.strictEqual(badCmd.code, 2, badCmd.stdout + badCmd.stderr);
+  assert.match(badCmd.stderr.split('\n')[0], stale);
+  assert.match(badCmd.stderr, /is not types, lint, or a declared suite/);
+  const missing = await runCli(['--scope', '.claude-tweaks/no-such.json', '--integration-branch', r.branch, ...base], { cwd: r.repo, env });
+  assert.strictEqual(missing.code, 2, missing.stdout + missing.stderr);
+  assert.match(missing.stderr.split('\n')[0], stale);
+  fs.writeFileSync(path.join(r.repo, 'bad.json'), '{"checks": 3}');
+  const invalid = await runCli(['--scope', 'bad.json', '--integration-branch', r.branch, ...base], { cwd: r.repo, env });
+  assert.strictEqual(invalid.code, 2, invalid.stdout + invalid.stderr);
+  assert.match(invalid.stderr.split('\n')[0], stale);
+});
+
+test('AC1.1, AC1.2: without the key an unpushed HEAD exits 3, runs no check, leaves no report, and names the short sha (#5800)', { skip: SKIP }, async () => {
+  const r = repoWith();
+  const { env: baseEnv } = fakeGhEnv('unpushed', '');
+  const slotDir = path.join(tmpDir(), 'slots');
+  const env = withSlots(baseEnv, slotDir);
+  const marker = path.join(tmpDir(), 'm');
+  fs.mkdirSync(path.join(r.gitDir, 'claude-tweaks-verify'), { recursive: true });
+  fs.writeFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), '{"pass":true}\n');
+  const res = await runCli([...SCOPE(r), '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 3, res.stdout + res.stderr);
+  assert.ok(!fs.existsSync(marker), 'no check may run');
+  const lines = res.stderr.split('\n');
+  assert.strictEqual(lines[0], HNP_FIRST('tests', headOf(r)));
+  assert.strictEqual(lines[1], PUSH_LINE);
+  assert.strictEqual(lines[2], '  or re-run it with --local to run the suite on this machine.');
+  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass.json')));
+  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json')), 'exit 3 removes the stale report');
+  assert.strictEqual(fs.existsSync(slotDir), false, 'no slot was tried for');
+});
+
+test('AC2.1: under the key an unpushed HEAD exits 3 with the same head-not-pushed first line naming the short sha (#5800)', { skip: SKIP }, async () => {
+  const r = repoWith({ declExtra: KEY });
+  const { env } = fakeGhEnv('unpushed', '');
+  const res = await runCli([...SCOPE(r), '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 3, res.stdout + res.stderr);
+  assert.strictEqual(res.stderr.split('\n')[0], HNP_FIRST('tests', headOf(r)));
+});
+
+test('AC3.1-AC3.2: without the key a no-open-pr-at-head fallback still runs here, announces it before the check, and keeps the report row (#5800)', { skip: SKIP }, async () => {
+  const r = repoWith();
+  const { env } = fakeGhEnv('nopr', '');
+  const marker = path.join(tmpDir(), 'ran-locally');
+  const res = await runCli([...SCOPE(r), '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(fs.existsSync(marker), 'the suite must run locally');
+  assert.strictEqual(res.stderr.split('\n')[0], 'verify.js: CI could not answer suite "tests" (no-open-pr-at-head) — running it on this machine');
+  assert.match(res.stdout, /^CI: tests — ran locally \(no-open-pr-at-head\)$/m);
+});
+
+test('AC4.1: without the key two CI suites on an unpushed HEAD exit 3, the second not-consulted and never fetched (#5800)', { skip: SKIP }, async () => {
+  const testsMarker = path.join(tmpDir(), 'tests-m');
+  const otherMarker = path.join(tmpDir(), 'other-m');
+  const { localRuns, ...noKey } = TWO_SUITES(otherMarker);
+  const r = repoWith({ declExtra: noKey });
+  const { env, calls } = fakeGhEnv('unpushed', '');
+  const runDir = ciRunDir(r);
+  const res = await runCli(['--run', runDir, ...SCOPE(r), '--cmd', localMarkerCmd(testsMarker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 3, res.stdout + res.stderr);
+  const [ev] = eventsOf(runDir).filter((e) => e.type === 'verify');
+  assert.strictEqual(ev.noVerdict, true);
+  assert.deepStrictEqual(ev.ci, [
+    { suite: 'tests', used: false, fallback: 'head-not-pushed', dirtyExempt: null },
+    { suite: 'other', used: false, fallback: 'not-consulted', dirtyExempt: null },
+  ]);
+  assert.strictEqual(callLines(calls).length, 1, `only the first suite's one request was made: ${callLines(calls)}`);
+  assert.ok(!fs.existsSync(testsMarker) && !fs.existsSync(otherMarker), 'neither suite ran here');
+});
+
+test('AC5.1: --local on an unpushed HEAD without the key runs here, exits 0, calls no gh and prints no fallback notice (#5800)', { skip: SKIP }, async () => {
+  const r = repoWith();
+  const { env, calls } = fakeGhEnv('unpushed', '');
+  const marker = path.join(tmpDir(), 'm');
+  const res = await runCli([...SCOPE(r), '--local', '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(fs.existsSync(marker), 'the suite runs here');
+  assert.ok(!fs.existsSync(calls), 'gh must not be called');
+  assert.ok(!res.stderr.includes('CI could not answer'), res.stderr);
+});
+
+test('without the key a dirty tree still runs here and announces dirty-tree (#5800)', { skip: SKIP }, async () => {
+  const r = repoWith();
+  const { env } = fakeGhEnv('green', '');
+  fs.writeFileSync(path.join(r.repo, 'tests', 'ok.test.js'), "require('node:test')('ok edited', () => {});\n");
+  const marker = path.join(tmpDir(), 'm');
+  const res = await runCli([...SCOPE(r), '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(fs.existsSync(marker));
+  assert.ok(res.stderr.includes('verify.js: CI could not answer suite "tests" (dirty-tree) — running it on this machine'), res.stderr);
+});
+
+test('without the key a suite that fell back before an unpushed second suite prints no notice and keeps the no-verdict line first (#5800)', { skip: SKIP }, async () => {
+  const testsMarker = path.join(tmpDir(), 'tests-m');
+  const otherMarker = path.join(tmpDir(), 'other-m');
+  const { localRuns, ...noKey } = TWO_SUITES(otherMarker);
+  const r = repoWith({ declExtra: noKey });
+  const { env } = fakeGhEnv('green', '', { FAKE_GH_UNPUSHED_AFTER: '1' });
+  const res = await runCli([...SCOPE(r), '--cmd', localMarkerCmd(testsMarker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 3, res.stdout + res.stderr);
+  assert.strictEqual(res.stderr.split('\n')[0], HNP_FIRST('other', headOf(r)));
+  assert.ok(!res.stderr.includes('— running it on this machine'), res.stderr);
+  assert.ok(!fs.existsSync(testsMarker) && !fs.existsSync(otherMarker), 'neither suite ran here');
+});
+
+test('without the key a local fallback prints its notice before a stale baseline worktree warning (#5800)', { skip: SKIP }, async () => {
+  const r = repoWith();
+  const { env } = fakeGhEnv('nopr', '');
+  const staleParent = fs.realpathSync(scratchDir('ct-verify-base-'));
+  r.git('worktree', 'add', '--detach', path.join(staleParent, 'wt'), 'HEAD');
+  const res = await runCli([...SCOPE(r), '--baseline', 'HEAD', '--baseline-cmd', 'tests=node -e 0 {file}', '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  const lines = res.stderr.split('\n');
+  assert.strictEqual(lines[0], 'verify.js: CI could not answer suite "tests" (no-open-pr-at-head) — running it on this machine');
+  assert.match(lines[1], /^verify\.js: a stale baseline scratch worktree is registered at /);
+});
+
+test('under the key no fallback notice is printed (#5800)', { skip: SKIP }, async () => {
+  const r = repoWith({ declExtra: KEY });
+  const { env } = fakeGhEnv('nopr', '');
+  const res = await runCli([...SCOPE(r), '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 3, res.stdout + res.stderr);
+  assert.ok(!res.stderr.includes('— running it on this machine'), res.stderr);
+});
+
+test('a dirty tree under the key exits 3 with dirty-tree and calls no gh (#5369)', { skip: SKIP }, async () => {
+  const r = repoWith({ declExtra: KEY });
+  const { env, calls } = fakeGhEnv('green', '');
+  fs.writeFileSync(path.join(r.repo, 'tests', 'ok.test.js'), "require('node:test')('ok edited', () => {});\n");
+  const marker = path.join(tmpDir(), 'm');
+  const res = await runCli([...SCOPE(r), '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 3, res.stdout + res.stderr);
+  assert.strictEqual(res.stderr.split('\n')[0], NO_VERDICT_FIRST('tests', 'dirty-tree'));
+  assert.ok(!fs.existsSync(calls), 'gh must not be called for a dirty tree');
+  assert.ok(!fs.existsSync(marker));
+});
+
+test('a dirty tree under the key with two CI suites names the first and leaves the second not-consulted (#5369)', { skip: SKIP }, async () => {
+  const r = repoWith({ declExtra: TWO_SUITES(path.join(tmpDir(), 'other-m')) });
+  const { env, calls } = fakeGhEnv('green', '');
+  fs.writeFileSync(path.join(r.repo, 'tests', 'ok.test.js'), "require('node:test')('ok edited', () => {});\n");
+  const runDir = ciRunDir(r);
+  const res = await runCli(['--run', runDir, ...SCOPE(r), '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 3, res.stdout + res.stderr);
+  const [ev] = eventsOf(runDir).filter((e) => e.type === 'verify');
+  assert.deepStrictEqual(ev.ci, [
+    { suite: 'tests', used: false, fallback: 'dirty-tree', dirtyExempt: null },
+    { suite: 'other', used: false, fallback: 'not-consulted', dirtyExempt: null },
+  ]);
+  assert.ok(!fs.existsSync(calls), 'gh must not be called');
+});
+
+test('AC9.3: under the key a red CI job with no downloadable log exits 1, names the run URL, and runs nothing here (#5369)', { skip: SKIP }, async () => {
+  const r = repoWith({ declExtra: KEY });
+  const { env } = fakeGhEnv('red', '', { FAKE_GH_LOG: 'gone' });
+  const marker = path.join(tmpDir(), 'm');
+  const res = await runCli([...SCOPE(r), '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 1, res.stdout + res.stderr);
+  assert.ok(!fs.existsSync(marker), 'nothing runs here');
+  assert.match(res.stdout, /^CI: tests — taken from test\.yml \/ test run 41 on HEAD \(failure, https:\/\/example\.test\/runs\/41; its log could not be downloaded — pass --local to reproduce the failure here\)$/m);
+  assert.deepStrictEqual(reportOf(r).checks.tests.retryDecision, { retry: false, reason: 'ci-log-unavailable' });
+  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass.json')), 'a failing run never stamps');
+});
+
+test('AC9.3: a logless red job whose run has no html_url still names the run, never null (#5369)', { skip: SKIP }, async () => {
+  const r = repoWith({ declExtra: KEY });
+  const { env } = fakeGhEnv('red', '', { FAKE_GH_LOG: 'gone', FAKE_GH_NO_RUN_URL: '1' });
+  const res = await runCli([...SCOPE(r), '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 1, res.stdout + res.stderr);
+  assert.match(res.stdout, /^CI: tests — taken from test\.yml \/ test run 41 on HEAD \(failure, run 41; its log could not be downloaded/m);
+  assert.doesNotMatch(res.stdout, /null/);
+});
+
+test('AC9.2: an older gh that rejects --allow-escape-sequences still takes the red verdict from CI (#5369)', { skip: SKIP }, async () => {
+  const r = repoWith({ extraFiles: { 'tests/new.test.js': "require('node:test')('brand new check', () => { throw new Error('regressed'); });\n" } });
+  const { env } = fakeGhEnv('red', ciLogOf(r, ['tests/new.test.js', 'tests/ok.test.js']), { FAKE_GH_LOG: 'old' });
+  const marker = path.join(tmpDir(), 'm');
+  const res = await runCli([...SCOPE(r), '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 1, res.stdout + res.stderr);
+  assert.ok(!fs.existsSync(marker));
+  assert.match(res.stdout, /brand new check/);
+});
+
+test('AC7: an exit-3 run writes a verify event with noVerdict and pass null; a --local run records local-requested (#5369)', { skip: SKIP }, async () => {
+  const r = repoWith({ declExtra: KEY });
+  const { env } = fakeGhEnv('unpushed', '');
+  const runDir = ciRunDir(r);
+  const marker = path.join(tmpDir(), 'm');
+  const first = await runCli(['--run', runDir, ...SCOPE(r), '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(first.code, 3, first.stdout + first.stderr);
+  const second = await runCli(['--run', runDir, ...SCOPE(r), '--local', '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(second.code, 0, second.stdout + second.stderr);
+  const [noVerdict, local] = eventsOf(runDir).filter((e) => e.type === 'verify');
+  assert.strictEqual(noVerdict.noVerdict, true);
+  assert.strictEqual(noVerdict.pass, null);
+  assert.deepStrictEqual(noVerdict.suitesRun, []);
+  assert.deepStrictEqual(noVerdict.ci, [{ suite: 'tests', used: false, fallback: 'head-not-pushed', dirtyExempt: null }]);
+  assert.strictEqual(noVerdict.local, false);
+  assert.strictEqual(local.local, true);
+  assert.deepStrictEqual(local.ci, [{ suite: 'tests', used: false, fallback: 'local-requested', dirtyExempt: null }]);
+});
+
+test('an exit-3 run takes no suite slot (#5369)', { skip: SKIP }, async () => {
+  const r = repoWith({ declExtra: KEY });
+  const { env } = fakeGhEnv('unpushed', '');
+  const dir = path.join(tmpDir(), 'slots');
+  const res = await runCli([...SCOPE(r), '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env: withSlots(env, dir) });
+  assert.strictEqual(res.code, 3, res.stdout + res.stderr);
+  assert.strictEqual(fs.existsSync(dir), false, 'no slot was tried for');
+});
+
+// #5369: an unscoped run, or a --stamp-suite chunk, of a CI-declared suite under localRuns "on-request".
+// None of these needs the fake gh to run, so none takes SKIP.
+const DECL_PATH = '.claude-tweaks/verify-scope.json';
+
+test('AC3.1: under the key an unscoped --cmd tests run exits 2 naming --scope and --local, and runs nothing (#5369)', async () => {
+  const r = repoWith({ declExtra: KEY });
+  const { env } = fakeGhEnv('green', '');
+  const marker = path.join(tmpDir(), 'm');
+  const res = await runCli(['--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 2, res.stdout + res.stderr);
+  assert.strictEqual(res.stderr.split('\n')[0], `verify.js: ${DECL_PATH} sets localRuns "on-request", so the CI-declared suite "tests" runs on this machine only when asked: pass --scope ${DECL_PATH} to take it from CI, or --local to run it here.`);
+  assert.ok(!fs.existsSync(marker));
+});
+
+test('AC3.2: under the key an unscoped --local run runs the full command here (#5369)', async () => {
+  const r = repoWith({ declExtra: KEY });
+  const { env } = fakeGhEnv('green', '');
+  const marker = path.join(tmpDir(), 'm');
+  const res = await runCli(['--local', '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(fs.existsSync(marker), 'the suite runs here');
+});
+
+test('AC6.1: under the key --stamp-status and --changed-files need no --local (#5369)', async () => {
+  const r = repoWith({ declExtra: KEY });
+  const { env } = fakeGhEnv('green', '');
+  const status = await runCli(['--stamp-status'], { cwd: r.repo, env });
+  assert.strictEqual(status.code, 0, status.stdout + status.stderr);
+  assert.strictEqual(typeof JSON.parse(status.stdout).verifiedHead, 'boolean');
+  const changed = await runCli(['--changed-files', '--integration-branch', r.branch], { cwd: r.repo, env });
+  assert.strictEqual(changed.code, 0, changed.stdout + changed.stderr);
+  assert.ok(Array.isArray(JSON.parse(changed.stdout).files));
+});
+
+test('an unscoped run naming only non-CI checks runs under the key (#5369)', async () => {
+  const r = repoWith({ declExtra: KEY });
+  const { env } = fakeGhEnv('green', '');
+  const marker = path.join(tmpDir(), 'm');
+  const res = await runCli(['--cmd', `lint=${markerCommand(marker)}`], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(fs.existsSync(marker));
+});
+
+test('Decision 2: under the key a --stamp-suite chunk of a CI-declared suite exits 2 naming --local, calls no gh and runs nothing (#5369)', async () => {
+  const r = repoWith({ declExtra: KEY });
+  const { env, calls } = fakeGhEnv('green', '');
+  const marker = path.join(tmpDir(), 'm');
+  const res = await runCli([...SCOPE(r), '--no-stamp', '--stamp-suite', '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 2, res.stdout + res.stderr);
+  assert.ok(!fs.existsSync(marker));
+  assert.ok(!fs.existsSync(calls), 'gh must not be called');
+  assert.strictEqual(res.stderr.split('\n')[0], `verify.js: ${DECL_PATH} sets localRuns "on-request", so the --stamp-suite chunk of the CI-declared suite "tests" is a run on this machine: pass --local to run it here.`);
+});
+
+test('Decision 2: under the key a --stamp-suite chunk with --local runs here, and a chunk naming only non-CI checks needs no --local (#5369)', async () => {
+  const r = repoWith({ declExtra: KEY });
+  const { env, calls } = fakeGhEnv('green', '');
+  const marker = path.join(tmpDir(), 'm');
+  const withLocal = await runCli([...SCOPE(r), '--no-stamp', '--stamp-suite', '--local', '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(withLocal.code, 0, withLocal.stdout + withLocal.stderr);
+  assert.ok(fs.existsSync(marker), 'the chunk runs here');
+  assert.ok(!fs.existsSync(calls), 'gh must not be called');
+  const m2 = path.join(tmpDir(), 'm2');
+  const nonCi = await runCli([...SCOPE(r), '--no-stamp', '--stamp-suite', '--cmd', `lint=${markerCommand(m2)}`], { cwd: r.repo, env });
+  assert.strictEqual(nonCi.code, 0, nonCi.stdout + nonCi.stderr);
+  assert.ok(fs.existsSync(m2));
+});
+
+test('Decision 2: without the key a --stamp-suite chunk runs as today (#5369)', async () => {
+  const r = repoWith();
+  const { env } = fakeGhEnv('green', '');
+  const marker = path.join(tmpDir(), 'm');
+  const res = await runCli([...SCOPE(r), '--no-stamp', '--stamp-suite', '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(fs.existsSync(marker));
+});
+
+test('an invalid default declaration that keeps ci.tests and the key never refuses an unscoped run (#5369)', async () => {
+  const r = repoWith({ declExtra: { ...KEY, concurrency: { suiteSlots: 'many' } } });
+  const { env } = fakeGhEnv('green', '');
+  const marker = path.join(tmpDir(), 'm');
+  const res = await runCli(['--cmd', localMarkerCmd(marker)], { cwd: r.repo, env: withSlots(env, path.join(tmpDir(), 'slots')) });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(res.stderr.includes('concurrency ignored'), `the fixture must be invalid: ${res.stderr}`);
+  assert.ok(fs.existsSync(marker));
+});
+
+test('without the key an unscoped --cmd tests run on a project with a ci block runs here (#5369)', async () => {
+  const r = repoWith();
+  const { env } = fakeGhEnv('green', '');
+  const marker = path.join(tmpDir(), 'm');
+  const res = await runCli(['--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(fs.existsSync(marker));
+});
+
+test('under the key a CI-declared suite after a non-CI --cmd is still refused, unscoped and as a chunk (#5369)', async () => {
+  const r = repoWith({ declExtra: KEY });
+  const { env } = fakeGhEnv('green', '');
+  const lintMarker = path.join(tmpDir(), 'lint-m');
+  const marker = path.join(tmpDir(), 'm');
+  const cmds = ['--cmd', `lint=${markerCommand(lintMarker)}`, '--cmd', localMarkerCmd(marker)];
+  const unscoped = await runCli(cmds, { cwd: r.repo, env });
+  assert.strictEqual(unscoped.code, 2, unscoped.stdout + unscoped.stderr);
+  const chunk = await runCli([...SCOPE(r), '--no-stamp', '--stamp-suite', ...cmds], { cwd: r.repo, env });
+  assert.strictEqual(chunk.code, 2, chunk.stdout + chunk.stderr);
+  assert.ok(!fs.existsSync(marker) && !fs.existsSync(lintMarker));
+});
+
+test('an invalid default declaration prints its concurrency-ignored line exactly once (#5369)', async () => {
+  const r = repoWith({ ci: false, declExtra: KEY });
+  const { env } = fakeGhEnv('green', '');
+  const marker = path.join(tmpDir(), 'm');
+  const res = await runCli(['--cmd', localMarkerCmd(marker)], { cwd: r.repo, env: withSlots(env, path.join(tmpDir(), 'slots')) });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.strictEqual((res.stderr.match(/verify\.js: concurrency ignored — /g) || []).length, 1, res.stderr);
+  assert.ok(res.stderr.includes('localRuns: needs a ci block'), res.stderr);
+});
+
+const INERT_RULES = [{ match: 'notes.md', suites: [], static: false }, { match: '**', suites: '*', static: false }];
+const INERT_LINE = /^CI: tree dirty only in inert paths \(notes\.md\) — taking CI verdicts on HEAD$/m;
+
+async function inertRun(r, extraArgs = []) {
+  const { env, calls } = fakeGhEnv('green', ciLogOf(r, ['tests/ok.test.js']));
+  const marker = path.join(tmpDir(), 'ran-locally');
+  const runDir = ciRunDir(r);
+  const res = await runCli(['--run', runDir, ...SCOPE(r), ...extraArgs, '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  return { res, marker, calls, runDir };
+}
+
+test('AC2.1/AC2.2: a tree dirty only in an inert tracked path takes the CI verdict; the entry and event carry dirtyExempt (#5234)', { skip: SKIP }, async () => {
+  const r = repoWith({ declExtra: { rules: INERT_RULES }, extraFiles: { 'notes.md': 'a\n' } });
+  fs.writeFileSync(path.join(r.repo, 'notes.md'), 'edited\n');
+  const { res, marker, calls, runDir } = await inertRun(r);
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(!fs.existsSync(marker), 'the local suite must not run when CI answered');
+  assert.ok(fs.existsSync(calls), 'the fake gh was consulted');
+  assert.match(res.stdout, INERT_LINE);
+  assert.match(res.stdout, /^CI: tests — taken from test\.yml/m);
+  assert.strictEqual(reportOf(r).ci[0].used, true);
+  assert.deepStrictEqual(reportOf(r).ci[0].dirtyExempt, ['notes.md']);
+  const [ev] = eventsOf(runDir).filter((e) => e.type === 'verify');
+  assert.deepStrictEqual(ev.ci, [{ suite: 'tests', used: true, fallback: null, dirtyExempt: ['notes.md'] }]);
+});
+
+test('AC3.1: an untracked inert path behaves the same (#5234)', { skip: SKIP }, async () => {
+  const r = repoWith({ declExtra: { rules: INERT_RULES } });
+  fs.writeFileSync(path.join(r.repo, 'notes.md'), 'new\n');
+  const { res, marker, calls } = await inertRun(r);
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(!fs.existsSync(marker));
+  assert.ok(fs.existsSync(calls));
+  assert.match(res.stdout, INERT_LINE);
+  assert.strictEqual(reportOf(r).ci[0].used, true);
+  assert.deepStrictEqual(reportOf(r).ci[0].dirtyExempt, ['notes.md']);
+});
+
+test('AC4.1: an inert path plus a dirty source file still records dirty-tree and runs locally (#5234)', { skip: SKIP }, async () => {
+  const r = repoWith({ declExtra: { rules: INERT_RULES }, extraFiles: { 'notes.md': 'a\n' } });
+  fs.writeFileSync(path.join(r.repo, 'notes.md'), 'edited\n');
+  fs.writeFileSync(path.join(r.repo, 'tests', 'ok.test.js'), "require('node:test')('ok', () => {}); // edited\n");
+  const { res, marker, calls } = await inertRun(r);
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(fs.existsSync(marker), 'the suite ran locally');
+  assert.ok(!fs.existsSync(calls), 'gh must not be called');
+  assert.strictEqual(reportOf(r).ci[0].fallback, 'dirty-tree');
+  assert.strictEqual(reportOf(r).ci[0].dirtyExempt, null);
+  assert.doesNotMatch(res.stdout, /tree dirty only in inert paths/);
+});
+
+test('AC5.1: under localRuns on-request an inert-only dirty tree does not exit 3 (#5234)', { skip: SKIP }, async () => {
+  const r = repoWith({ declExtra: { rules: INERT_RULES, ...KEY }, extraFiles: { 'notes.md': 'a\n' } });
+  fs.writeFileSync(path.join(r.repo, 'notes.md'), 'edited\n');
+  const { res, marker } = await inertRun(r);
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.strictEqual(reportOf(r).ci[0].used, true);
+  assert.ok(!fs.existsSync(marker));
+});
+
+test('a tree dirty only in a declared generated path takes the CI verdict (#5234)', { skip: SKIP }, async () => {
+  const r = repoWith({ declExtra: { generated: ['gen/out.txt'] } });
+  fs.mkdirSync(path.join(r.repo, 'gen'));
+  fs.writeFileSync(path.join(r.repo, 'gen', 'out.txt'), 'regenerated\n');
+  const { res, marker, calls } = await inertRun(r);
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(!fs.existsSync(marker));
+  assert.ok(fs.existsSync(calls));
+  assert.match(res.stdout, /^CI: tree dirty only in inert paths \(gen\/out\.txt\) — taking CI verdicts on HEAD$/m);
+  assert.strictEqual(reportOf(r).ci[0].used, true);
+  assert.deepStrictEqual(reportOf(r).ci[0].dirtyExempt, ['gen/out.txt']);
+});
+
+test('--local with only an inert dirty path prints no inert line and records local-requested (#5234)', { skip: SKIP }, async () => {
+  const r = repoWith({ declExtra: { rules: INERT_RULES }, extraFiles: { 'notes.md': 'a\n' } });
+  fs.writeFileSync(path.join(r.repo, 'notes.md'), 'edited\n');
+  const { res, marker, calls } = await inertRun(r, ['--local']);
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(fs.existsSync(marker), 'the suite ran locally');
+  assert.ok(!fs.existsSync(calls), 'gh must not be called');
+  assert.doesNotMatch(res.stdout, /tree dirty only in inert paths/);
+  assert.strictEqual(reportOf(r).ci[0].fallback, 'local-requested');
+  assert.strictEqual(reportOf(r).ci[0].dirtyExempt, null);
+});
+
+test('an impact declaration with only an inert dirty path takes the CI verdict (#5234)', { skip: SKIP }, async () => {
+  const impact = { suite: 'tests', command: 'node --test {files}', tests: ['tests/**/*.test.js'] };
+  const rules = [{ match: 'notes.md', suites: [], static: false }, { match: 'tests/**', impact: true, static: false }, { match: '**', suites: '*', static: false }];
+  const r = repoWith({ declExtra: { impact, rules }, extraFiles: { 'notes.md': 'a\n' } });
+  const mapCommit = r.git('rev-parse', 'HEAD').trim();
+  fs.writeFileSync(path.join(r.repo, 'tests', 'ok.test.js'), "require('node:test')('ok', () => {}); // changed\n");
+  r.git('add', 'tests/ok.test.js');
+  r.git('commit', '-q', '-m', 'edit test');
+  fs.writeFileSync(path.join(r.gitDir, DEFAULT_MAP_NAME), JSON.stringify(encodeImpactMap({
+    commit: mapCommit, tracedAt: '2026-10-24T00:00:00Z', exitCode: 0, node: process.version,
+    tests: { 'tests/ok.test.js': { f: ['tests/ok.test.js'] } },
+  })));
+  fs.writeFileSync(path.join(r.repo, 'notes.md'), 'edited\n');
+  const { res, marker, calls } = await inertRun(r);
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(!fs.existsSync(marker));
+  assert.ok(fs.existsSync(calls), res.stdout + res.stderr);
+  assert.ok(reportOf(r).scope.impact, 'the run went through impact selection');
+  assert.match(res.stdout, INERT_LINE);
+  assert.deepStrictEqual(reportOf(r).ci[0].dirtyExempt, ['notes.md']);
+});

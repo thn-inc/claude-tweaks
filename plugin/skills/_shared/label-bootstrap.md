@@ -42,7 +42,7 @@ gh label list --search "claude-tweaks:bootstrapped-v{LABEL_BOOTSTRAP_VERSION}" -
   | grep -qx "claude-tweaks:bootstrapped-v{LABEL_BOOTSTRAP_VERSION}" && SKIP_BOOTSTRAP=true || SKIP_BOOTSTRAP=false
 ```
 
-`{LABEL_BOOTSTRAP_VERSION}` is the literal integer below — **current value: `10`**. Bump it (and
+`{LABEL_BOOTSTRAP_VERSION}` is the literal integer below — **current value: `12`**. Bump it (and
 this literal) whenever a label is added to or removed from the canonical `LABELS_JSON` array
 below, **or whenever an existing label's description or color changes** (#1873 — a color-only
 convention update is exactly this case). A marker stamped under the old version no longer matches
@@ -110,6 +110,7 @@ rows, per the note below the array):
   ["by:docs-health",    "Origin: filed by the docs-health skill", "BFD4F2"],
   ["by:capture",        "Origin: filed via /capture", "BFD4F2"],
   ["by:dispatch",       "Origin: self-filed by /claude-tweaks:dispatch on a headless Preflight failure", "BFD4F2"],
+  ["by:ci-health",      "Origin: filed by the ci-health skill", "BFD4F2"],
   ["risk:low",          "Scoring: low blast radius — safe for autonomous build", "0E8A16"],
   ["risk:medium",       "Scoring: moderate blast radius — review before merge recommended", "FBCA04"],
   ["risk:high",         "Scoring: high blast radius — human review required", "D93F0B"],
@@ -124,9 +125,9 @@ rows, per the note below the array):
   ["auto:merge",        "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)", "1D76DB"],
   ["auto:merge-pending", "Grant: machine-granted merge trust awaiting its veto window (matures to auto:merge)", "1D76DB"],
   ["bot:in-progress",   "Bot state: an agent currently holds the claim on this record", "6A737D"],
-  ["bot:blocked",       "Bot state: retry ceiling hit, or a plan-review question awaits an answer — needs re-authorization", "6A737D"],
+  ["bot:blocked",       "Bot state: retry ceiling hit — needs re-authorization", "6A737D"],
   ["bot:parked",        "Bot state: merge-verification parked it (CI red/timed-out) — auto:* grants stay intact", "6A737D"],
-  ["demo:pending",           "Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:demo", "006B75"],
+  ["demo:pending",           "Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:accept", "006B75"],
   ["demo:approved",          "Acceptance: a human verified this record does what was asked", "006B75"],
   ["demo:approved-batch",    "Acceptance: approved via /demo's #N,#M batch — no per-record walkthrough", "006B75"],
   ["demo:changes-requested", "Acceptance: a human found a gap during sign-off — see the linked follow-up record", "006B75"],
@@ -141,12 +142,14 @@ rows, per the note below the array):
   ["breaking",          "Compatibility: a contract change — merge subject gets ! and a BREAKING CHANGE: footer", "8B0000"],
   ["needs:definition",  "Undecided idea — must go through /specify's brainstorm redirect before reaching ready", "7057FF"],
   ["needs:decision",    "a headless unit proposed an action it may not take alone — see the newest decision comment", "7057FF"],
+  ["needs:answer",      "a plan-review question awaits a human answer — reply /answer on the question comment", "7057FF"],
   ["shaped:headless",   "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body", "CFD3D7"],
   ["priority:high",     "Priority: dispatch picks this band first", "B60205"],
   ["priority:medium",   "Priority: dispatch picks after priority:high", "FBCA04"],
   ["priority:low",      "Priority: dispatch picks last among prioritized records", "C2E0C6"],
-  ["digest",            "Container: rolling digest for below-floor deferred findings (see _shared/materiality-floor.md)", "EEEEEE"]
+  ["digest",            "Container: rolling digest for below-floor deferred findings (see _shared/materiality-floor.md)", "EEEEEE"],
+  ["release-block",     "Release gate: releases stop while this is open — close the record or remove this label to clear", "B4006E"]
 ]
 ```
 
-The `accept:*` rows are provisioned alongside the `demo:*` acceptance rows while both spellings are read (`_shared/work-record.md`, Acceptance axis): the acceptance consumers, `wrap-up/verification-brief.md` Step 1, `wrap-up/verification-brief-parent-gate.md`'s Apply the gate and `demo/SKILL.md` Step 3, each list all four, and `/init`'s provision-now offer takes the whole array. This is the one exception to "only the labels they are about to apply", and it applies nothing: bootstrapping creates the labels in the repo and never puts one on a record. No skill adds an `accept:*` label yet; `/demo` removes them when a verdict replaces them (`_shared/work-record-permission-matrix.md`).
+The `accept:*` rows are provisioned alongside the `demo:*` acceptance rows while both spellings are read (`_shared/work-record.md`, Acceptance axis): the acceptance consumers, `wrap-up/verification-brief.md` Step 1, `wrap-up/verification-brief-parent-gate.md`'s Apply the gate and `accept/verdict-interim.md`, each list all four, and `/init`'s provision-now offer takes the whole array. This is the one exception to "only the labels they are about to apply", and it applies nothing: bootstrapping creates the labels in the repo and never puts one on a record. `/accept` is the one skill that adds an `accept:*` label (its verdicts, and `accept:pending` from its automatic entry), and it removes a present `demo:*` twin in the same edit (`_shared/work-record-permission-matrix.md`).

@@ -20,7 +20,7 @@ files:
 - **URL:** the agent's refused Bash tool call
 - **Action:** the dispatched agent runs a command the guard can't verify. The guard refuses it with the `This agent …` noun, because the worktree is the agent's own rather than the session's. The parent session's `PostToolUseFailure` hook fires with the full refusal text and the agent's `agent_id`; this was measured on Claude Code 2.1.302 on 2026-10-28.
 - **Should feel:** the same friction as before for the agent: an identical refusal and retry path. The hook only observes.
-- **Should understand:** `post-tool-use-failure.js` classifies the text through `harness-refusal.js`'s `classifyRefusal`. The noun gives `actor` (`session` or `agent`). The signature gives `variant`: `Refusing to run it` gives `guard`, and `Refusing to run there` gives `worktree-gone`. The event logged is `wd-guard-refusal` with `reason: harness-worktree-isolation` and both fields. The Bash prefilter now passes a failed call whose payload carries either signature.
+- **Should understand:** `post-tool-use-failure.js` classifies the text through `harness-refusal.js`'s `classifyRefusal`. The noun gives `actor` (`session` or `agent`). The signature gives `variant`: `Refusing to run it` gives `guard`, and `Refusing to run there` gives `worktree-gone`. The event logged is `wd-guard-refusal` with `reason: harness-worktree-isolation` and both fields. The Bash prefilter now passes a failed call whose parsed `error` begins with either noun and carries either signature; the matcher is anchored at the start of `error`, so command output that quotes a refusal mid-text is not counted (#4523).
 - **Red flags:**
   - an agent refusal produces no `wd-guard-refusal` event at all (the pre-#3819 behavior);
   - a different-worktree refusal ending `Refusing to run it there` is logged as `worktree-gone`;
@@ -49,3 +49,4 @@ files:
 - Created during build of #3819 (count the subagent and worktree-gone isolation refusals)
 - Steps 1-3 built in this session
 - Related specs: #2783 (the post-tool-use-failure hook), #3304 (refusal text in one module plus drift pin), #3480 / #3675 (the lens-agent refusals and the dispatch-prompt fix this signal produced)
+- Updated during build of #4523: step 1's matcher and prefilter are anchored at the start of `error` (measured noun-first on Claude Code 2.1.325, 2026-11-26)

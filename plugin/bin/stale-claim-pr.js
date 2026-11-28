@@ -8,13 +8,13 @@
 // listing on both transports, so the verdict cannot differ between them.
 //
 // Usage: stale-claim-pr.js --claim-file <path> [--listing <path>]
-//        [--repo owner/name] [--resume [--issue <n>]] [--help]
+//        [--repo [host/]owner/name] [--resume [--issue <n>]] [--help]
 //   --claim-file  the stale claim blob's raw JSON text, read from this file.
 //   --listing     a JSON array of open PRs the agent already fetched (the
 //                 GitHub MCP `list_pull_requests` shape, or the
 //                 `gh pr list --json url,body,isCrossRepository` shape). Without
 //                 it the CLI lists open PRs itself with `gh pr list`.
-//   --repo        owner/name; without it, the `origin` remote of the cwd.
+//   --repo        [host/]owner/name; without it, the `origin` remote of the cwd.
 //   --resume      on a match, also print the PR body's Resume line (`resume`) or
 //                 why none is usable (`resolve`: `no-resume-line` — no Resume
 //                 line under the PR's last `### Resume` heading; `resume-line-
@@ -46,11 +46,16 @@
 // listing that is not an array of PRs or hit the 1000-entry limit) is data the
 // caller must treat as "could not tell", never as "no PR": the stale claim is
 // not proven abandoned. A claim whose runId is absent or not a valid run id is
-// a clean no-match, and no listing is read and no `gh` call is made. A repo on a
-// host other than github.com (a GitHub Enterprise `--repo host/owner/name` or
-// `origin`) is the failure `stale-claim matching supports github.com only`,
-// since claim-store.js's isSameRepoPrUrl recognises github.com PR urls alone —
-// without this the matcher would report a clean no-match for a marked PR.
+// a clean no-match, and no listing is read and no `gh` call is made. A typed
+// host-qualified `--repo host/owner/name` is trusted for any host and is not gated.
+// An `origin` goes through git-exec.js's repoTargetOfRemote (the #4933 gate), with its
+// unparseable-remote fallback off (`{ loose: false }`, #5109): a host the gate
+// refuses (an SSH alias, an unknown name) is the failure `unknown-host: {refusal}`,
+// the refusal also on stderr, with no claim read and no `gh` call (#4794), and a remote
+// the gate cannot read (the cloud sandbox proxy remote) is exit 3, not a github.com
+// guess. The open-PR listing and the PR-url match share one host (resolveRepoTarget,
+// one result): the typed `--repo` host, else an exported non-empty GH_HOST, else the origin's
+// host, else github.com. A bare `--repo owner/name` is github.com unless a non-empty GH_HOST is exported.
 // Exit codes (a CLI-specific vocabulary — verdicts are data on stdout, so the
 // codes only cover what stops a verdict being reached; no JSON on 1-3):
 //   1  malformed invocation (unknown flag, a flag missing its value, an
@@ -58,8 +63,8 @@
 //      --claim-file); usage on stderr.
 //   2  no --listing and `gh` is absent — and only that, so a caller can route
 //      exit 2 to its MCP listing path; stderr names --listing.
-//   3  owner/repo could not be resolved (no --repo, no parseable `origin`
-//      remote); stderr names --repo.
+//   3  owner/repo could not be resolved (no --repo, no `origin` remote the gate can
+//      read); stderr names --repo.
 // Repo root comes from `git remote get-url origin` at the process cwd, never
 // from CLAUDE_PLUGIN_ROOT (unset in Bash tool environments, #170).
 'use strict';
@@ -70,13 +75,14 @@ const { execFileSync } = require('child_process');
 const { openPrListArgs, staleClaimRunId, matchStaleClaimPr } = require('./lib/issues/claim-store');
 const { normalizePrListing } = require('./lib/issues/mcp-pr-shape');
 const { resumeVerdict } = require('./lib/flow/pr-body');
-const { parseRepo, ghAvailable, remoteUrl, ghOptions } = require('./lib/repo-resolve');
+const { parseRepo, ghAvailable, remoteUrl, ghOptions, resolveRepoTarget } = require('./lib/repo-resolve');
+const { repoTargetOfRemote } = require('./lib/hooks/git-exec');
 const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
 const { lstatType } = require('./lib/path-guard');
 const { RUN_ID_PREFIX_LENGTH } = require('./lib/dispatch/resume-eligibility');
 const { GH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 
-const USAGE = 'usage: stale-claim-pr.js --claim-file <path> [--listing <path>] [--repo owner/name] [--resume [--issue <n>]] [--help]\n';
+const USAGE = 'usage: stale-claim-pr.js --claim-file <path> [--listing <path>] [--repo [host/]owner/name] [--resume [--issue <n>]] [--help]\n';
 
 function parseArgs(argv) {
   const o = { claimFile: null, listing: null, repo: null, resume: false, issue: null, help: false };
@@ -115,6 +121,7 @@ function defaultGh(args) {
 
 const realDeps = {
   ghAvailable, remoteUrl, parseRepo,
+  gateDeps: undefined, // the gate's and the host resolver's env/hosts.yml seam; undefined reads the real ones
   gh: defaultGh,
   readFile: (p) => fs.readFileSync(p, 'utf8'),
   pipelinesRoot: () => {
@@ -175,23 +182,44 @@ function noMatch(failure = null) {
   return { match: false, link: null, failure };
 }
 
+// -> { owner, repo, target } (target { host, ghRepo }, a resolveRepoTarget result), { refusal } for an
+// origin the gate refuses, or { target: null } when owner/repo cannot be resolved. A typed
+// host-qualified --repo is trusted and not gated; a bare one is github.com unless a non-empty GH_HOST is exported;
+// an origin goes through git-exec.js's repoTargetOfRemote with `{ loose: false }`, so a remote the gate
+// cannot read is { target: null } (exit 3), and its host decides only after an exported GH_HOST and a typed host.
+function resolveTarget(opts, deps) {
+  const gateDeps = deps.gateDeps || {};
+  if (opts.repo) {
+    const qualified = opts.repo.split('/').length >= 3;
+    const spec = deps.parseRepo(qualified ? opts.repo : `github.com/${opts.repo}`);
+    if (!spec) return { target: null };
+    const { owner, repo } = spec;
+    return { owner, repo, target: resolveRepoTarget({ owner, repo, explicitHost: qualified ? spec.host : null }, gateDeps) };
+  }
+  let remote = null;
+  try { remote = deps.remoteUrl(); } catch { remote = null; }
+  const resolved = repoTargetOfRemote(remote, gateDeps, { loose: false });
+  if (!resolved) return { target: null };
+  if (resolved.refusal) return { refusal: resolved.refusal };
+  const { owner, repo, host, ghRepo } = resolved;
+  return { owner, repo, target: { host, ghRepo } };
+}
+
 function run(argv, deps) {
   const opts = parseArgs(argv);
   if (opts.help) { deps.stdout(USAGE); return 0; }
   if (opts.error) { deps.stderr(`stale-claim-pr.js: ${opts.error}\n${USAGE}`); return 1; }
   if (!opts.claimFile) { deps.stderr(`stale-claim-pr.js: --claim-file is required\n${USAGE}`); return 1; }
 
-  let remote = null;
-  if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-  const repoSpec = opts.repo
-    ? deps.parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`)
-    : deps.parseRepo(remote);
-  if (!repoSpec) { deps.stderr('stale-claim-pr.js: could not resolve owner/repo — pass --repo owner/name\n'); return 3; }
-  if (repoSpec.host && repoSpec.host !== 'github.com') {
-    deps.stdout(`${JSON.stringify(noMatch('stale-claim matching supports github.com only'))}\n`);
+  // The one repo target: owner/repo plus the host the listing and the PR-url match both use.
+  const resolved = resolveTarget(opts, deps);
+  if (resolved.refusal) {
+    deps.stderr(`stale-claim-pr.js: ${resolved.refusal}\n`);
+    deps.stdout(`${JSON.stringify(noMatch(`unknown-host: ${resolved.refusal}`))}\n`);
     return 0;
   }
-  const { owner, repo } = repoSpec;
+  if (!resolved.target) { deps.stderr('stale-claim-pr.js: could not resolve owner/repo — pass --repo host/owner/name\n'); return 3; }
+  const { owner, repo, target } = resolved;
 
   let verdict;
   try {
@@ -207,9 +235,9 @@ function run(argv, deps) {
           deps.stderr('stale-claim-pr.js: gh CLI not found on PATH — fetch the open PRs and pass them with --listing <path>\n');
           return 2;
         }
-        raw = deps.gh(openPrListArgs(owner, repo));
+        raw = deps.gh(openPrListArgs(owner, repo, target));
       }
-      const match = matchStaleClaimPr(runId, normalizePrListing(JSON.parse(raw), owner, repo), owner, repo);
+      const match = matchStaleClaimPr(runId, normalizePrListing(JSON.parse(raw), owner, repo), owner, repo, target.host);
       verdict = match
         ? { match: true, link: match.url, ...(opts.resume ? resumeFor(opts, match.body, runId, deps) : {}), failure: null }
         : noMatch();

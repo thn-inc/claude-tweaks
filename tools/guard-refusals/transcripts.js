@@ -8,8 +8,16 @@
 // any entry type (a 2.1.302 `api-request-blob` echoes the request) are inspected, and a fork's
 // transcript opens with its parent's whole history, so a call is identified by its `tool_use_id`
 // and counted once: the first occurrence wins. A refusal is an `is_error` tool_result whose text holds
-// ISOLATION_CLAUSE and then `Refusing to run`: a successful result that merely quotes the message (a
+// ISOLATION_CLAUSE and then one of REFUSAL_SIGNATURES: a successful result that merely quotes the message (a
 // `cat` of harness-refusal.js, a grep, a record body) is not one.
+//
+// Rows (#5587). Every `is_error` result whose text `classifyGuard` names a guard is a row, for any tool: the
+// harness's two refusals (`harness-command`, `harness-file`) and a claude-tweaks hook denial (`plugin:<gate>`
+// from the ordered GATE_FRAGMENTS table, `plugin:other` when none matches; the text must open with
+// `claude-tweaks`, so a result that merely prints skill text is no row). A tool_result `content` array is read as
+// its text blocks joined by a newline. A row needs its call in the scanned files: it carries the call's tool,
+// command (capped at COMMAND_CAP, `truncated` says it was cut), cwd and timestamp. `refusals` stays today's
+// list: the `harness-command` rows of a Bash or Write call, in the same order.
 //
 // Run attribution. A call's `runId` is the last pipeline run id named by the nearest preceding
 // tool_use input of its own file (a run-dir path `.claude-tweaks/pipelines/<id>`; an input naming
@@ -25,10 +33,9 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { ISOLATION_CLAUSE } = require('../../plugin/bin/lib/hooks/harness-refusal');
+const { ISOLATION_CLAUSE, REFUSAL_SIGNATURES } = require('../../plugin/bin/lib/hooks/harness-refusal');
 const { classifyReason } = require('./trace');
 
-const REFUSAL_TAIL = 'Refusing to run';
 const RUN_ID = /\.claude-tweaks\/pipelines\/(\d{4}-\d{2}-\d{2}T\d{6}-[a-z0-9][a-z0-9-]*)/g;
 const FIRST_TS = /"timestamp":"(\d{4}-\d{2}-\d{2}T[\d:.]+Z)"/;
 const FIRST_TS_LINES = 20;
@@ -118,6 +125,61 @@ function runIdsIn(input) {
   return ids;
 }
 
+// The plugin gates' deny texts, ordered: the first gate with a fragment in a denial names it. Every
+// fragment is a substring of a message `plugin/bin/lib/hooks/pre-tool-use.js` or `dispatch-prompt-gate.js`
+// emits (tests/guard-refusals/gate-fragments.test.js pins that). `a materialize commit already landed in`
+// is `checkBookkeepingStampsGate`'s other two deny texts, which carry no `integration-model: pr-first and`.
+const GATE_FRAGMENTS = [
+  ['teardown', ['teardown gate', 'is assigned to run']],
+  ['worktree-always', ['this project requires an isolated worktree for']],
+  ['lost-cwd', ['this command changes directory more ways than']],
+  ['powershell-opaque', ['hands this guard literal (or base64) script text']],
+  ['pipeline-shadow', ['a NEW pipeline run directory inside a', 'the command has changed directory more ways than']],
+  ['bookkeeping-stamps', ['resolves integration-model: pr-first and', 'a materialize commit already landed in']],
+  ['dispatch-config', ['has not written config.yml']],
+  ['wd-enforcement', ['is active in worktree']],
+  ['review-console-ask', ['which grants consoleAutoResolve']],
+  ['dispatch-prompt', ['this Agent prompt names run']],
+];
+const FILE_REFUSAL_TAIL = 'Edit the worktree copy of this file';
+const PLUGIN_DENIAL = /^(?:PreToolUse:[\w-]+ hook error: )?claude-tweaks[: ]/;
+
+// Which guard a result text came from: `harness-command` (the harness's `Refusing to run` refusal),
+// `harness-file` (its `Edit the worktree copy` refusal), `plugin:<gate>` or `plugin:other` (a claude-tweaks
+// hook denial, which opens the text), else null. A Bash result opening `Exit code N` is never a plugin denial.
+function classifyGuard(text) {
+  const at = text.indexOf(ISOLATION_CLAUSE);
+  if (at !== -1) {
+    const after = at + ISOLATION_CLAUSE.length;
+    if (REFUSAL_SIGNATURES.some((s) => text.indexOf(s, after) !== -1)) return 'harness-command';
+    if (text.indexOf(FILE_REFUSAL_TAIL, after) !== -1) return 'harness-file';
+  }
+  if (!PLUGIN_DENIAL.test(text)) return null;
+  for (const [gate, fragments] of GATE_FRAGMENTS) {
+    if (fragments.some((f) => text.includes(f))) return `plugin:${gate}`;
+  }
+  return 'plugin:other';
+}
+
+// The text of a tool_result `content`: a string as is, an array the `text` of its text blocks joined by a
+// newline (a plugin hook denial arrives so), anything else its JSON form.
+function resultText(content) {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    const texts = content.filter((b) => b && b.type === 'text' && typeof b.text === 'string').map((b) => b.text);
+    if (texts.length) return texts.join('\n');
+  }
+  return JSON.stringify(content || '');
+}
+
+// The string a call is recorded by: the command of a Bash or Monitor call, the path of a file-writing one.
+function commandOf(tool, input) {
+  let v = '';
+  if (tool === 'Bash' || tool === 'Monitor') v = input.command;
+  else if (tool === 'Write' || tool === 'Edit' || tool === 'NotebookEdit') v = input.file_path ?? input.notebook_path;
+  return typeof v === 'string' ? v : '';
+}
+
 function toMs(v) {
   return v instanceof Date ? v.getTime() : Number(v);
 }
@@ -169,10 +231,11 @@ function scanStore({ projectsDir, match = null, since, until, fs: fsImpl = fs })
   }
   files.sort();
 
-  const calls = new Map(); // toolUseId -> { tool, command, runId, file } (first occurrence)
+  const allCalls = new Map(); // toolUseId -> { tool, command, truncated, cwd, ts, runId, file } for any tool (first occurrence)
+  const calls = new Map(); // the Bash and Write subset of allCalls
   const referenced = new Set();
   const infos = new Map(); // file path -> { timeline: [{ ts, run }], lastRun, firstTs }
-  const results = new Map(); // toolUseId -> { file, line, refusalText } (first refused result)
+  const results = new Map(); // toolUseId -> { file, line, guard, refusalText } (first guarded result)
 
   for (const file of files) {
     let run = null; // the nearest preceding pipeline run id this file's tool_use inputs named
@@ -209,21 +272,32 @@ function scanStore({ projectsDir, match = null, since, until, fs: fsImpl = fs })
               }
               if (isCall) for (const id of ids) referenced.add(id);
             }
-            if (isCall && !calls.has(block.id)) {
+            if (!allCalls.has(block.id)) {
               const input = block.input || {};
-              const command = block.name === 'Bash' ? input.command : input.file_path;
-              calls.set(block.id, {
+              const raw = commandOf(block.name, input);
+              const entryCall = {
                 tool: block.name,
-                command: typeof command === 'string' ? command.slice(0, COMMAND_CAP) : '',
+                command: raw.slice(0, COMMAND_CAP),
+                truncated: raw.length > COMMAND_CAP,
+                cwd: typeof entry.cwd === 'string' ? entry.cwd : null,
+                ts: typeof entry.timestamp === 'string' ? entry.timestamp : null,
                 runId: run,
                 file,
-              });
+              };
+              allCalls.set(block.id, entryCall);
+              if (isCall) calls.set(block.id, entryCall);
             }
           } else if (block.type === 'tool_result' && block.is_error === true && !results.has(block.tool_use_id)) {
-            const text = typeof block.content === 'string' ? block.content : JSON.stringify(block.content || '');
-            const at = text.indexOf(ISOLATION_CLAUSE);
-            if (at !== -1 && text.indexOf(REFUSAL_TAIL, at + ISOLATION_CLAUSE.length) !== -1) {
-              results.set(block.tool_use_id, { file, line: lineNo, refusalText: text.slice(at, at + 1500) });
+            const text = resultText(block.content);
+            const guard = classifyGuard(text);
+            if (guard) {
+              const at = text.indexOf(ISOLATION_CLAUSE);
+              results.set(block.tool_use_id, {
+                file,
+                line: lineNo,
+                guard,
+                refusalText: guard === 'harness-command' ? text.slice(at, at + 1500) : null,
+              });
             }
           }
         }
@@ -233,22 +307,43 @@ function scanStore({ projectsDir, match = null, since, until, fs: fsImpl = fs })
     }
   }
 
+  const rows = [];
   const refusals = [];
   for (const [toolUseId, r] of results) {
-    const call = calls.get(toolUseId);
-    if (!call) continue; // a result whose call is not in the window (or is not a Bash/Write call)
-    refusals.push({
+    const call = allCalls.get(toolUseId);
+    if (!call) continue; // a result whose call is not in the window
+    const runId = call.runId || inheritedRun(call.file, infos);
+    const reason = r.guard === 'harness-command' ? classifyReason(r.refusalText) : null;
+    rows.push({
       toolUseId,
       file: r.file,
       line: r.line,
       tool: call.tool,
+      guard: r.guard,
       command: call.command,
-      refusalText: r.refusalText,
-      reason: classifyReason(r.refusalText),
-      runId: call.runId || inheritedRun(call.file, infos),
+      truncated: call.truncated,
+      cwd: call.cwd,
+      ts: call.ts,
+      runId,
+      reason,
     });
+    if (r.guard === 'harness-command' && calls.has(toolUseId)) {
+      refusals.push({
+        toolUseId,
+        file: r.file,
+        line: r.line,
+        tool: call.tool,
+        guard: r.guard,
+        command: call.command,
+        cwd: call.cwd,
+        ts: call.ts,
+        refusalText: r.refusalText,
+        reason,
+        runId,
+      });
+    }
   }
-  return { files: files.length, unreadable, calls: calls.size, refusals, referencedRuns: [...referenced].sort() };
+  return { files: files.length, unreadable, calls: calls.size, refusals, rows, referencedRuns: [...referenced].sort() };
 }
 
-module.exports = { scanStore };
+module.exports = { scanStore, eachLine, listCandidates, classifyGuard, GATE_FRAGMENTS };

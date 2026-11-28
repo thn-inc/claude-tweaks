@@ -14,6 +14,8 @@ const processProbe = require('../run-liveness/process-probe');
 const { HEARTBEAT_THROTTLE_MS } = require('../run-liveness/constants');
 const { probeOwnerPid } = require('../run-liveness/owner-pid-probe');
 const { claudePid } = processProbe;
+// #5555: re-exported — the one worktree-precedence rule lives in the leaf.
+const { priorWorktree } = require('../run-state-worktree');
 
 function readStdin() {
   try { return fs.readFileSync(0, 'utf8'); } catch { return ''; }
@@ -222,6 +224,31 @@ function findNonCanonicalRunDirs(cwd) {
     .sort();
 }
 
+// #3975: the shape half of "a run dir that is only a git-tracked leftover" —
+// readable, non-empty, and every entry is `work` or a `spec-*` directory whose
+// own entries are non-empty and all exactly `work`. No git calls: whether
+// those files are tracked is the caller's check.
+function isTrackedShellDir(dir) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  if (entries.length === 0) return false;
+  return entries.every((e) => {
+    if (e.name === 'work') return true;
+    if (!e.isDirectory() || !e.name.startsWith('spec-')) return false;
+    let sub;
+    try {
+      sub = fs.readdirSync(path.join(dir, e.name));
+    } catch {
+      return false;
+    }
+    return sub.length > 0 && sub.every((n) => n === 'work');
+  });
+}
+
 // Lazily yields each candidate run dir (newest-first) paired with its
 // already-read state, reading run-state.json for one dir at a time instead
 // of mapping every candidate up front — callers that only need the first
@@ -244,9 +271,7 @@ function* iterRunDirsWithState(cwd, opts = {}) {
   // reads the worktree's own pipelines dir. Deliberately not guarded further —
   // distinguishing the two would cost either a git spawn (this path runs on
   // every hook invocation) or a second walk, and the state it can reach is the
-  // one a worktree with a broken `.git` file actually has. The scenario it
-  // matters for is wrap-up's transitional copy-out guard, which does its own
-  // `pwd -P` resolution rather than trusting this one.
+  // one a worktree with a broken `.git` file actually has.
   const start = cwd || process.cwd();
   const root = wtDetect.mainCheckoutRoot(start) || start;
   const base = path.join(root, '.claude-tweaks', 'pipelines');
@@ -297,7 +322,9 @@ function* iterRunDirsWithState(cwd, opts = {}) {
     // genuinely completed archive) and, unlike the removed one, cannot be
     // fooled by an incomplete archive attempt.
     const archiveState = readRunState(path.join(base, 'archive', name));
-    if (archiveState && archiveState.status === 'clean') continue;
+    // #3975: `includeTrackedShells` lets the archive loop see a clean-twin dir
+    // that is only a tracked work/ shell — the one shape that skip strands.
+    if (archiveState && archiveState.status === 'clean' && !(opts.includeTrackedShells && isTrackedShellDir(dir))) continue;
     // #1103 follow-up: a fresh 'archiving' claim (archive-merged.js writes
     // this the instant it mkdir's archiveDir, before moving anything) means
     // another process is already mid-archival of this exact run dir right
@@ -359,8 +386,8 @@ function listRunDirs(cwd, opts) {
 // event (e.g. an AskUserQuestion answered in one session) from landing in an
 // unrelated run's events.jsonl, without touching the 'env'/'session' arms
 // above, or #413's console-execution exception, at all.
-function isForeignWorktreeCandidate(cwd, sessionId, state) {
-  return classifyOwnership({ sessionId, cwd }, state) === 'foreign';
+function isForeignWorktreeCandidate(cwd, sessionId, state, env) {
+  return classifyOwnership({ sessionId, cwd }, state, { env }) === 'foreign';
 }
 // Shared by both resolveRun fallback arms below: a candidate is never
 // eligible to be guessed into if it's an unadopted mint (#721). It is also
@@ -380,12 +407,12 @@ function isForeignWorktreeCandidate(cwd, sessionId, state) {
 // `dropped` list. `includeWorktreeForeign` disables the worktree-binding
 // guards, (b) included. `callerRepoInfo` is the lazy memo isOtherWorktreeBound
 // reads (see there).
-function isSkippableFallbackCandidate(cwd, sessionId, dir, state, includeWorktreeForeign, strict, callerRepoInfo, fsImpl) {
+function isSkippableFallbackCandidate(cwd, sessionId, dir, state, includeWorktreeForeign, strict, callerRepoInfo, fsImpl, env) {
   if (isClaimLogOnlyMint(dir, state)) return { reason: 'claim-log-only mint', dropped: true };
   if (isUnadoptedMint(dir, state)) return { reason: 'unadopted-mint', dropped: false };
   if (isAdHocRunDir(dir)) return { reason: 'ad-hoc', dropped: false };
   if (includeWorktreeForeign) return null;
-  if (isForeignWorktreeCandidate(cwd, sessionId, state)) return { reason: 'worktree-foreign', dropped: false };
+  if (isForeignWorktreeCandidate(cwd, sessionId, state, env)) return { reason: 'worktree-foreign', dropped: false };
   if (strict && isOtherWorktreeBound(callerRepoInfo, state, fsImpl)) return { reason: `bound to ${state.worktree}`, dropped: true };
   return null;
 }
@@ -420,11 +447,11 @@ function resolveRun(cwd, env, sessionId, opts = {}) {
   const dropped = [];
   let callerInfo;
   const callerRepoInfo = () => {
-    if (callerInfo === undefined) callerInfo = wtDetect.repoInfo(resolvedCwd);
+    if (callerInfo === undefined) callerInfo = wtDetect.repoInfo(resolvedCwd, {}, { env });
     return callerInfo;
   };
   const skipReason = (dir, state) => {
-    const skip = isSkippableFallbackCandidate(resolvedCwd, me, dir, state, includeWorktreeForeign, strict, callerRepoInfo, opts.fsImpl);
+    const skip = isSkippableFallbackCandidate(resolvedCwd, me, dir, state, includeWorktreeForeign, strict, callerRepoInfo, opts.fsImpl, env);
     if (skip && skip.dropped) dropped.push(`${path.basename(dir)} (${skip.reason})`);
     return skip;
   };
@@ -461,7 +488,7 @@ function resolveRun(cwd, env, sessionId, opts = {}) {
     // 'indeterminate' (unprovable — a deleted binding, an unresolved cwd) both
     // preserve today's behavior and still return 'session' attribution, which
     // is what keeps single-session resolution byte-identical (#1099's Deliverables).
-    const verdict = owner === me ? classifyOwnership({ sessionId: me, cwd: resolvedCwd }, state) : null;
+    const verdict = owner === me ? classifyOwnership({ sessionId: me, cwd: resolvedCwd }, state, { env }) : null;
     if (owner === me && verdict !== 'foreign') {
       // #2783: an ad-hoc dir is a placeholder minted when no owned run existed
       // yet. The first session match that is NOT ad-hoc returns at once (the
@@ -527,7 +554,7 @@ function classifyOwnership(caller, runState, opts = {}) {
   if (!cwd) return 'indeterminate';
   if (!path.isAbsolute(cwd)) return 'indeterminate'; // relative input must never resolve against the hook process's own cwd
   const binding = runState && typeof runState.worktree === 'string' && runState.worktree ? runState.worktree : null;
-  const info = wtDetect.repoInfo(cwd);
+  const info = wtDetect.repoInfo(cwd, {}, { env: opts.env });
   if (info.indeterminate) return 'indeterminate';
   if (binding) {
     // Both sides resolve through path-guard's .native canonicalRealpath, bound
@@ -671,14 +698,16 @@ function sleepSync(ms) {
 // via CLAUDE_TWEAKS_LOCK_WAIT_MS when it parses as a non-negative integer —
 // a test-only knob (production never sets this env var, so it always gets
 // the 500ms default) that lets tests pin the budget instead of racing it.
-function resolveLockWaitMs() {
-  const raw = process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
+// Read per call from `env` (default: the inherited environment, for the verb
+// and CLI callers of writeRunState), so an in-process hook event honours the
+// environment its context carries rather than the one this module loaded under.
+function resolveLockWaitMs(env = process.env) {
+  const raw = env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
   const n = Number(raw);
   // raw.trim() !== '' guards the JS quirk that Number('') === 0 — an empty
   // or whitespace-only value is garbage and falls back like any other.
-  return raw !== undefined && raw.trim() !== '' && Number.isInteger(n) && n >= 0 ? n : 500;
+  return typeof raw === 'string' && raw.trim() !== '' && Number.isInteger(n) && n >= 0 ? n : 500;
 }
-const LOCK_WAIT_MS = resolveLockWaitMs();
 const LOCK_POLL_MS = 10;
 const LOCK_STALE_MS = 5000; // a lock dir older than this is treated as abandoned (holder crashed) and reclaimed
 
@@ -706,9 +735,9 @@ const LOCK_STALE_MS = 5000; // a lock dir older than this is treated as abandone
 // declined-learning's store (N concurrent *first-ever* writers racing a parent nobody had
 // created), acquireRunStateLock's ENOENT branch below is a genuine defensive fallback, not a
 // live race — left unchanged deliberately, not an oversight.
-function acquireRunStateLock(runDir) {
+function acquireRunStateLock(runDir, env = process.env) {
   const lockPath = path.join(runDir, '.run-state.lock');
-  const deadline = Date.now() + LOCK_WAIT_MS;
+  const deadline = Date.now() + resolveLockWaitMs(env);
   for (;;) {
     try {
       fs.mkdirSync(lockPath);
@@ -742,8 +771,10 @@ function releaseRunStateLock(lockPath) {
 // the existing state (`{}` when none) so a conditional stamp decides against the
 // state it is about to merge into. A null/undefined return writes nothing, does not
 // bump `updatedAt`, and returns the existing state.
-function writeRunState(runDir, patchOrFn) {
-  const lock = acquireRunStateLock(runDir);
+// `env` is where the lock wait is read; verb and CLI callers keep the inherited
+// environment, every hook event passes its context's.
+function writeRunState(runDir, patchOrFn, { env = process.env } = {}) {
+  const lock = acquireRunStateLock(runDir, env);
   const finalPath = path.join(runDir, 'run-state.json');
   try {
     const existing = readRunState(runDir) || {};
@@ -762,6 +793,19 @@ function writeRunState(runDir, patchOrFn) {
   } finally {
     releaseRunStateLock(lock);
   }
+}
+
+// The one check behind every required-env throw on an event path: `who` names the caller in the
+// default message `${who}: env is required`, `message` replaces it where a pinned text exists.
+function assertEnvObject(env, who, message) {
+  if (env === null || typeof env !== 'object') throw new TypeError(message || `${who}: env is required`);
+  return env;
+}
+
+// The environment a hook event runs under: hooks.js builds it into every event's
+// context. A missing one is a programming error, never a reason to read process.env.
+function requireEnv(ctx) {
+  return assertEnvObject(ctx && ctx.env, 'hook context', 'hook context has no env: hooks.js builds it for every event');
 }
 
 // #2783/#2813: resolveRun's 'fallback' arm is a GUESS — the newest unowned,
@@ -819,7 +863,7 @@ function ownerBlock({ sessionId, env = process.env, now = Date.now(), deps = {} 
     host: (deps.hostname || os.hostname)(),
     pid,
     pidSource,
-    pidStartedAt: pid === null ? null : (deps.pidStartTime || processProbe.pidStartTime)(pid),
+    pidStartedAt: pid === null ? null : (deps.pidStartTime || processProbe.pidStartTime)(pid, { env }),
     heartbeatAt: new Date(now).toISOString(),
   };
 }
@@ -837,10 +881,11 @@ function ownerStampPatch(existing, sessionId, block, { replacesSessionId = false
 // `patch` as the `patchOrFn` argument of writeRunState, extended with an owner stamp
 // for `sessionId`. The owner block spawns `ps`, so it is built here, before the lock;
 // a failure (or no session id) degrades to the bare `patch` and never costs the stamp.
-function patchWithOwnerBlock(patch, sessionId, { replacesSessionId = false } = {}) {
+// `env` feeds the owner-pid probe; the record-worktree verb keeps the inherited default.
+function patchWithOwnerBlock(patch, sessionId, { replacesSessionId = false, env = process.env } = {}) {
   if (typeof sessionId !== 'string' || sessionId === '') return patch;
   let block;
-  try { block = ownerBlock({ sessionId }); } catch { return patch; }
+  try { block = ownerBlock({ sessionId, env }); } catch { return patch; }
   return (current) => ({ ...patch, ...ownerStampPatch(current, sessionId, block, { replacesSessionId }) });
 }
 
@@ -872,7 +917,11 @@ function stampedOwnerProvablyAlive(owner, { hostname, aliveFn, startFn }) {
 // window. session-start.js passes `restampWhileFresh: true` to keep the full probe
 // there, so a resume under a new process re-stamps at once.
 // Returns 'heartbeat' | 'restamp' | null (null: nothing written).
-function refreshOwnerBlock(ctx, { now = Date.now(), env = process.env, deps = {}, restampWhileFresh = false } = {}) {
+// Only hook events call this, so there is no inherited-environment default: `env` is the
+// option, else the context's own, and neither is a programming error thrown before the
+// `try` (inside it the throw would read as "nothing to refresh" and mask the missing env).
+function refreshOwnerBlock(ctx, { now = Date.now(), env, deps = {}, restampWhileFresh = false } = {}) {
+  env = requireEnv({ env: env !== undefined ? env : ctx && ctx.env });
   try {
     const owned = ctx && ctx.ownedRun;
     if (!isTrustedOwnedRun(owned)) return null;
@@ -893,7 +942,7 @@ function refreshOwnerBlock(ctx, { now = Date.now(), env = process.env, deps = {}
     let result;
     if (cur.pid !== owner.pid) {
       if (!Number.isInteger(cur.pid)) return null;
-      const startFn = deps.pidStartTime || processProbe.pidStartTime;
+      const startFn = deps.pidStartTime || ((p) => processProbe.pidStartTime(p, { env }));
       const provablyAlive = stampedOwnerProvablyAlive(owner, {
         hostname,
         aliveFn: deps.isPidAlive || isPidAlive,
@@ -920,7 +969,7 @@ function refreshOwnerBlock(ctx, { now = Date.now(), env = process.env, deps = {}
       if (!o || o.sessionId !== owner.sessionId || o.pid !== owner.pid) return null;
       applied = true;
       return { owner: { ...o, ...fields } };
-    });
+    }, { env });
     return applied && written !== null ? result : null;
   } catch {
     return null;
@@ -956,7 +1005,7 @@ function isSessionOwnedAdHocRun(runDir, state, sessionId) {
 // findWorktreeEntry so win32's forward-slash porcelain matches a backslash cwd (#3811).
 function listedWorktreeForCwd(cwd, deps = {}) {
   if (typeof cwd !== 'string' || !cwd) return null;
-  const { stdout, failure } = (deps.runGit || runGit)(['worktree', 'list', '--porcelain'], cwd);
+  const { stdout, failure } = (deps.runGit || runGit)(['worktree', 'list', '--porcelain'], cwd, deps.env ? { env: deps.env } : {});
   if (failure || stdout === null) return null;
   const entries = parseWorktreeList(stdout);
   const entry = findWorktreeEntry(entries, cwd, deps.pathImpl || path);
@@ -986,13 +1035,14 @@ function listedWorktreeForCwd(cwd, deps = {}) {
 // included, rather than excluding it — the narrower trigger above is what
 // makes that safe.
 function stampAdHocRunDirForDenial(ctx) {
+  const env = requireEnv(ctx);
   if (isTrustedOwnedRun(ctx.ownedRun)) return ctx.ownedRun.dir;
   const sessionId = ctx.input && ctx.input.session_id;
   if (typeof sessionId !== 'string' || !sessionId) return null;
   const cwd = ctx.cwd;
   if (typeof cwd !== 'string' || !cwd) return null;
   try {
-    const wt = listedWorktreeForCwd(cwd);
+    const wt = listedWorktreeForCwd(cwd, { env });
     if (!wt) return null; // cwd isn't a listed worktree at all — nothing to key the stamp on
     const worktreePath = wt.path;
     // Deliberately NOT process.env — a stray PIPELINE_RUN_DIR left over from
@@ -1005,8 +1055,8 @@ function stampAdHocRunDirForDenial(ctx) {
     // stampAdHocRunDir's identical guard).
     const existing = readRunState(result.path);
     if (existing && typeof existing.sessionId === 'string' && existing.sessionId && existing.sessionId !== sessionId) return null;
-    const todaysPatch = { worktree: path.resolve(worktreePath), status: 'active', sessionId, ...ownerPidPatch(process.env) };
-    const written = writeRunState(result.path, patchWithOwnerBlock(todaysPatch, sessionId));
+    const todaysPatch = { worktree: path.resolve(worktreePath), status: 'active', sessionId, ...ownerPidPatch(env) };
+    const written = writeRunState(result.path, patchWithOwnerBlock(todaysPatch, sessionId, { env }), { env });
     if (!written) { rollbackMint(result.path); return null; }
     return result.path;
   } catch { return null; }
@@ -1084,8 +1134,8 @@ function appendEvent(runDir, type, data, attribution) {
 }
 
 module.exports = {
-  readStdin, parseInput, resolveRun, resolveRunDir, classifyOwnership, listRunDirs, listRunDirsWithState, iterRunDirsWithState,
-  readRunState, readRunStateWithParent, writeRunState, appendEvent, scanWrapupEvents, readEventLines, findRunByWorktreePath, findRunsByWorktreePath, findAdHocRunsBySessionId, RUN_ID_RE, findNonCanonicalRunDirs,
+  readStdin, parseInput, resolveRun, resolveRunDir, classifyOwnership, listRunDirs, listRunDirsWithState, iterRunDirsWithState, isTrackedShellDir,
+  readRunState, priorWorktree, readRunStateWithParent, writeRunState, appendEvent, scanWrapupEvents, readEventLines, findRunByWorktreePath, findRunsByWorktreePath, worktreeMatches, findAdHocRunsBySessionId, RUN_ID_RE, findNonCanonicalRunDirs,
   rollbackMint, isStaleClaim, stampAdHocRunDirForDenial, listedWorktreeForCwd, isTrustedOwnedRun, isAdHocRunDir, isSessionOwnedAdHocRun, resolveDenialRunDir,
-  claudePid, ownerPidPatch, isPidAlive, isNestedSession, ownerBlock, ownerStampPatch, patchWithOwnerBlock, refreshOwnerBlock,
+  claudePid, requireEnv, assertEnvObject, resolveLockWaitMs, ownerPidPatch, isPidAlive, isNestedSession, ownerBlock, ownerStampPatch, patchWithOwnerBlock, refreshOwnerBlock,
 };

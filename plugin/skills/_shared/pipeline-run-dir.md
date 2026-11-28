@@ -2,25 +2,21 @@
 
 Operational reference for skills that need to locate the active pipeline run directory. Ownership is split three ways. **`_shared/run-dir-resolution.md` owns the Resolution order and its Bash snippet** (#2019, extracted so a call site needing only those can compose a lean bundle without also paying for this file's other two ownership areas) — the canonical, complete ordered algorithm for finding the active run, cited by step number from `/capture`, `/tidy`'s `scan-procedures.md`, `flow/materialize.md`, and `_shared/auto-decision-log.md`. **This file owns `resolve-run-dir`'s CLI reference (#2728: `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir` — a `bin/hooks.js` subcommand, never a standalone `bin/resolve-run-dir.js` script), Anchoring (write-pinning, guards), and the Worktree-local `--run` fallback.** `auto-mode-contract.md`'s "Pipeline run directory: location and collision-safety" section owns everything around both — directory structure, collision-safety rationale, cleanup/archival lifecycle, and gitignore treatment — and does not restate the ordering. Consult that section for anything not covered here.
 
-**Not the hook-side algorithm.** Hooks cannot see a skill's spec/topic, so `bin/lib/hooks/context.js`'s `resolveRun` answers a different question with different rules (ownership-scoped, no slug matching — see CLAUDE.md's Hooks section). A change to the order below does not change hook behavior, and vice versa.
-
-## Resolution order — moved
-
-Moved to `_shared/run-dir-resolution.md`'s "Resolution order" section (#2019), alongside the
-Bash snippet that implements it. Read there.
+**Not the hook-side algorithm.** Hooks cannot see a skill's spec/topic, so `bin/lib/hooks/context.js`'s `resolveRun` answers a different question with different rules (ownership-scoped, no slug matching — see CLAUDE.md's Hooks section). A change to that order does not change hook behavior, and vice versa.
 
 ## Resolving it: `resolve-run-dir` (preferred over composing `$RUN_ROOT` by hand)
 
 `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir [--spec-slug <s>] [--mode auto] [--standalone <name>] [--create] [--root-only] [--archived]`
-(`bin/lib/hooks/run-dir-resolve.js`) implements steps 1, 2, and 4 above on top of
-`bin/lib/hooks/worktree-detect.js`'s `mainCheckoutRoot()` — the same anchoring the Bash snippet
-below computes, but as a single command every citing skill step calls instead of restating that
-snippet inline (`[IL-127]`: a restated, hand-typed copy is exactly how the anchoring rule got
-read and then violated in the incident this command exists to prevent). Prints the resolved
-absolute path on stdout and exits `0`; exits non-zero with a message on stderr naming the problem
-when nothing resolves, or when `PIPELINE_RUN_DIR` (or a candidate) resolves inside a linked
-worktree instead of the main checkout — a shadow, the exact `[IL-127]` shape, refused loudly
-rather than silently substituted. Never creates a directory unless `--create` is passed.
+(`bin/lib/hooks/run-dir-resolve.js`) implements steps 1, 2, and 4 of
+`_shared/run-dir-resolution.md`'s Resolution order on top of `bin/lib/hooks/worktree-detect.js`'s
+`mainCheckoutRoot()` — the same anchoring `_shared/run-dir-resolution.md`'s Bash snippet computes,
+but as a single command every citing skill step calls instead of restating that snippet inline
+(`[IL-127]`: a restated, hand-typed copy is exactly how the anchoring rule got read and then
+violated in the incident this command exists to prevent). Prints the resolved absolute path on
+stdout and exits `0`; exits non-zero with a message on stderr naming the problem when nothing
+resolves, or when `PIPELINE_RUN_DIR` (or a candidate) resolves inside a linked worktree instead of
+the main checkout — a shadow, the exact `[IL-127]` shape, refused loudly rather than silently
+substituted. Never creates a directory unless `--create` is passed.
 
 - No flags: steps 1-2 only (env var, then newest matching directory for `--spec-slug`). This is
   the read-only "where is the run I already have" call most steps need. Step 2 never adopts a
@@ -32,22 +28,23 @@ rather than silently substituted. Never creates a directory unless `--create` is
   (`adoptionRefusal`, #1962/#4151). An absent `run-state.json` (a bare mint) is still adopted, and
   step 1's `PIPELINE_RUN_DIR` directory is never refused. A caller therefore must not use step 2 to
   re-find a run it has already closed (`close-run` makes it `clean`) — carry the path instead.
-- `--create` with `--spec-slug <s>` and no `--standalone`: the plain mkdir-only mint shape
+- `--create` with `--spec-slug <s>` and no `--standalone`: the plain mint shape
   `/flow` (`flow/steps-and-gates.md` case 4), `/claude-tweaks:dispatch` (`dispatch/SKILL.md` Step
-  4), and `flow/claim-targets.md`'s direct-invocation mint use — `config.yml`/`decisions.md` are
+  4), and `flow/claim-targets.md`'s direct-invocation mint use — a mkdir plus the run-start
+  `manifest.json` (not an initialization marker); `config.yml`/`decisions.md` are
   written later, by whichever step actually initializes the run.
 - `--create` with `--standalone <name>`: `_shared/run-dir-resolution.md`'s step 4
-  standalone-auto-fallback shape — `{ISO-timestamp}-{name}-standalone/`, pre-populated with
-  `decisions.md` and `staged/`. Pass `--mode auto` too when the caller is on that step's
-  standalone-auto allowlist (the command then
-  refuses to create outside auto mode); omit `--mode` entirely for a caller that creates in every
-  mode regardless — the two documented exceptions, `/claude-tweaks:wrap-up` and
-  `/claude-tweaks:release`, each with its own clause above. Combined with `--spec-slug` (wrap-up's
-  mint), step 2 still runs first, so the same adoption refusal applies before anything is created.
+  standalone-auto-fallback shape — `{ISO-timestamp}-{name}-standalone/` (a `{name}` already
+  ending in `-standalone` is not suffixed twice), pre-populated with `decisions.md`,
+  `staged/` and the run-start `manifest.json` (none on a hook-minted `-adhoc-standalone` dir). Pass `--mode auto` too when the caller is on that step's standalone-auto
+  allowlist (the command then refuses to create outside auto mode); omit `--mode` entirely for a
+  caller that creates in every mode regardless — the two documented exceptions,
+  `/claude-tweaks:wrap-up` and `/claude-tweaks:release`, each with its own clause above. Combined
+  with `--spec-slug` (wrap-up's mint), step 2 still runs first, so the same adoption refusal
+  applies before anything is created.
 - `--root-only`: skips run resolution entirely and prints the anchored `$RUN_ROOT` itself — for a
   call site that only ever needed the main-checkout root (a `find` backstop scoped to the whole
-  `pipelines/` tree, the transitional copy-out guard's destination computation), never a specific
-  run's directory.
+  `pipelines/` tree), never a specific run's directory.
 - `--archived` (#4677): needs `--spec-slug <s>`, and is refused with `--create` or without `--spec-slug`, both checked before step 1. It falls back, only after steps 1-2 resolve nothing, to the newest closed match that records a `pr` object: an `archive/` dir, or a live `clean` dir that `archive-run` refused (a live dir whose run-id also exists under `archive/` is never adopted). That match is refused, exit 1, when a newer live run of the same slug is not closed (`interrupted`, or an `active` run step 2 refused), because merging the older run's still-open PR would skip it. It is read-only, an adoptable step-2 match always wins, and its only caller is `wrap-up/merge-mode.md`.
 
 ## Anchoring
@@ -73,12 +70,16 @@ Two consequences, both load-bearing:
 - **A worktree never holds the only copy** of `config.yml`, `decisions.md`,
   `events.jsonl` or `staged/`. Removing a worktree therefore cannot destroy pipeline
   state, which is what makes automatic reaping (`bin/lib/hooks/worktree-reap.js`, fired from
-  `session-start.js`) safe. Run directories that predate anchoring are the one exception, and
-  `skills/wrap-up/cleanup-procedures-execution.md` Section C step 3.5 carries the transitional guard that
-  copies them out before a worktree is removed.
+  `session-start.js`) safe.
 - **`work/{n}-spec.md` is the first of two exceptions** and stays inside the worktree. It is
-  git-tracked and must be committed onto the feature branch; it reaches the main checkout by
-  merge.
+  git-tracked; it is committed on the feature branch during the run and, at wrap-up before
+  the merge, `git mv`'d to `archive/{run-id}/` on the branch (`bin/archive-run-header.js`,
+  #3976), so it reaches the main checkout already archived. After wrap-up no consumer reads
+  the header from the live path directly: every header reader resolves it through
+  `bin/lib/run-header.js`'s resolver (#3974) or, like `/tidy`'s backstop `find`, matches both
+  the live and the archived path — the one accepted exception is `flow/multispec-review-console.md`'s
+  Shared teardown header capture, which reads the live path and then the archived one itself, and
+  falls back to the manifest id and a `SKIP` only when both miss.
 - **A `*-tidy-standalone*` run's own audit files are the second exception (#1493)** — under
   `pr-first`, `decisions.md`, `report.md`, and `staged/**` are copied into the worktree's own
   copy of the run dir (`tidy/SKILL.md` Step 7.5) and committed there, the same shape as
@@ -128,9 +129,8 @@ A second, unconditional PreToolUse guard (`bin/lib/hooks/pre-tool-use.js`'s
 `checkPipelineShadowGuard`, not gated on `worktree-always`) denies the opposite direction: an
 Edit/Write/NotebookEdit or Bash write/mkdir that would CREATE a *new* `.claude-tweaks/pipelines/`
 run directory inside a linked worktree — a shadow, the exact split this file's Anchoring section
-exists to prevent. It flags only a genuinely new creation; a pre-anchoring run directory already
-sitting in a worktree (`wrap-up/cleanup-procedures-execution.md` Section C step 3.5's transitional guard,
-sunset 2026-11-07) is left alone.
+exists to prevent. It flags only a genuinely new creation; a run directory that already exists in
+a worktree is left alone.
 
 **`work/{n}-spec.md` carve-out (#959).** The guard takes the first path segment under `pipelines/`
 as the run-dir candidate and, before this fix, denied whenever that directory did not already
@@ -167,12 +167,6 @@ sanctioned-write family, the fourth a single documented exception:
   `<main checkout>/.claude-tweaks/pipelines/<value>` (#3025) — the form
   `/claude-tweaks:dispatch`'s `$RUN_ID`, or a `<dir>` copied from the SessionStart notice's run
   list, passes — and the anchoring check above still runs on that resolved path.
-
-### Initialized-run-dir requirement (#1566) — moved
-
-Moved to `_shared/pipeline-run-dir-initialized-check.md` (#2722) — `bin/*.js`-author detail (which
-of `resolveRunArg`'s 8 shared callers opt out via `resolveOpts.allowUninitialized`, and why) not
-needed by an ordinary skill-following worktree-creation catch-up. Read there.
 
 ### Worktree-local `--run` fallback (#280)
 
@@ -240,7 +234,8 @@ argument still holds there.
   resolved path inside any git checkout must be anchored under the main checkout resolved from
   cwd; a path outside any checkout is accepted as-is, no flag needed. Rejection exits 1, these
   CLIs' documented invocation-failure code — a deliberate, stated deviation from the family's
-  exit 2.
+  exit 2. `bin/implementer-tier.js` (#5996) delegates its `--run` to `resolvePolicy`'s same guard
+  and existence check but keeps the family's exit 2 on a refusal.
 
 - **Sanctioned-write CLIs** — `bin/log-decision.js`, `bin/stage-item.js`, `bin/set-config.js`
   (`--run`, refs #1376), `bin/set-verify-expectations.js` (`--run`, refs #2764), and `bin/write-run-artifact.js` (`--run`, refs #3044) — the run-dir writers a worktree-isolated session invokes when tool-level
@@ -248,9 +243,14 @@ argument still holds there.
   strict anchored-under-the-main-checkout rule, but through `bin/lib/stage-item/write.js`'s
   exported `resolveTarget` rather than `worktree-detect.js` directly, and refuses with exit **3**
   — their documented run-dir-failure code, kept distinct from their exit 2 (malformed
-  invocation), with its own two messages ("run dir does not exist" versus "not anchored under
-  the main checkout (a worktree-local shadow)"). A further writer imports that `resolveTarget`
-  rather than re-deriving the predicate, as the third, fourth and fifth did.
+  invocation), with its own three messages ("run dir does not exist", "not anchored under
+  the main checkout's .claude-tweaks/pipelines (a worktree-local shadow)", and "not a pipeline
+  run directory"). The guard also requires the real path to sit strictly inside the main
+  checkout's `.claude-tweaks/pipelines/` (`bin/lib/run-dir-guard.js`'s `isUnderPipelines`), so a
+  directory that is anchored but elsewhere in the checkout (`plugin/`, `docs/`) is refused with
+  the third message (`not-a-run-dir`) before any `config.yml` in it is read or anything is written.
+  A further writer imports that `resolveTarget`
+  rather than re-deriving the predicate, as the third, fourth and fifth did. `bin/deferral-route.js` (`--run`, #5933), which writes only its own `deferral-route-tally.log` and only with `run-filed-record-cap` set, imports the same `resolveTarget` but refuses with exit **1** — its run-dir and policy failure code, since it has no exit 3 and no caller branches on a distinct run-dir code.
 
 - **The composer CLI** — `bin/compose-context.js` (`--run`, #1988) — writes
   `{run}/context/{step}.md` yet takes the resolver family's anchored-or-outside rule
@@ -279,12 +279,6 @@ legitimate outside-repo use exists, as it did for the two resolver CLIs (#1065).
 
 `resolve-run-dir` above mirrors the snippet in `_shared/run-dir-resolution.md`'s "Bash snippet
 (resolution)" section; a citing skill step calls the command, not that snippet directly.
-
-## Bash snippet (resolution) — moved
-
-Moved to `_shared/run-dir-resolution.md`'s "Bash snippet (resolution)" section (#2019), alongside
-the Resolution order it implements — including the ISO-timestamp rule and SPEC_SLUG conventions.
-Read there.
 
 ## See also
 

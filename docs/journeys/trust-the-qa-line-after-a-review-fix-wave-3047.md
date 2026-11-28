@@ -1,6 +1,7 @@
 ---
 files:
   - plugin/skills/review/code-mode-steps.md
+  - plugin/skills/review/late-findings-routing.md
   - plugin/skills/review/review-summary-template.md
   - plugin/skills/test/SKILL.md
 ---
@@ -57,4 +58,5 @@ files:
 - Created during build of #3047, which added the review Step 6.7 post-fix-wave QA re-run and the stale-QA qualifier.
 - Extended during build of #3598. Step 3 Routing fix waves joined the same single re-run under one review-wide `WAVE_BASE`. The capture became dirty-tree-safe (`git stash create`, falling back to HEAD). Untracked files joined the touched set. The wider `qa affected` selection was accepted. Step 5's never-run rule was added.
 - Updated during build of #3771. The Step 6.7 re-run now passes `--source review`, so a standalone review gets no nested `/test` Next Actions block.
+- Updated during build of #4359. Step 6.7's body, with the `WAVE_BASE` capture and item 4's re-run, moved from `code-mode-steps.md` to `review/late-findings-routing.md`. A Step-3-only wave that runs item 4 on its own reads that file too, following only its `WAVE_BASE` paragraph and item 4.
 - Related: #3048. Out of scope here: running `design-wrapper review` before `/test`'s QA.

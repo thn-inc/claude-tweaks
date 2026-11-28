@@ -13,13 +13,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { scratchDir } = require('../tests/helpers/tmp-dir');
 const path = require('node:path');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 const { scanScaleReadiness } = require('../plugin/bin/lib/code-health/candidates-scale-readiness');
 
 function tmpGitRepo() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-scale-readiness-perf-'));
+  const root = scratchDir('codehealth-scale-readiness-perf-');
   execFileSync('git', ['-C', root, 'init', '-q']);
   return root;
 }

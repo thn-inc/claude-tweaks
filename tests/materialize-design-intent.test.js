@@ -153,6 +153,19 @@ test('AC11.1: --check reports the body\'s Blocked by numbers as bodyBlockedBy (#
   assert.deepStrictEqual(JSON.parse(deps.calls.stdout.join('')).bodyBlockedBy, [5, 7]);
 });
 
+test('Q7 (#4793): blocked-by lists this repository\'s numbers, then each Blocked by owner/name#N line in its qualified form', () => {
+  const { exitCode, deps } = materializeWithBody(shapedBody('Design-intent: quiet') + '\nBlocked by #6\nBlocked by other/repo#5\n');
+  assert.strictEqual(exitCode, 0, deps.calls.stderr.join(''));
+  const written = fs.readFileSync(JSON.parse(deps.calls.stdout.join('')).file, 'utf8');
+  assert.match(written, /^blocked-by: \[6, other\/repo#5\]$/m);
+});
+
+test('Plan Review Clarifications: --check lists a body-declared foreign blocker in bodyBlockedBy, so 2.7b still runs its call', () => {
+  const { exitCode, deps } = checkWithBody(shapedBody('Design-intent: quiet') + '\nBlocked by other/repo#5\n');
+  assert.strictEqual(exitCode, 0, deps.calls.stderr.join(''));
+  assert.deepStrictEqual(JSON.parse(deps.calls.stdout.join('')).bodyBlockedBy, ['other/repo#5']);
+});
+
 test('--check reports ceremony null for an unlabeled record instead of the missing-ceremony exit 2 (#4027)', () => {
   const { exitCode, deps } = checkWithBody(shapedBody('Design-intent: quiet'), [], []);
   assert.strictEqual(exitCode, 0, deps.calls.stderr.join(''));

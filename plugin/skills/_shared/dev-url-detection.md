@@ -1,6 +1,6 @@
 # Dev URL Detection
 
-Shared procedure for auto-detecting a running development server. Checks persisted config first, then probes ports. Persists detected URLs for future runs. Referenced by `/claude-tweaks:stories`, `/claude-tweaks:test`, `/claude-tweaks:flow`, `/claude-tweaks:visual-review`, and `/claude-tweaks:demo`. (`/claude-tweaks:review` invokes this transitively via `/visual-review` — it does not call this procedure directly.)
+Shared procedure for auto-detecting a running development server. Checks persisted config first, then probes ports. Persists detected URLs for future runs. Referenced by `/claude-tweaks:stories`, `/claude-tweaks:test`, `/claude-tweaks:flow`, `/claude-tweaks:visual-review`, and `/claude-tweaks:accept`. (`/claude-tweaks:review` invokes this transitively via `/visual-review` — it does not call this procedure directly.)
 
 > **Permissions required:** this procedure performs file **writes** in Step 4 (creates or updates `stories/servers.yml`). Any skill that invokes this procedure must run with Write and Edit tool access enabled. Read-only callers will fail at Step 4 — there is no read-only path; persistence is mandatory, not optional.
 
@@ -10,7 +10,7 @@ Shared procedure for auto-detecting a running development server. Checks persist
 - `/claude-tweaks:test` runs QA story validation and needs a dev server
 - `/claude-tweaks:flow` triggers automatic story generation after detecting UI changes
 - `/claude-tweaks:visual-review` needs a dev URL for page, journey, or discover modes (also called transitively from `/review` full mode)
-- `/claude-tweaks:demo`'s Prepare/Validate steps need a verified dev URL, but only for `app-route`/`rendered-page` Observation plans — Prepare's fallback resolves the entry point via this procedure, and Validate then probes it before Show; `cli`/`flow`/`diff` plans skip this procedure entirely (the legacy pre-flight naming survives only in `skills/demo/legacy-brief-compatibility.md`, for briefs posted before the Observation plan schema shipped)
+- `/claude-tweaks:accept`'s Prepare/Validate steps need a verified dev URL, but only for `app-route`/`rendered-page` Observation plans — Prepare's fallback resolves the entry point via this procedure, and Validate then probes it before Show; `cli`/`flow`/`diff` plans skip this procedure entirely (the legacy pre-flight naming survives only in `skills/demo/legacy-brief-compatibility.md`, for briefs posted before the Observation plan schema shipped)
 
 ## Procedure
 
@@ -142,6 +142,8 @@ When starting a server (auto mode, or interactive with consent):
 3. **Run in the background** — detached per the Ownership rule above when the server must outlive this turn, plain background otherwise — and poll the port until it responds (2xx/3xx) or a timeout (~90s for first compile). Set `APP_URL = http://localhost:{free-port}` once reachable.
 4. **Record the PID + port + detach state**: write the **server record** (one line: `{pid} {port} {worktree-root} detached:{yes|no}`) when a pipeline run dir exists. The server record is `$MULTISPEC_PARENT_DIR/ephemeral-server.txt` when `MULTISPEC_PARENT_DIR` is set (a multi-spec `/claude-tweaks:flow` run: its specs share one server, while each spec's own `{run-dir}` is `{parent}/spec-{N}/`), and `{run-dir}/ephemeral-server.txt` otherwise; every reader resolves this same path. Write it via a plain Bash redirect, e.g. `printf '%s %s %s detached:%s\n' "$PID" "$PORT" "$WORKTREE_ROOT" "$DETACHED" > "{server-record}"`, never the Edit/Write tool: this path is anchored under the main checkout, so a worktree session's Edit/Write attempt against it is refused by the harness's own cross-checkout write-pinning, while a plain Bash write into `.claude-tweaks/pipelines/` is already exempted from claude-tweaks' own worktree-always gate and untouched by that tool-level pin (see `_shared/pipeline-run-dir.md`, "Anchoring" — "necessary but not sufficient"). This file is also the **liveness handle** for the rest of the run — it is what any later step (this run's own, or a subsequent dispatched call's) re-probes before trusting the server is still up, not a promise that it is. `/wrap-up` cleanup reads it to stop the server; a later step that finds the recorded pid dead re-runs this procedure and rewrites this file rather than treating the file's mere existence as proof of a live server. Outside a pipeline (standalone), the calling skill stops it at the end of its own run.
 5. If the server fails to come up within the timeout, do not block: set no `APP_URL`, log the failure, and let the caller degrade to code-only mode.
+
+**Acceptance re-entry.** A recreated acceptance worktree (`.claude/worktrees/accept-{N}`, from `/claude-tweaks:accept`'s re-entry) is the worktree root for item 2's anchor. No run dir exists there, so item 4's server record goes to the session-tmp path (`_shared/session-tmp-root.md`) and `/claude-tweaks:accept` stops the server when the verdict is given or the session ends. With no start command: no `APP_URL`, and `/claude-tweaks:accept` takes its cannot-run branch.
 
 ### Output
 

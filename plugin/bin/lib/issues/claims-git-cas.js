@@ -223,12 +223,20 @@ function writeClaimBlobGit({
 // `created: true` means the push succeeded, not that this call made the branch:
 // a push of the sha the branch already points at is git's "up to date" no-op and
 // never meets the lease (a real-git probe, #4495). No caller branches on it.
-function bootstrapClaimsBranchGit({ remote = 'origin', branch = CLAIMS_BRANCH, runner = defaultRunner } = {}) {
-  const scratchRef = `refs/claims-cas-bootstrap/${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+//
+// The one bootstrap sequence for every branch store: release-state/store.js
+// (#5883) calls it for `release-state` with its own options. `fetchFlags` go
+// after `fetch -q`, `pushFlags` after `push`, and `scratchRefPrefix` names the
+// ref the fetch writes; the defaults are exactly the claims behavior.
+function bootstrapClaimsBranchGit({
+  remote = 'origin', branch = CLAIMS_BRANCH, runner = defaultRunner,
+  fetchFlags = [], pushFlags = [], scratchRefPrefix = 'refs/claims-cas-bootstrap',
+} = {}) {
+  const scratchRef = `${scratchRefPrefix}/${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   try {
-    runner(['fetch', '-q', remote, `HEAD:${scratchRef}`]);
+    runner(['fetch', '-q', ...fetchFlags, remote, `HEAD:${scratchRef}`]);
     const baseSha = runner(['rev-parse', scratchRef]).trim();
-    runner(['push', remote, `${baseSha}:refs/heads/${branch}`, `--force-with-lease=refs/heads/${branch}:`]);
+    runner(['push', ...pushFlags, remote, `${baseSha}:refs/heads/${branch}`, `--force-with-lease=refs/heads/${branch}:`]);
     return { ok: true, created: true };
   } catch (err) {
     if (classifyGitError(err).kind === 'contested') {

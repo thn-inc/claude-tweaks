@@ -5,7 +5,7 @@
 // procedure is lib/timing/context-gauge.js.
 //
 //   node bin/context-gauge.js --run <run-dir> [--transcript <path>] [--cap <n>]
-//     [--next-steps <step,...>
+//     [--next-steps <step,...> [--stories-owed]
 //      | --record-steps <#N:steps;...> [--keep-going] [--no-stories]] [--help]
 //
 // The transcript is --transcript when given, else found from
@@ -24,6 +24,10 @@
 // record's own remaining steps (`#A:none;#B:build,test`, lib/flow/record-steps.js);
 // the two are mutually exclusive. --keep-going and --no-stories, each valid only
 // with --record-steps, carry that run's token of the same name into `resume`.
+// --stories-owed, valid only with --next-steps, says build's automatic stories
+// step has not run yet (#4664): over the cap, a list without `stories`, or with
+// it after `test`, writes no handoff (handoff: null and a reason), so the step
+// is never dropped from the resumed run.
 //
 // Stdout: one JSON line, {contextTokens, cap, over, transcript, handoff, reason}.
 // over is contextTokens > cap. When over, --next-steps or --record-steps was
@@ -50,7 +54,8 @@
 // or any other measurement failure prints over: false, contextTokens: null and
 // a `reason`; a handoff that cannot be written (no target records, a failed
 // write, a multi-record run under --next-steps, --record-steps with no manifest
-// or naming other records than it lists) prints over: true, handoff: null and a `reason`.
+// or naming other records than it lists, a top-level run — run-state.json not
+// dispatched: true — naming wrap-up) prints over: true, handoff: null and a `reason`.
 // Neither ever stops a run. Several reasons are joined with "; ". Every
 // non-null `reason` is also logged to the run's decisions.md as a SKIP
 // (_shared/auto-decision-log.md's degrade trace), so a gauge that cannot work
@@ -61,9 +66,10 @@
 //      2 malformed invocation: an unknown flag, a value-less flag, a --cap that
 //        is not a positive integer, a --next-steps entry outside FLOW_STEPS, an
 //        invalid --record-steps value, --record-steps beside --next-steps,
-//        --keep-going or --no-stories without --record-steps, or a --run that
-//        is missing, not anchored under the main checkout (a worktree-local
-//        shadow, or outside every checkout — [IL-127]), or whose basename is
+//        --keep-going or --no-stories without --record-steps, --stories-owed
+//        without --next-steps, or a --run that
+//        is missing, not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local
+//        shadow, or a directory outside pipelines/, or outside every checkout — [IL-127]), or whose basename is
 //        not a run id. Nothing is written.
 // --run is anchored strictly through lib/stage-item/write.js's resolveTarget
 // (deps-injected, mainRoot injectable): handoff.json is a run-dir write, and
@@ -83,15 +89,16 @@ const {
 const { parseRecordSteps } = require('./lib/flow/record-steps');
 const { readRunMode } = require('./lib/flow/run-mode');
 
-const USAGE = 'usage: context-gauge.js --run <run-dir> [--transcript <path>] [--cap <n>] [--next-steps <step,...> | --record-steps <#N:steps;...> [--keep-going] [--no-stories]] [--help]\n'
+const USAGE = 'usage: context-gauge.js --run <run-dir> [--transcript <path>] [--cap <n>] [--next-steps <step,...> [--stories-owed] | --record-steps <#N:steps;...> [--keep-going] [--no-stories]] [--help]\n'
   + '  measures this agent\'s context from its transcript; past the cap, writes {run}/handoff.json (with --next-steps or --record-steps)\n'
   + '  prints {contextTokens, cap, over, transcript, handoff, reason}; a missing/unreadable transcript prints over: false + reason\n'
   + `  --cap defaults to ${CONTEXT_CAP_TOKENS}; --next-steps entries: ${FLOW_STEPS.join(', ')}\n`
   + '  --record-steps is a multi-spec run\'s form, every manifest.yml record with its own steps: #A:none;#B:build,test\n'
   + '  --keep-going (only with --record-steps) carries the run\'s keep-going token into the resume line\n'
   + '  --no-stories (only with --record-steps) carries the run\'s no-stories token into the resume line\n'
+  + '  --stories-owed (only with --next-steps): build\'s automatic stories has not run; over the cap, a list without stories before test writes no handoff\n'
   + '  exit 0 in every measured state (the JSON is the answer)\n'
-  + '       2 malformed invocation or bad --run (missing, not anchored under the main checkout, not a run id)\n';
+  + '       2 malformed invocation or bad --run (missing, not anchored under the main checkout\'s .claude-tweaks/pipelines, not a run id)\n';
 
 const FLAGS = { '--run': 'run', '--transcript': 'transcript', '--cap': 'cap', '--next-steps': 'nextSteps', '--record-steps': 'recordSteps' };
 
@@ -102,6 +109,7 @@ function parseArgs(argv) {
     if (a === '--help' || a === '-h') { o.help = true; continue; }
     if (a === '--keep-going') { o.keepGoing = true; continue; }
     if (a === '--no-stories') { o.noStories = true; continue; }
+    if (a === '--stories-owed') { o.storiesOwed = true; continue; }
     if (!Object.hasOwn(FLAGS, a)) return { error: `unknown argument: ${a}` };
     const v = argv[i + 1];
     if (typeof v !== 'string' || !v.trim() || v.startsWith('--')) return { error: `${a} needs a value` };
@@ -159,10 +167,21 @@ const FALLBACK_REASONS = {
 // a dispatched call, `main` is the dispatcher's own — so it measures and reports, never hands off.
 const HANDS_OFF = new Set(['in-flight', 'explicit']);
 const NOT_IDENTIFIED_REASON = 'handoff.json not written: the caller was not identified, so the measured transcript may be another agent\'s (only an in-flight or --transcript identification hands off)';
+const TOP_LEVEL_WRAPUP_REASON = 'handoff.json not written: a top-level run (run-state.json not dispatched: true) never hands off wrap-up — flow/context-handoff.md: continue in place';
+
+const STORIES_OWED_REASON = 'handoff.json not written: --stories-owed but --next-steps omits stories (put stories before test), or run stories first: continue in place';
+
+// True when the list keeps build's owed stories step: present, and ahead of test when test is listed.
+function keepsOwedStories(nextSteps) {
+  const storiesAt = nextSteps.indexOf('stories');
+  if (storiesAt === -1) return false;
+  const testAt = nextSteps.indexOf('test');
+  return testAt === -1 || storiesAt < testAt;
+}
 
 // Measure, and write the handoff when over. Never throws: every failure is a
 // `reason` on the result (the fail-open contract); several join with '; '.
-async function measure({ runDir, runId, cwd, cap, nextSteps, parsedRecordSteps = null, keepGoing = false, noStories = false, transcriptArg }, deps) {
+async function measure({ runDir, runId, cwd, cap, nextSteps, parsedRecordSteps = null, keepGoing = false, noStories = false, storiesOwed = false, transcriptArg }, deps) {
   const result = { contextTokens: null, cap, over: false, transcript: null, handoff: null, reason: null };
   const reasons = [];
   const done = (why) => {
@@ -199,7 +218,15 @@ async function measure({ runDir, runId, cwd, cap, nextSteps, parsedRecordSteps =
     return done(`measurement failed: ${errText(e)}`);
   }
   if (!result.over || !nextSteps) return done();
+  // --stories-owed: build's automatic stories step has not run yet; a list without it would drop it for good.
+  if (storiesOwed && !keepsOwedStories(nextSteps)) return done(STORIES_OWED_REASON);
   if (!HANDS_OFF.has(identified)) return done(NOT_IDENTIFIED_REASON);
+  // flow/context-handoff.md: a top-level run never hands off wrap-up; a dispatched run may.
+  if (nextSteps.includes('wrap-up')) {
+    let state = null;
+    try { state = deps.readRunState(runDir); } catch { state = null; }
+    if (!state || state.dispatched !== true) return done(TOP_LEVEL_WRAPUP_REASON);
+  }
 
   try {
     const previous = deps.readHandoffCount(runDir);
@@ -231,7 +258,7 @@ async function measure({ runDir, runId, cwd, cap, nextSteps, parsedRecordSteps =
       const worktree = state && typeof state.worktree === 'string' ? state.worktree : null;
       targets = deps.resolveTargetRecords({ runDir, worktree, gitRoot: deps.gitRootOf(runDir) });
       if (!targets || targets.length === 0) {
-        return done(`handoff.json not written: no target records (no spec-{N}/ dir, no work/{n}-spec.md in ${runDir}${worktree ? ' or its worktree copy' : ''})`);
+        return done(`handoff.json not written: no target records (no spec-{N}/ dir and no spec header for ${runDir}${worktree ? ' or its worktree copy' : ''})`);
       }
       // --next-steps names one record's remaining steps, so a resume over several records would
       // skip the later ones' earlier steps. --record-steps names each record's own.
@@ -271,6 +298,7 @@ async function run(argv, overrides = {}) {
   if (o.recordSteps !== undefined && o.nextSteps !== undefined) return usageError('--record-steps and --next-steps are mutually exclusive');
   if (o.keepGoing && o.recordSteps === undefined) return usageError('--keep-going is valid only with --record-steps');
   if (o.noStories && o.recordSteps === undefined) return usageError('--no-stories is valid only with --record-steps');
+  if (o.storiesOwed && o.nextSteps === undefined) return usageError('--stories-owed is valid only with --next-steps');
   let parsedRecordSteps = null;
   if (o.recordSteps !== undefined) {
     parsedRecordSteps = parseRecordSteps(o.recordSteps);
@@ -289,13 +317,13 @@ async function run(argv, overrides = {}) {
   if (!target.ok) {
     return usageError(target.reason === 'missing'
       ? `--run dir does not exist or is not a directory: ${o.run}`
-      : `--run ${o.run} is not anchored under the main checkout (a worktree-local shadow, or outside every checkout) — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path`);
+      : `--run ${o.run} is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/, or outside every checkout) — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path`);
   }
   const runDir = target.dir;
   const runId = path.basename(runDir);
   if (!ctxLib.RUN_ID_RE.test(runId)) return usageError(`--run basename is not a run id (a spec- subdir answers for its parent run): ${runId}`);
 
-  const result = await measure({ runDir, runId, cwd, cap, nextSteps, parsedRecordSteps, keepGoing: Boolean(o.keepGoing), noStories: Boolean(o.noStories), transcriptArg: o.transcript }, deps);
+  const result = await measure({ runDir, runId, cwd, cap, nextSteps, parsedRecordSteps, keepGoing: Boolean(o.keepGoing), noStories: Boolean(o.noStories), storiesOwed: Boolean(o.storiesOwed), transcriptArg: o.transcript }, deps);
   if (result.reason) {
     try {
       deps.appendDecision(runDir, formatEntry({

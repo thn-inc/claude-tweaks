@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // bin/link-records.js — /specify Step 4 native linking in one command.
-//   node bin/link-records.js --parent <n> --subs <n,n,...> [--blocked-by "<dependent:blocker>,..."] [--repo owner/name] [--help]
+//   node bin/link-records.js --parent <n> --subs <n,n,...> [--blocked-by "<dependent:blocker>,..."] [--repo [host/]owner/name] [--help]
 // One GraphQL databaseId batch (every number appearing in --parent/--subs/--blocked-by),
 // then the sub_issues + blocked_by POSTs via bin/lib/issues/link.js. Prints one JSON
 // envelope. Exit 0 on success or partial-with-`failed` (the caller reads `failed`);
@@ -17,7 +17,7 @@ const {
   parseRepo, ghAvailable, pinExplicitRepoHost, gateOriginRepo,
 } = require('./lib/repo-resolve');
 
-const USAGE = 'usage: link-records.js [--parent <n> --subs <n,n,...>] [--blocked-by "<dependent:blocker>,..."] [--repo owner/name] [--help]\n       at least one of --parent+--subs or --blocked-by is required\n';
+const USAGE = 'usage: link-records.js [--parent <n> --subs <n,n,...>] [--blocked-by "<dependent:blocker>,..."] [--repo [host/]owner/name] [--help]\n       at least one of --parent+--subs or --blocked-by is required\n';
 
 const isPos = (n) => Number.isInteger(n) && n > 0;
 
@@ -88,7 +88,7 @@ function run(argv, deps = realDeps) {
     if (gated.refusal) { deps.stderr(`link-records.js: ${gated.refusal}\n`); return 2; }
     repoSpec = gated.spec;
   }
-  if (!repoSpec) { deps.stderr('link-records.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
+  if (!repoSpec) { deps.stderr('link-records.js: could not resolve owner/repo — pass --repo [host/]owner/name\n'); return 2; }
   if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
   const { host, owner, repo } = repoSpec;
   // #1443: parseRepo's regex accepts any non-'/' owner/repo segment, including '.'/'..'

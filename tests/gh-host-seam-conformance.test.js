@@ -293,17 +293,20 @@ test('AC3.1: every gh spawn under plugin/bin/ routes through ghOptions', () => {
     'wrap these gh spawns\' options in repo-resolve.js\'s ghOptions(args, { … }) — without it a GitHub Enterprise origin\'s calls go to github.com');
 });
 
-// An explicit --repo pins its own host (repo-resolve.js's pinExplicitRepoHost), and each CLI that
-// takes --repo wires that by hand: a `pinGhHost` dep in realDeps plus a `deps.pinGhHost(…)` call in
-// run(). The spawn scan above cannot see a CLI that drops either half, and the CLI then splits one
-// record across two hosts on a GHE origin (found in #4505's review), so the roster is pinned here.
-const PIN_WIRED = ['acceptance-packet.js', 'activity-gather.js', 'fetch-sub-issues.js', 'lib/compose-subject.js', 'lib/number-list-cli.js', 'link-records.js',
-  'list-claims.js', 'materialize.js', 'preflight-records.js', 'release-claim.js', 'repair-claim.js', 'resolved-refusal.js'];
+// An explicit --repo records its host through repo-resolve.js's pinExplicitRepoHost, which ghOptions
+// adds to every later gh call's own env (process.env is never written). Each CLI that takes --repo
+// wires that by hand: a `pinGhHost` dep in realDeps (optionally taking the caller's injected `{ cwd, env, stderr, homeDir }`, #5383, #5386) plus a `deps.pinGhHost(…)` call in run(). A
+// caller scoping the host to some calls passes ghOptions's `deps.explicitHost` instead
+// (backlog-grant-gate.js). The spawn scan above cannot see a CLI that drops either half, and the CLI
+// then splits one record across two hosts on a GHE origin (found in #4505's review), so the roster
+// is pinned here.
+const PIN_WIRED = ['accept-entry.js', 'accept-park.js', 'acceptance-packet.js', 'activity-gather.js', 'ci-health.js', 'fetch-sub-issues.js', 'lib/compose-subject.js', 'lib/number-list-cli.js', 'link-records.js',
+  'list-claims.js', 'materialize.js', 'preflight-records.js', 'release-block.js', 'release-claim.js', 'release-state.js', 'remote-branch-collision.js', 'repair-claim.js', 'resolved-refusal.js'];
 
 test('review (#4505): every CLI that pins its explicit --repo host keeps both halves of the wiring, and no unlisted CLI wires it', () => {
   for (const rel of PIN_WIRED) {
     const code = stripComments(readText(path.join(BIN_ROOT, rel)));
-    assert.match(code, /\bpinGhHost:\s*\(repoSpec\)\s*=>\s*pinExplicitRepoHost\(repoSpec\)/, `${rel}: realDeps no longer defines pinGhHost`);
+    assert.match(code, /\bpinGhHost:\s*\(repoSpec(?:,\s*\{[^}]*\}(?:\s*=\s*\{\})?)?\)\s*=>\s*pinExplicitRepoHost\(repoSpec(?:,\s*\{[^}]*\})?\)/, `${rel}: realDeps no longer defines pinGhHost`);
     assert.match(code, /\bdeps\.pinGhHost\(/, `${rel}: run() no longer calls deps.pinGhHost`);
   }
   const wired = walk(BIN_ROOT)
@@ -313,20 +316,63 @@ test('review (#4505): every CLI that pins its explicit --repo host keeps both ha
   assert.deepEqual(wired, [...PIN_WIRED].sort(), 'a CLI wires pinGhHost that PIN_WIRED does not list, or one stopped: settle the roster');
 });
 
+// #4795: an explicit --repo's host reaches gh one way only — ghOptions adds it to a
+// call's own env (repo-resolve.js). A file that builds `GH_HOST: …` into an env or
+// assigns `….GH_HOST = …` has grown a second mechanism. Blank mode, so a GH_HOST
+// named in a message string or comment is not code. Matched: `GH_HOST: h`,
+// `GH_HOST = h`, a logical assignment (`||=`, `??=`, `&&=`), and the object shorthand
+// (`{ ...process.env, GH_HOST }`: GH_HOST following `{` or `,` and followed by `,` or
+// `}`, so `f(e.GH_HOST, x)` is a read and stays unflagged).
+//
+// Recall limits: a quoted or computed key (`{ "GH_HOST": h }`, `env["GH_HOST"] = h`) is
+// not seen, since blank mode empties string contents; nor is
+// `Object.defineProperty(env, "GH_HOST", …)`.
+const GH_HOST_BUILD = /\bGH_HOST\s*:(?!:)|\bGH_HOST\s*=(?!=)|\bGH_HOST\s*(?:\|\||\?\?|&&)=|(?:^|[{,])\s*GH_HOST\s*[,}]/;
+function ghHostBuilders(raw) {
+  const blank = stripComments(raw, BLANK);
+  const verdict = stripperVerdict(raw, blank);
+  if (verdict !== 'ok') return [STRIPPER_VERDICT_MESSAGES[verdict]];
+  return blank.split('\n').map((l, i) => (GH_HOST_BUILD.test(l) ? `line ${i + 1}` : null)).filter(Boolean);
+}
+test('#4795: the matcher flags an env built or assigned with GH_HOST, and not a read or a message', () => {
+  assert.equal(ghHostBuilders('const e = { ...process.env, GH_HOST: h };').length, 1);
+  assert.equal(ghHostBuilders('process.env.GH_HOST = h;').length, 1);
+  assert.equal(ghHostBuilders("const { GH_HOST: _p, ...env } = process.env;").length, 1);
+  assert.equal(ghHostBuilders('const e = { ...process.env, GH_HOST };').length, 1); // object shorthand
+  assert.equal(ghHostBuilders('env.GH_HOST ||= h;').length, 1); // logical assignment
+  assert.equal(ghHostBuilders('env.GH_HOST ??= h;').length, 1);
+  assert.equal(ghHostBuilders('env.GH_HOST &&= h;').length, 1);
+  assert.deepEqual(ghHostBuilders("if ('GH_HOST' in base) x(); if (e.GH_HOST === h) y(); const m = 'GH_HOST: set';"), []);
+  assert.deepEqual(ghHostBuilders('f(e.GH_HOST, x); g({ a: e.GH_HOST }); if (e.GH_HOST || h) y();'), []);
+  // a comment-stripper mis-parse is reported as an offender, never read as clean (the same
+  // source the spawn scan's mis-parse test uses: blank mode reads `/'/` as a string opener)
+  assert.deepEqual(ghHostBuilders("if (b) /'/.test(b); const c = 'x'; process.env.GH_HOST = c;"), [STRIPPER_VERDICT_MESSAGES.misparsed]);
+});
+test('AC3.1 (#4795): no file under plugin/bin but repo-resolve.js builds or assigns GH_HOST', () => {
+  const offenders = [];
+  for (const file of walk(BIN_ROOT)) {
+    const rel = path.relative(BIN_ROOT, file).replace(/\\/g, '/');
+    if (rel === 'lib/repo-resolve.js') continue;
+    for (const where of ghHostBuilders(readText(file))) offenders.push(`${rel}: ${where}`);
+  }
+  assert.deepEqual(offenders, [], 'route the host through ghOptions (an explicit --repo: pinExplicitRepoHost, or deps.explicitHost for one call) instead of building GH_HOST by hand');
+});
+
 // #4933: a CLI's origin-derived repo goes through repo-resolve.js's gateOriginRepo(remote, deps),
 // which refuses an origin host with no positive GitHub signal before any gh call. A fresh
 // `parseRepo(<origin>)` hands gh a spec for whatever host the remote names, so this scan flags one
 // outside NOT_ORIGIN.
 //
-// A site is a `parseRepo(` call, bare or member (`deps.parseRepo(`), whose balanced argument text
-// matches ORIGIN_ARG. Blank-mode text locates the call and its argument boundaries: a `parseRepo(`
-// in a string or comment is blanked there, and a paren inside a literal moves no boundary.
+// A site is a `parseRepo(` or `originSpecOf(` call (#4794's one origin read, which wraps parseRepo),
+// bare or member (`deps.parseRepo(`), whose balanced argument text matches ORIGIN_ARG. A
+// `function originSpecOf(` definition is no call. Blank-mode text locates the call and its argument
+// boundaries: a `parseRepo(` in a string or comment is blanked there, and a paren inside a literal moves no boundary.
 // Keep-mode text over the same span supplies the argument's literals (`'get-url'`, `'origin'`). An
 // explicit --repo parse (`parseRepo(opts.repo.split('/')…)`) names none of the tokens and is no site.
 //
 // Recall limits: only the argument's own text is read. A local assigned from `remoteUrl()` or
 // `get-url` under another name and parsed on a later line (`url = deps.remoteUrl(); …
-// parseRepo(url)`, activity-gather.js's shape) is not a site; that two-line shape is an accepted
+// originSpecOf(url)`, activity-gather.js's shape) is not a site; that two-line shape is an accepted
 // gap. Nor is a parse reached through an alias (`const p = parseRepo; p(remote)`). Nor is a
 // single-expression origin read whose argument avoids the tokens by its naming alone
 // (`parseRepo(remoteOut)`, `parseRepo(originUrl)`, `parseRepo(remoteURL())`): recall rests on
@@ -337,7 +383,8 @@ const ORIGIN_ARG = /\bremote\b|remoteUrl|get-url|['"]origin['"]/;
 function originReads(raw) {
   const { keep, blank, verdict } = stripBoth(raw);
   const sites = [];
-  for (const m of blank.matchAll(/(?<![\w$])parseRepo\s*\(/g)) {
+  for (const m of blank.matchAll(/(?<![\w$])(?:parseRepo|originSpecOf)\s*\(/g)) {
+    if (/\bfunction\s+$/.test(blank.slice(Math.max(0, m.index - 40), m.index))) continue; // a definition, not a call
     const open = m.index + m[0].length - 1;
     const end = open + 1 + balanced(blank, open).length;
     if (!ORIGIN_ARG.test(keep.slice(open + 1, end))) continue;
@@ -349,19 +396,20 @@ function originReads(raw) {
 
 // Files that may read the origin through parseRepo, keyed file -> exact site count. Each count
 // was settled by reading the lines. activity-gather.js is not listed: it reads the origin in two
-// lines (the recall gap above), so it has 0 sites, and it stops on any host but github.com anyway.
+// lines (the recall gap above; `originSpecOf(url)`), so it has 0 sites, and it stops on
+// any host but github.com anyway.
 const NOT_ORIGIN = {
-  'lib/repo-resolve.js': { count: 1, reason: "defines the gate: gateOriginRepo's own `parseRepo(remote)` is the parse the gate judges. resolveGhSpec's second parse, `parseRepo(hostPathOf(url))`, names no token and is unmatched; harmless, since this file is the seam" },
-  'stale-claim-pr.js': { count: 1, reason: "`deps.parseRepo(remote)` is followed by a stop on any host but github.com ('stale-claim matching supports github.com only'), so no other origin host reaches gh" },
-  'parent-gate.js': { count: 1, reason: "decided by the user at #4933's plan review: the --facts-json path makes no gh call and keeps a raw `parseRepo(remote)`, host normalized, only to judge a qualified --closing token; its gh path calls the gate (ORIGIN_GATED)" },
+  'lib/repo-resolve.js': { count: 2, reason: "defines the gate: originSpecOf's own `parseRepo(hostPathOf(remote))` is the one parse, and gateOriginRepo's `originSpecOf(remote)` is the one origin read the gate judges. resolveGhSpec's `originSpecOf(url)` names no token and is unmatched; harmless, since this file is the seam" },
+  'parent-gate.js': { count: 1, reason: "decided by the user at #4933's plan review: the --facts-json path makes no gh call and keeps an ungated `originSpecOf(remote)` (the seam's normalized read, #4794), only to judge a qualified --closing token; its gh path calls the gate (ORIGIN_GATED)" },
   'lib/wrap-up/engine-verify.js': { count: 2, reason: "carrier-commit's and reference-repairs' `parseRepo(<origin>)` pass only owner/repo to deps.gh, a ghOptions-wrapped runner, so the host is the seam's choice, never the parsed one. The acceptance-labeling check's origin goes through the gate (resolveCheckRepo, #4805), which ORIGIN_GATED lists" },
   'lib/reconcile/pr-state-batch.js': { count: 1, reason: "githubOrigin keeps the parse only when its host is github.com, and the batch query pins `--hostname github.com`" },
+  'lib/issues/upstream-ownership.js': { count: 1, reason: "#4621: ownerContextFromOrigin's `originSpecOf(remoteUrl)` is a pure ownership read that makes no gh call; it needs the host itself (a non-github.com host routes `external`), which the gate would refuse instead of returning" },
 };
 
 // The files whose code calls gateOriginRepo(, the defining lib/repo-resolve.js excluded.
 const ORIGIN_GATED = ['materialize.js', 'lib/compose-subject.js', 'release-claim.js', 'repair-claim.js', 'preflight-records.js',
   'parent-gate.js', 'resolved-refusal.js', 'link-records.js', 'fetch-sub-issues.js', 'backlog-grant-gate.js',
-  'apply-refine-labels.js', 'file-feedback.js', 'list-claims.js', 'lib/number-list-cli.js', 'lib/wrap-up/pack.js', 'lib/wrap-up/engine-verify.js', 'lib/hooks/git-exec.js', 'stuck-open-prs.js'];
+  'apply-refine-labels.js', 'file-feedback.js', 'list-claims.js', 'lib/number-list-cli.js', 'lib/wrap-up/pack.js', 'lib/wrap-up/engine-verify.js', 'lib/hooks/git-exec.js', 'stuck-open-prs.js', 'lib/driver/steps.js', 'accept-park.js', 'lib/ci-audit/source.js', 'release-block.js', 'release-state.js', 'lib/reconcile/plan-refs.js'];
 
 // A gateOriginRepo( call in code; blank mode leaves a name inside a string or comment unseen.
 const callsGate = (raw) => /(?<![\w$])gateOriginRepo\s*\(/.test(stripComments(raw, BLANK));
@@ -382,8 +430,12 @@ test('AC9.1: the origin-read matcher flags a fresh parseRepo(remote) and ignores
     "parseRepo(x || ')', remote);",                                                  // 12: flagged, a paren in a literal moves no boundary
     'parseRepo(url); remote();',                                                     // ok: the token is past the call
     'const r = gateOriginRepo(remote, deps.gateDeps);',                              // ok: the gate
+    'const o = originSpecOf(remote);',                                               // 15: flagged (#4794's wrapper of parseRepo)
+    'function originSpecOf(remote) {}',                                              // ok: a definition, not a call
+    'const m = deps.originSpecOf(remoteUrl());',                                     // 17: flagged (member)
+    'const u = originSpecOf(url);',                                                  // ok: no origin token
   ].join('\n');
-  assert.deepEqual(offendersOf(originReads(src)).map((o) => o.line), [2, 3, 4, 5, 10, 12]);
+  assert.deepEqual(offendersOf(originReads(src)).map((o) => o.line), [2, 3, 4, 5, 10, 12, 15, 17]);
   // A mis-parse is an offender: both modes mis-parse the first line, only blank mode the second.
   assert.deepEqual(offendersOf(originReads("if (cp) /'/.test(cp); const b = 'p//q'; parseRepo(remote);")),
     [{ line: 0, text: STRIPPER_VERDICT_MESSAGES.misparsed }]);
@@ -421,8 +473,10 @@ test('AC9.2: no plugin/bin file reads the origin through parseRepo outside NOT_O
   // Fewer sites means the matcher stopped matching, not that the origin reads went away. The
   // floor is the NOT_ORIGIN site total: #4933 set it at 9, and #4951 moved stuck-open-prs.js's one
   // site onto the gate (a deliberate removal, not lost recall), so it is 8; #4805 moved engine-verify.js's
-  // acceptance-labeling reads (two sites) onto the gate the same way, so it is 6. Raise it as sites are
-  // added, never lower it otherwise.
+  // acceptance-labeling reads (two sites) onto the gate the same way, so it is 6. #4794 moved stale-claim-pr.js's
+  // one site onto the gate (its origin now goes through gateOriginRepo, a deliberate removal), so it is 5.
+  // #4621 added upstream-ownership.js's one ungated pure read, so it is 6.
+  // Raise it as sites are added, never lower it otherwise.
   assert.ok(matched >= 6, `matched only ${matched} origin-reading parseRepo sites under plugin/bin/ (floor 6): the matcher stopped matching`);
   for (const [rel, { count }] of Object.entries(NOT_ORIGIN)) {
     assert.equal(seen[rel], count, `${rel}: expected exactly ${count} origin-reading parseRepo site(s), saw ${seen[rel]} — re-read the lines and settle the entry`);
@@ -440,4 +494,32 @@ test('AC9.3: ORIGIN_GATED is exactly the set of files calling gateOriginRepo', (
     .filter((rel) => rel !== 'lib/repo-resolve.js' && callsGate(readText(path.join(BIN_ROOT, rel))))
     .sort();
   assert.deepEqual(gated, [...ORIGIN_GATED].sort(), 'a file calls gateOriginRepo that ORIGIN_GATED does not list, or one stopped: settle the roster');
+});
+
+// #4794: repoSlugOf (the host-less origin slug) is retired; every origin slug goes through the gate
+// (git-exec.js's repoTargetOf). Blank mode leaves a name in a string or comment unseen, and a
+// stripper mis-parse is an offender, never a clean read.
+const REPO_SLUG_OF = /(?<![\w$])repoSlugOf(?![\w$])/;
+function repoSlugOfNames(raw) {
+  const blank = stripComments(raw, BLANK);
+  const verdict = stripperVerdict(raw, blank);
+  if (verdict !== 'ok') return [STRIPPER_VERDICT_MESSAGES[verdict]];
+  return blank.split('\n').map((l, i) => (REPO_SLUG_OF.test(l) ? `line ${i + 1}` : null)).filter(Boolean);
+}
+test('#4794: the repoSlugOf matcher flags a code mention, and not a comment, a string or a longer name', () => {
+  assert.equal(repoSlugOfNames("const { repoSlugOf } = require('./git-exec');").length, 1);
+  assert.equal(repoSlugOfNames('const slug = repoSlugOf(repoRoot);').length, 1);
+  assert.equal(repoSlugOfNames('module.exports = { repoSlugOf, repoSpecOf };').length, 1);
+  assert.deepEqual(repoSlugOfNames("// repoSlugOf is retired\nconst s = 'repoSlugOf'; /* repoSlugOf */ const a = myrepoSlugOf + repoSlugOfX + $repoSlugOf;"), []);
+  assert.deepEqual(repoSlugOfNames("if (b) /'/.test(b); const c = 'x'; repoSlugOf(c);"), [STRIPPER_VERDICT_MESSAGES.misparsed]);
+});
+test('#4794: no plugin/bin file names repoSlugOf — origin slugs go through the gate (repoTargetOf)', () => {
+  const files = walk(BIN_ROOT);
+  assert.ok(files.length >= 523, `walked only ${files.length} .js files under plugin/bin/ (floor 523): the walk is broken`);
+  const offenders = [];
+  for (const file of files) {
+    const rel = path.relative(BIN_ROOT, file).replace(/\\/g, '/');
+    for (const where of repoSlugOfNames(readText(file))) offenders.push(`${rel}: ${where}`);
+  }
+  assert.deepEqual(offenders, [], 'repoSlugOf dropped the origin host; resolve the origin through git-exec.js\'s repoTargetOf (slug, ghRepo, host) so the #4933 gate decides the host');
 });

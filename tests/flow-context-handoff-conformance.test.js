@@ -89,13 +89,11 @@ const CONTEXT_CAP_FACTS = [
   [/`--keep-going` only under the `keep-going` token/, '--keep-going only under the keep-going token'],
   [/`--no-stories` only under the `no-stories` token/, '--no-stories only under the no-stories token'],
   [/a later record's list can still hold `build`/, 'why: a later record can still run build'],
-  [/the `dispatched` read targets `\$MULTISPEC_PARENT_DIR`/, 'the dispatched read targets the parent'],
   [/`\{run\}` and `handoff\.json` are the parent's/, '{run} and handoff.json are the parent\'s'],
-  [/A read against `spec-\{N\}\/` prints nothing/, 'why: a per-spec read prints nothing'],
   [/a record past its list, failed under `keep-going`, or `not-run` is `none`/, 'none for a finished, failed or not-run record'],
   [/the current record takes its remaining steps/, 'the current record takes its remaining steps'],
   [/a later record takes its full list with `test` written out before `review`/, 'a later record writes test out before review'],
-  [/leaves `wrap-up` off every list/, 'a run not bound dispatched leaves wrap-up off every list'],
+  [/A session not launched as a dispatch Task call \(`context-handoff\.md`'s branch rule\) leaves `wrap-up` off every list/, 'a session not launched as a dispatch Task call leaves wrap-up off every list'],
   [/skips the gauge when only `wrap-up` steps remain/, 'it skips the gauge when only wrap-up steps remain'],
   [/Result handling is `context-handoff\.md`'s/, 'result handling is context-handoff.md\'s'],
 ];
@@ -152,8 +150,14 @@ const STEP_FOUR_FACTS = [
 ];
 
 const PARENT_RUN_FACTS = [
-  [/the `dispatched` read targets `\$MULTISPEC_PARENT_DIR`/, 'the dispatched read targets the parent'],
   [/`\{run\}` and `handoff\.json` are the parent's/, '{run} and handoff.json are the parent\'s'],
+];
+
+// #5270: the branch follows the caller's dispatch-prompt marker, never run-state dispatched.
+const CALLER_BRANCH_FACTS = [
+  [/Take the Dispatched call branch only when this agent's own prompt starts with the `\[dispatch-prompt: \{run-id\} \{call\}\]` marker/, 'the Dispatched call branch only with the marker'],
+  [/With no such prompt \(a human-typed or Routine-typed `\/flow`, whatever `run-state\.json` says\), take the Top-level run branch/, 'no marker takes the Top-level run branch, whatever run-state says'],
+  [/matches the caller, not the run's `dispatched` flag/, 'the branch matches the caller, not the dispatched flag'],
 ];
 
 const STEPS_COMPLETE_FACTS = [
@@ -339,7 +343,7 @@ test('context-handoff.md states the fail-open rule: over: false, exit 2, or non-
 test('context-handoff.md: a dispatched call reports OUTCOME: handoff and NEXT_STEPS: with STATUS: DONE, after the phase-exit push', () => {
   const t = read(HANDOFF);
   const d = region(t, '\n## Dispatched call', '\n## ', 'dispatched branch');
-  assert.match(d, /`dispatched: true`/);
+  assert.match(d, /prompt starts with the `\[dispatch-prompt: \{run-id\} \{call\}\]` marker/);
   assert.match(d, /`OUTCOME: handoff`/);
   assert.match(d, /`NEXT_STEPS: \{comma-joined remaining steps\}`/);
   assert.match(d, /`STATUS: DONE`/);
@@ -374,7 +378,7 @@ test("the handoff template inlines task-prompt.md's async-wait item 7 in the sam
 test('the verbatim-copy check can go red: one changed word in the copy fails it', () => {
   const [tpl] = fencedBlocks(read(HANDOFF));
   const body = item7Body(read(TASK_PROMPT));
-  const doctored = squash(tpl).replace('at most 60 (20 minutes)', 'at most 90 (30 minutes)');
+  const doctored = squash(tpl).replace('--max-seconds 150', '--max-seconds 120');
   assert.notEqual(doctored, squash(tpl), 'the doctoring anchor is gone from the template');
   assert.ok(!doctored.includes(body));
 });
@@ -389,7 +393,7 @@ const HANDOFF_PROGRESS = [
   [/A failed wait call counts as no wait but ends its window, and the probe runs as at any bound/, 'the template states a failed wait call expires the window'],
   [/against the previous probe \(taken right after launching the wave, then at each bound/, 'the template compares with the previous probe'],
   [/a child whose prompt names no worktree counts as unchanged/, 'the template states the no-named-worktree rule'],
-  [/Per wave, while any child shows a change, log one wait line and grant one more 60-wait window/, 'the template states the per-wave grant'],
+  [/Per wave, while any child shows a change, log one wait line and grant one more 20-minute window/, 'the template states the per-wave grant'],
   [/a failed probe command counts as no change, never retried in another form/, 'the template states a failed probe command counts as no change'],
   [/stop when a whole window passes with no change/, 'the template states the one-window stall condition'],
   [/ceiling of 3 windows \(60 minutes\) per wave/, 'the template states the 3-window ceiling'],
@@ -483,9 +487,14 @@ test('context-handoff.md states which runs gauge in which form, and the interact
   assert.match(c, /\*\*Not under `interactive`\.\*\*/);
 });
 
-test('context-handoff.md: an empty dispatched read lands on the top-level branch', () => {
-  const r = region(read(HANDOFF), '## Reading the result', '\n## Dispatched call', 'reading the result');
-  assert.match(r, /prints nothing[^\n]*Top-level run branch/);
+test('AC1.1/AC2.1/AC3.1: the handoff branch follows the caller\'s dispatch-prompt marker, not run-state dispatched (#5270)', () => {
+  const t = read(HANDOFF);
+  assertEachFactGoesRed(CALLER_BRANCH_FACTS, squash(region(t, '## Reading the result', '\n## Dispatched call', 'reading the result')));
+  const d = region(t, '\n## Dispatched call', '\n## Top-level run', 'dispatched branch');
+  assert.match(d, /\[dispatch-prompt: \{run-id\} \{call\}\]/);
+  const n = region(t, '## Top-level run', '\n```', 'top-level branch');
+  assert.match(n, /even on a `dispatched: true` run/);
+  assert.match(stepFourItem(), /does not start with the `\[dispatch-prompt: \{run-id\} \{call\}\]` marker/);
 });
 
 test('context-handoff.md: a top-level run never hands off wrap-up, and runs wrap-up and Step 5 itself after relaying', () => {

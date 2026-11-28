@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
@@ -9,7 +10,7 @@ const { startServer, resolveSafe } = require('../../../plugin/bin/lib/visual-dec
 const { readText } = require('../../helpers/read-skill');
 
 function mkTmp(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  return scratchDir(prefix);
 }
 
 function request(port, reqPath, { method = 'GET', headers = {}, body } = {}) {

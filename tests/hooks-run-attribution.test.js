@@ -17,6 +17,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 
@@ -24,9 +25,11 @@ const ctxLib = require('../plugin/bin/lib/hooks/context.js');
 const sessionEnd = require('../plugin/bin/lib/hooks/session-end.js');
 const preCompact = require('../plugin/bin/lib/hooks/pre-compact.js');
 const { gitRepo, linkedWorktreeOf } = require('./helpers/git-fixtures');
+const { spawnCli } = require('./helpers/run-cli');
+const { hookEnv, runHookCli, HOOKS } = require('./helpers/hook-event');
 
 function project() {
-  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-attr-')));
+  return fs.realpathSync(scratchDir('ct-attr-'));
 }
 
 // `id` doubles as the run-dir name's sort key — runs are selected newest-first
@@ -117,7 +120,7 @@ test("a bystander session's session-end cannot stamp interrupted on another sess
   const theirs = mkRun(cwd, '2026-07-01T090000-theirs', { status: 'active', sessionId: 'them' });
 
   const owned = ctxLib.resolveRun(cwd, {}, 'bystander');
-  sessionEnd.run({ input: { reason: 'exit', session_id: 'bystander' }, ownedRun: owned, cwd });
+  sessionEnd.run({ env: process.env, input: { reason: 'exit', session_id: 'bystander' }, ownedRun: owned, cwd });
 
   assert.strictEqual(readState(theirs).status, 'active', 'a finished run must not be flagged by a passer-by');
   assert.deepStrictEqual(readEvents(theirs), [], "and must not receive the bystander's events");
@@ -128,7 +131,7 @@ test('session-end does not stamp interrupted on a guessed run, but still records
   const unowned = mkRun(cwd, '2026-07-01T090000-unowned', { status: 'active' });
 
   const owned = ctxLib.resolveRun(cwd, {}, 'someone');
-  sessionEnd.run({ input: { reason: 'exit', session_id: 'someone' }, ownedRun: owned, cwd });
+  sessionEnd.run({ env: process.env, input: { reason: 'exit', session_id: 'someone' }, ownedRun: owned, cwd });
 
   // The stamp is the self-perpetuating part — withheld. The breadcrumb is not.
   assert.strictEqual(readState(unowned).status, 'active');
@@ -143,7 +146,7 @@ test('session-end DOES stamp interrupted on a run this session owns', () => {
   const mine = mkRun(cwd, '2026-07-01T090000-mine', { status: 'active', sessionId: 'me' });
 
   const owned = ctxLib.resolveRun(cwd, {}, 'me');
-  sessionEnd.run({ input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd });
+  sessionEnd.run({ env: process.env, input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd });
 
   assert.strictEqual(readState(mine).status, 'interrupted', 'the warning must still fire for a real interruption');
   assert.strictEqual(readEvents(mine)[0].attribution, undefined, 'a known-owner event carries no guess tag');
@@ -171,7 +174,7 @@ test('AC1.1 #3845: a nested session ending (same session id, different CLAUDE_PI
   const mine = mkRun(cwd, '2026-07-01T090000-mine', { status: 'active', sessionId: 'me', ownerPid: process.pid });
 
   const owned = ctxLib.resolveRun(cwd, {}, 'me');
-  withClaudePid(String(process.pid + 1), () => sessionEnd.run({ input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
+  withClaudePid(String(process.pid + 1), () => sessionEnd.run({ env: process.env, input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
 
   assert.strictEqual(readState(mine).status, 'active', 'a nested claude -p ending is not the owner session ending');
   assert.deepStrictEqual(readEvents(mine), [], 'and leaves no breadcrumb on the parent run');
@@ -182,7 +185,7 @@ test('AC2.1 #3845: the owner process ending still stamps interrupted', () => {
   const mine = mkRun(cwd, '2026-07-01T090000-mine', { status: 'active', sessionId: 'me', ownerPid: process.pid });
 
   const owned = ctxLib.resolveRun(cwd, {}, 'me');
-  withClaudePid(String(process.pid), () => sessionEnd.run({ input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
+  withClaudePid(String(process.pid), () => sessionEnd.run({ env: process.env, input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
 
   assert.strictEqual(readState(mine).status, 'interrupted');
   const ev = readEvents(mine);
@@ -200,7 +203,7 @@ test('#3845: crash + resume — a dead ownerPid does not suppress the resumed ow
   const mine = mkRun(cwd, '2026-07-01T090000-mine', { status: 'active', sessionId: 'me', ownerPid: deadPid() });
 
   const owned = ctxLib.resolveRun(cwd, {}, 'me');
-  withClaudePid(String(process.pid), () => sessionEnd.run({ input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
+  withClaudePid(String(process.pid), () => sessionEnd.run({ env: process.env, input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
 
   assert.strictEqual(readState(mine).status, 'interrupted', 'the original owner died; the resumed process ending is the real interruption');
 });
@@ -211,7 +214,7 @@ test('#3845: a nested session on an env-attributed run also writes nothing', () 
 
   const owned = ctxLib.resolveRun(cwd, { PIPELINE_RUN_DIR: pinned }, 'me');
   assert.strictEqual(owned.attribution, 'env');
-  withClaudePid(String(process.pid + 1), () => sessionEnd.run({ input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
+  withClaudePid(String(process.pid + 1), () => sessionEnd.run({ env: process.env, input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
 
   assert.strictEqual(readState(pinned).status, 'active');
   assert.deepStrictEqual(readEvents(pinned), []);
@@ -223,7 +226,7 @@ test('#3845: a nested session on a fallback-attributed run writes neither the st
 
   const owned = ctxLib.resolveRun(cwd, {}, 'someone');
   assert.strictEqual(owned.attribution, 'fallback');
-  withClaudePid(String(process.pid + 1), () => sessionEnd.run({ input: { reason: 'exit', session_id: 'someone' }, ownedRun: owned, cwd }));
+  withClaudePid(String(process.pid + 1), () => sessionEnd.run({ env: process.env, input: { reason: 'exit', session_id: 'someone' }, ownedRun: owned, cwd }));
 
   assert.strictEqual(readState(guessed).status, 'active');
   assert.deepStrictEqual(readEvents(guessed), [], 'the guard sits before the attribution check, so the fallback breadcrumb is withheld too');
@@ -234,7 +237,7 @@ test('#3845: an unstamped run (no ownerPid) fails open — the session ending st
   const mine = mkRun(cwd, '2026-07-01T090000-mine', { status: 'active', sessionId: 'me' });
 
   const owned = ctxLib.resolveRun(cwd, {}, 'me');
-  withClaudePid(String(process.pid + 1), () => sessionEnd.run({ input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
+  withClaudePid(String(process.pid + 1), () => sessionEnd.run({ env: process.env, input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
 
   assert.strictEqual(readState(mine).status, 'interrupted');
 });
@@ -244,7 +247,7 @@ test('#3845: an unknown CLAUDE_PID at session end fails open — the stamp is wr
   const mine = mkRun(cwd, '2026-07-01T090000-mine', { status: 'active', sessionId: 'me', ownerPid: process.pid });
 
   const owned = ctxLib.resolveRun(cwd, {}, 'me');
-  withClaudePid(null, () => sessionEnd.run({ input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
+  withClaudePid(null, () => sessionEnd.run({ env: process.env, input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd }));
 
   assert.strictEqual(readState(mine).status, 'interrupted');
 });
@@ -254,7 +257,7 @@ test('pre-compact does not overwrite lastEvent on a guessed run', () => {
   const unowned = mkRun(cwd, '2026-07-01T090000-unowned', { status: 'active', lastEvent: 'build-start' });
 
   const owned = ctxLib.resolveRun(cwd, {}, 'someone');
-  preCompact.run({ input: { trigger: 'auto' }, ownedRun: owned, cwd });
+  preCompact.run({ env: process.env, input: { trigger: 'auto' }, ownedRun: owned, cwd });
 
   assert.strictEqual(readState(unowned).lastEvent, 'build-start');
   assert.strictEqual(readEvents(unowned)[0].attribution, 'fallback');
@@ -265,7 +268,7 @@ test('a run that already went interrupted is not re-stamped by its owner', () =>
   const mine = mkRun(cwd, '2026-07-01T090000-mine', { status: 'interrupted', sessionId: 'me' });
 
   const owned = ctxLib.resolveRun(cwd, {}, 'me');
-  sessionEnd.run({ input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd });
+  sessionEnd.run({ env: process.env, input: { reason: 'exit', session_id: 'me' }, ownedRun: owned, cwd });
 
   assert.strictEqual(readState(mine).status, 'interrupted');
 });
@@ -309,6 +312,20 @@ test('only unadopted mints exist — resolves null rather than guessing into one
   assert.deepStrictEqual(ctxLib.resolveRun(cwd, {}, null), { dir: null, attribution: null });
 });
 
+// #5903: the mint now writes manifest.json, which is not adoption — the
+// manifest-only dir stays an unadopted mint (isUnadoptedMint is not exported;
+// resolveRun's fallback is where it bites).
+test('a mint holding only manifest.json is still an unadopted mint — fallback skips it (#5903)', () => {
+  const cwd = project();
+  const real = mkRun(cwd, '2026-07-01T090000-real', { status: 'active' });
+  const mint = mkRun(cwd, '2026-07-02T090000-mint', null); // sorts newest
+  fs.writeFileSync(path.join(mint, 'manifest.json'), '{}\n');
+
+  assert.deepStrictEqual(ctxLib.resolveRun(cwd, {}, 'me'), { dir: real, attribution: 'fallback' });
+  fs.rmSync(real, { recursive: true });
+  assert.deepStrictEqual(ctxLib.resolveRun(cwd, {}, 'me'), { dir: null, attribution: null });
+});
+
 test('a run with a corrupt run-state.json and no decisions.md is still not a mint — presence, not parseability', () => {
   const cwd = project();
   const dir = mkRun(cwd, '2026-07-01T090000-corrupt', null);
@@ -350,7 +367,7 @@ test('AC1.1: a foreign session\'s hook event never lands in a claim-log-only min
   const mint = mkClaimedMint(cwd);
 
   const owned = ctxLib.resolveRun(cwd, {}, 'other-session');
-  sessionEnd.run({ input: { reason: 'exit', session_id: 'other-session' }, ownedRun: owned, cwd });
+  sessionEnd.run({ env: process.env, input: { reason: 'exit', session_id: 'other-session' }, ownedRun: owned, cwd });
 
   assert.deepStrictEqual(readEvents(mint), []);
 });
@@ -583,13 +600,13 @@ test('#2783: a known-session caller never guesses into an unowned ad-hoc dir', (
   assert.deepStrictEqual(ctxLib.resolveRun(main, {}, 'me'), { dir: null, attribution: null });
 });
 
-test('#2783 e2e: a commit from the main checkout is not E1-denied because some session holds an ad-hoc dir bound to a live worktree', () => {
+test('#2783 e2e: a commit from the main checkout is not E1-denied because some session holds an ad-hoc dir bound to a live worktree', async () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   mkRun(main, '2026-10-02T000000-adhoc-standalone', { status: 'active', sessionId: 'sess-e1', worktree: wt });
-  const hooks = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
   const input = JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'git commit -m x' }, cwd: main, session_id: 'sess-e1' });
-  const out = require('node:child_process').execFileSync('node', [hooks, 'pre-tool-use'], { input, cwd: main, encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '' } });
+  const { code, stdout: out } = await runHookCli(['pre-tool-use'], { input, cwd: main, env: hookEnv() });
+  assert.strictEqual(code, 0);
   assert.doesNotMatch(out, /"permissionDecision":"deny"/, out);
   assert.doesNotMatch(out, /adhoc-standalone/, out);
 });
@@ -706,21 +723,47 @@ test('strict + includeWorktreeForeign: guard (b) is disabled', () => {
   );
 });
 
-test('AC2.1 e2e: hooks.js pre-compact from the main checkout leaves a claim-log-only mint untouched and reports the drop on stderr', () => {
+test('AC2.1 e2e: hooks.js pre-compact from the main checkout leaves a claim-log-only mint untouched and reports the drop on stderr', async () => {
   const main = gitRepo();
   const mint = mkRun(main, '2026-07-02T090000-record-7');
   writeDecisions(mint, CLAIM_ONLY);
-  const hooks = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
-  const res = require('node:child_process').spawnSync('node', [hooks, 'pre-compact'], {
+  const { code, stderr } = await runHookCli(['pre-compact'], {
     input: JSON.stringify({ session_id: 's1', trigger: 'auto' }),
     cwd: main,
-    encoding: 'utf8',
-    env: { ...process.env, PIPELINE_RUN_DIR: '' },
+    env: hookEnv(),
   });
+  const res = { status: code, stderr };
   assert.strictEqual(res.status, 0, res.stderr);
   assert.match(res.stderr, /^attribution: no run dir attributed — /m);
   assert.ok(res.stderr.includes(path.basename(mint)), res.stderr);
   assert.ok(!fs.existsSync(path.join(mint, 'events.jsonl')), 'no event was written into the mint');
+});
+
+// #5377: AC9.1 — an event call takes its cwd and env from the injected values, not from the runner's
+// own process. Neither payload carries a `cwd`. The injected cwd is a fixture repo that is not
+// process.cwd(): only it makes the attribution drop line name that repo's claim-log-only mint. The
+// injected PIPELINE_RUN_DIR names the OLDER of two runs: only the injected env can pick it (the cwd
+// scan picks the newer).
+test('AC9.1: hooks-run-attribution — an event call uses the injected cwd or env', async () => {
+  const main = gitRepo();
+  assert.notStrictEqual(fs.realpathSync(main), fs.realpathSync(process.cwd()), 'precondition: the fixture repo is not the runner cwd');
+  const mint = mkRun(main, '2026-07-02T090000-record-7');
+  writeDecisions(mint, CLAIM_ONLY);
+  const dropped = await runHookCli(['pre-compact'], {
+    input: JSON.stringify({ session_id: 's1', trigger: 'auto' }), cwd: main, env: hookEnv(),
+  });
+  assert.strictEqual(dropped.code, 0, dropped.stderr);
+  assert.ok(dropped.stderr.includes(path.basename(mint)), `the drop line names the mint found from the injected cwd: ${dropped.stderr}`);
+
+  const pinnedRepo = gitRepo();
+  const older = mkRun(pinnedRepo, '2026-07-01T090000-older', { status: 'active' });
+  const newer = mkRun(pinnedRepo, '2026-07-02T090000-newer', { status: 'active' });
+  const pinned = await runHookCli(['pre-compact'], {
+    input: JSON.stringify({ session_id: 's1', trigger: 'auto' }), cwd: pinnedRepo, env: hookEnv({ PIPELINE_RUN_DIR: older }),
+  });
+  assert.strictEqual(pinned.code, 0, pinned.stderr);
+  assert.strictEqual(readEvents(older).length, 1, 'the injected env picked the older run');
+  assert.deepStrictEqual(readEvents(newer), [], 'the newer run, which a cwd scan would pick, got no event');
 });
 
 // The #3401 incident's own write path: pre-tool-use's gitignored-target
@@ -734,14 +777,14 @@ test('#3515 incident e2e: a sibling worktree Write to a gitignored path writes n
   const mint = mkRun(main, '2026-07-02T090000-record-7');
   writeDecisions(mint, CLAIM_ONLY);
 
-  const hooks = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
   const target = path.join(wt, '.superpowers', 'x.md');
-  const res = require('node:child_process').spawnSync('node', [hooks, 'pre-tool-use'], {
-    input: JSON.stringify({ session_id: 'sib', tool_name: 'Write', tool_input: { file_path: target }, cwd: wt }),
+  // real process: proves the misattributing gate end to end through the script entry (pre-tool-use-gate-exemptions)
+  const raw = spawnCli(HOOKS, ['pre-tool-use'], {
+    stdin: JSON.stringify({ session_id: 'sib', tool_name: 'Write', tool_input: { file_path: target }, cwd: wt }),
     cwd: wt,
-    encoding: 'utf8',
     env: { ...process.env, PIPELINE_RUN_DIR: '' },
   });
+  const res = { status: raw.code, stderr: raw.stderr };
   assert.strictEqual(res.status, 0, res.stderr);
   assert.ok(!fs.existsSync(path.join(mint, 'events.jsonl')), `no event was written into the mint: ${fs.existsSync(path.join(mint, 'events.jsonl')) ? fs.readFileSync(path.join(mint, 'events.jsonl'), 'utf8') : ''}`);
   assert.strictEqual(ctxLib.resolveRunDir(wt, {}), owned, 'E1 resolution skips the mint');

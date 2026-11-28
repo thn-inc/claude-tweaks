@@ -10,14 +10,14 @@ files:
 
 # Catch a Hand-Closed Parent With No Sign-Off
 
-**Persona:** a maintainer who decomposed a risky feature into sub-issues with `/claude-tweaks:specify`. At least one sub-issue is above the oversight floor. Once the last sub-issue shipped, they closed the parent issue by hand from the GitHub UI, or by setting `closed: true` on a local record, without running `/claude-tweaks:demo`. Since #4466, no tidy scope looked at such a parent, so the feature left the backlog with nobody having signed off on it.
+**Persona:** a maintainer who decomposed a risky feature into sub-issues with `/claude-tweaks:specify`. At least one sub-issue is above the oversight floor. Once the last sub-issue shipped, they closed the parent issue by hand from the GitHub UI, or by setting `closed: true` on a local record, without running `/claude-tweaks:accept`. Since #4466, no tidy scope looked at such a parent, so the feature left the backlog with nobody having signed off on it.
 
-**Goal:** the next `/claude-tweaks:tidy` run names that parent once and points at `/claude-tweaks:demo #{n}`. It stays quiet about every parent that owes no sign-off.
+**Goal:** the next `/claude-tweaks:tidy` run names that parent once and points at `/claude-tweaks:accept #{n}`. It stays quiet about every parent that owes no sign-off.
 
 **Entry point:** `/claude-tweaks:tidy`. On `work-backend: github-issues` that is Step 4.8's `parent-gate` scope (`_shared/github-pr-scan-acceptance.md`); on `work-backend: local-files` it is Step 1's Shape 7 (`tidy/step-1-records.md`).
 
 **Success state:**
-- A parent closed in the last 30 days that has no acceptance label (or `acceptance` facet) and no #4466 close marker, and whose sub-issue risk exceeds `risk-floor`, appears exactly once: `[acceptance-gap] #{n}: {title} — closed with no acceptance disposition — recommend /claude-tweaks:demo #{n}`. Local-files rows use `{id}` instead of `#{n}`.
+- A parent closed in the last 30 days that has no acceptance label (or `acceptance` facet) and no #4466 close marker, and whose sub-issue risk exceeds `risk-floor`, appears exactly once: `[acceptance-gap] #{n}: {title} — closed with no acceptance disposition — recommend /claude-tweaks:accept #{n}`. Local-files rows use `{id}` instead of `#{n}`.
 - A parent that #4466 closed below the floor does not appear, even after its floor or a sub-issue's `risk:*` label changes. The one exception is step 1's empty-login case on GitHub.
 
 ## Steps
@@ -57,8 +57,8 @@ files:
   - A row with an unread sub-issue when none of the readable ones exceed the floor.
 
 ### 3. The maintainer acts on the row, or on the warning
-- **URL:** `/claude-tweaks:tidy`'s report, then `/claude-tweaks:demo #{n}`
-- **Action:** the maintainer runs `/claude-tweaks:demo #{n}` to give the feature its human verdict. A `WARNING: … closed parent(s) print no [acceptance-gap] row (no-sub-issues | unread-sub-issue)` line beside the rows names the parents tidy could not judge.
+- **URL:** `/claude-tweaks:tidy`'s report, then `/claude-tweaks:accept #{n}`
+- **Action:** the maintainer runs `/claude-tweaks:accept #{n}` to give the feature its human verdict. A `WARNING: … closed parent(s) print no [acceptance-gap] row (no-sub-issues | unread-sub-issue)` line beside the rows names the parents tidy could not judge.
 - **Should feel:** like a reminder, not a chore. The row is staged and changes nothing until the maintainer acts.
 - **Should understand:**
   - The row is the ordinary `[acceptance-gap]` form: same `info` severity, same routing, mutating nothing.

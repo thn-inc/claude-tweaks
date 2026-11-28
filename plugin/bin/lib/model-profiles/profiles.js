@@ -8,7 +8,9 @@
 // resolve() runs seven stages in fixed order — table default, policy row,
 // cliOverride, stance, model-ceiling, frontier gates, session-failure
 // avoidance (#763) — with the last stage that changed the result naming
-// `source`.
+// `source`. With `opts.exception` (the named design-reader exception, #6351)
+// resolve() takes a separate branch instead: the top tier or a visible
+// `{ stepDown: { reason } }`, never a silent lower tier.
 'use strict';
 
 const PROFILES = {
@@ -20,9 +22,9 @@ const PROFILES = {
 
 const EFFORT_SCALE = ['low', 'medium', 'high', 'xhigh', 'max'];
 
-// The four policy.yml keys the resolver reads. #219 pins policy-schema.js
+// The five policy keys the resolver reads (from policy.yml; the factory layer reaches them with #6007). #219 pins policy-schema.js
 // registration against this export — the names here are authoritative.
-const POLICY_KEYS_READ = ['model-profiles', 'model-stance', 'model-ceiling', 'frontier-run-cap'];
+const POLICY_KEYS_READ = ['model-profiles', 'model-stance', 'model-ceiling', 'frontier-run-cap', 'model-effort'];
 
 function effortLine(effort) {
   if (!effort) return '';
@@ -63,15 +65,98 @@ function degrade(reason) {
   return { ...PROFILES.capable, source: `degraded:${reason}` };
 }
 
-// Pure: no fs, no process, no I/O. The CLI owns all of that.
-// Seven stages in fixed order — table default, policy row, cliOverride,
-// stance, model-ceiling, frontier gates, session-failure avoidance — with
-// the last transform that changed the result naming `source`.
-function resolve(profile, opts = {}) {
-  if (!PROFILES[profile]) throw new Error(`unknown profile "${profile}"`);
+// The one named frontier exception (#6351): a code-only entry, never a
+// setting. `limit` is the per-session count of top-tier resolutions it allows;
+// 22 = five readers per round x at most four rounds, plus one pre-mortem reader
+// and one builder-check reader (the design skill's reader count, #6352).
+const FRONTIER_EXCEPTIONS = Object.freeze({
+  'design-reader': Object.freeze({ limit: 22 }),
+});
+
+// Step-down reasons under an exception, in precedence order — one reported per
+// resolution. `tally` is CLI-only (the session tally is checked before
+// resolve() runs); resolve() reports the other five.
+const STEP_DOWN_REASONS = Object.freeze(['tally', 'policy', 'stance', 'ceiling', 'limit', 'session-failure']);
+
+// Resolves and validates the stance and model-effort inputs — shared by
+// resolve() and its exception branch so the two cannot drift.
+function readStanceAndEffort(opts) {
   const policy = opts.policy || {};
   const stance = opts.stance || policy['model-stance'] || 'default';
   if (!STANCES.includes(stance)) throw new Error(`unknown stance "${stance}"`);
+  const effortMode = policy['model-effort'] || 'inherit';
+  if (effortMode !== 'inherit' && effortMode !== 'profile') throw new Error(`unknown model-effort "${effortMode}"`);
+  return { stance, effortMode };
+}
+
+// The exception branch of resolve(): the top tier stays `fable`, or the call
+// reports the first gate that would have moved it off — never a silent lower
+// tier. Effort-only changes (policy effort, stance max-rigor/economy shift)
+// are not step-downs. `diffFacts` never applies (capable-only).
+function resolveException(profile, opts) {
+  const name = opts.exception;
+  if (!Object.hasOwn(FRONTIER_EXCEPTIONS, name)) {
+    throw new Error(`unknown exception "${name}" — the one exception is "design-reader"`);
+  }
+  if (profile !== 'frontier') throw new Error('the design-reader exception applies only to the frontier profile');
+  if (opts.unattended) throw new Error('the design-reader exception refuses an unattended call — its readers need a human present');
+  const used = opts.exceptionUsed === undefined ? 0 : opts.exceptionUsed;
+  if (!Number.isInteger(used) || used < 0) throw new Error('exceptionUsed must be a non-negative integer');
+  const cli = opts.cliOverride;
+  if (cli && (cli.model !== undefined || cli.effort !== undefined)) {
+    throw new Error('the design-reader exception takes no per-invocation model or effort override');
+  }
+
+  const policy = opts.policy || {};
+  const { stance, effortMode } = readStanceAndEffort(opts);
+
+  const top = PROFILES.frontier;
+  let effort = top.effort;
+  let reason = null;
+
+  const row = (policy['model-profiles'] || {}).frontier;
+  if (row) {
+    if (row.model !== undefined && row.model !== top.model) reason = reason || 'policy';
+    if (row.effort !== undefined) effort = row.effort;
+  }
+  if (effort !== null && !EFFORT_SCALE.includes(effort)) throw new Error(`unknown effort "${effort}"`);
+
+  if (stance !== 'default') {
+    effort = shiftEffort(effort, stance === 'economy' ? -1 : 1);
+    if (stance === 'economy') reason = reason || 'stance';
+  }
+
+  const ceiling = policy['model-ceiling'];
+  if (ceiling) {
+    if (!PROFILES[ceiling]) throw new Error(`unknown model-ceiling "${ceiling}"`);
+    if (PROFILE_ORDER.indexOf('frontier') > PROFILE_ORDER.indexOf(ceiling)) reason = reason || 'ceiling';
+  }
+
+  if (used >= FRONTIER_EXCEPTIONS[name].limit) reason = reason || 'limit';
+
+  const failedModels = opts.failedModels || new Set();
+  if (failedModels.has(top.model)) reason = reason || 'session-failure';
+
+  if (reason) return { stepDown: { reason } };
+  return {
+    model: top.model,
+    effort,
+    source: `exception:${name}`,
+    effortLine: effortLine(effort),
+    launchEffort: effortMode === 'profile' ? effort : null,
+  };
+}
+
+// Pure: no fs, no process, no I/O. The CLI owns all of that.
+// Seven stages in fixed order — table default, policy row, cliOverride,
+// stance, model-ceiling, frontier gates, session-failure avoidance — with
+// the last transform that changed the result naming `source`. With
+// `opts.exception` set, resolveException() runs instead (see above).
+function resolve(profile, opts = {}) {
+  if (opts.exception !== undefined) return resolveException(profile, opts);
+  if (!PROFILES[profile]) throw new Error(`unknown profile "${profile}"`);
+  const policy = opts.policy || {};
+  const { stance, effortMode } = readStanceAndEffort(opts);
 
   let model = PROFILES[profile].model;
   let effort = PROFILES[profile].effort;
@@ -179,7 +264,9 @@ function resolve(profile, opts = {}) {
     source = 'diff-ceiling';
   }
 
-  return { model, effort, source, effortLine: effortLine(effort) };
+  // #5941: `profile` binds the launched agent's effort to the final `effort`
+  // after every stage above; `inherit` (the default) leaves it unset (null).
+  return { model, effort, source, effortLine: effortLine(effort), launchEffort: effortMode === 'profile' ? effort : null };
 }
 
-module.exports = { PROFILES, EFFORT_SCALE, POLICY_KEYS_READ, effortLine, resolve };
+module.exports = { PROFILES, PROFILE_ORDER, EFFORT_SCALE, POLICY_KEYS_READ, effortLine, resolve, FRONTIER_EXCEPTIONS, STEP_DOWN_REASONS };

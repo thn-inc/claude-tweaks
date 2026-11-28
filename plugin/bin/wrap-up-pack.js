@@ -3,7 +3,7 @@
 // /claude-tweaks:wrap-up's Phases 3-4 (#1930): eight probes, concurrently,
 // one JSON. Read-only. Exit 0 whenever the pack was produced (a failing
 // probe degrades its own field), 2 on a malformed invocation, 3 when --run
-// is not anchored under the main checkout (stage-item's resolveTarget —
+// is not anchored under the main checkout's .claude-tweaks/pipelines (stage-item's resolveTarget —
 // [IL-127]: a worktree-local shadow run dir must never be written), and 3
 // likewise when --json would write outside that same anchored target. An
 // undecided crash — a throw that reaches the top level rather than a
@@ -70,11 +70,11 @@ async function run(argv, deps = {}) {
   }
   const target = resolveTarget({ runDir: o.run, cwd: cwd(), mainRoot: deps.mainRoot });
   if (!target.ok) {
-    stderr(`wrap-up-pack.js: --run ${o.run} refused (${target.reason === 'missing' ? 'missing' : 'not anchored under the main checkout'}) — nothing written\n`);
+    stderr(`wrap-up-pack.js: --run ${o.run} refused (${target.reason === 'missing' ? 'missing' : 'not anchored under the main checkout\'s .claude-tweaks/pipelines'}) — nothing written\n`);
     return 3;
   }
   // --json is the same write, redirected — so it clears the same anchoring bar
-  // as --run: its parent directory must itself resolve under the main checkout.
+  // as --run: its parent directory must itself resolve under .claude-tweaks/pipelines/.
   // The decision is made on the parent's REAL path (symlinks followed) — a
   // lexical "starts with the run dir" test would let a symlinked subdirectory
   // planted inside the run dir carry the write outside the anchor ([IL-150]);
@@ -104,7 +104,10 @@ async function run(argv, deps = {}) {
     }
     stdout(`${JSON.stringify(pack[o.print], null, 2)}\n`);
   } else {
-    stdout(text);
+    // One summary line: the facts live in the file, not in the session's context.
+    const ok = {};
+    for (const [k, v] of Object.entries(pack)) if (v && typeof v === 'object' && 'ok' in v) ok[k] = v.ok;
+    stdout(`${JSON.stringify({ file, ok })}\n`);
   }
   return 0;
 }

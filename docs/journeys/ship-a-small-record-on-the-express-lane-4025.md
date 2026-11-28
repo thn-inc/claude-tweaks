@@ -3,6 +3,7 @@ files:
   - plugin/bin/express-lane.js
   - plugin/bin/lib/express/cli.js
   - plugin/bin/lib/express/eligibility.js
+  - plugin/bin/lib/express/policy.js
   - plugin/bin/lib/express/sampling.js
   - plugin/bin/lib/express/queue.js
   - plugin/skills/_shared/express-lane.md
@@ -10,12 +11,13 @@ files:
   - plugin/skills/dispatch/SKILL.md
   - plugin/skills/flow/express-entry.md
   - plugin/bin/lib/policy-schema.js
+  - plugin/bin/resolve-policy.js
 ---
 
 # Ship a Small Record on the Express Lane
 
 **Persona:** A maintainer of a GitHub-backed (`pr-first`) project whose backlog holds two-line fixes: a citation, a typo, a one-constant change. Each one currently costs a 50-minute `/claude-tweaks:flow` run of ledger, plan, SDD, review and wrap-up. They want those records merged in minutes without losing the CI gate or a review safety net.
-**Goal:** Turn on the express lane, watch an eligible record build, test and merge in one agent, see an unsuitable one fall back to the full pipeline untouched, and know that a share of express merges still gets a real review afterwards.
+**Goal:** Run an eligible record through the express lane, watch it build, test and merge in one agent, see an unsuitable one fall back to the full pipeline untouched, and know that a share of express merges still gets a real review afterwards.
 **Entry point:** `.claude-tweaks/policy.yml` in a repo with PR CI; a `ready` record labelled `risk:low`, `size:low`, `ceremony:fast-lane` and `type:*`, with one to three `### Key Files`.
 **Success state:**
 - The record's PR merged on green from one express call.
@@ -25,14 +27,15 @@ files:
 
 ## Steps
 
-### 1. Opt in
+### 1. Check the project can run it
 - **URL:** `.claude-tweaks/policy.yml`
-- **Action:** Add `express-lane: true`. Leave `express-review-sample-every` at its default `5` unless a different post-merge review share is wanted.
-- **Should feel:** One deliberate switch. Off, nothing about `/dispatch` or `/flow` changes. Not one extra call, read or fetch.
+- **Action:** Confirm `.claude-tweaks/policy.yml` resolves `integration-model: pr-first` and the repo has PR CI. Set `express-lane: false` to turn the lane off. Leave `express-review-sample-every` at its default `5` unless a different post-merge review share is wanted.
+- **Should feel:** No switch to flip on a pr-first repo with PR CI; one line to turn it off.
 - **Should understand:**
-  - The lane is off by default and runs only under `integration-model: pr-first`, with `gh` available.
+  - The lane is on by default and runs only under `integration-model: pr-first`, with `gh` available.
+  - A malformed value such as `express-lane: off` never turns it on: the gate refuses every record with `express-lane value invalid — treated as off`.
   - It needs PR CI. An empty check rollup reads pending, never green, so a repo without CI parks every express merge.
-- **Red flags:** An express routing note in a run on a repo that never opted in; `/flow` reading `express-entry.md` or calling `gh issue view` with the lane off.
+- **Red flags:** An express routing note in a run on a repo that set `express-lane: false` or a malformed value; `/flow` reading `express-entry.md` or calling `gh issue view` with the lane set `false`.
 
 ### 2. Ask the gate why a record is (or isn't) eligible
 - **URL:** `node plugin/bin/express-lane.js gate --issue {n}`
@@ -40,10 +43,11 @@ files:
 - **Should feel:** A straight answer with reasons. No judgment call to second-guess.
 - **Should understand:**
   - The verdict is `eligible: true|false`, and `reasons` names every failed rule verbatim (`risk is not low`, `more than 3 Key Files`, `protected path: …`, `frontend surface`, …).
-  - Protected paths are the same in every project: hook code, `skills/_shared/`, CI and forge config (`.github/`, `.gitlab-ci.yml`, `.circleci/`, git hooks), `CODEOWNERS`, `package.json`, the agent's permission files (`.claude/settings*.json`, `.mcp.json`), and the policy and verify-scope files. A Key File is judged as the path it resolves to, so `a/../skills/_shared/x.md` is protected too.
+  - Protected paths default to a shipped list, which a project replaces with `protected-paths` in the main checkout's `policy.yml`: hook code, `skills/_shared/`, CI and forge config (`.github/`, `.gitlab-ci.yml`, `.circleci/`, git hooks), `CODEOWNERS`, `package.json`, the agent's permission files (`.claude/settings*.json`, `.mcp.json`), and the policy and verify-scope files. A Key File is judged as the path it resolves to, so `a/../skills/_shared/x.md` is protected too.
   - A `Surface:` of `terminal` counts as a frontend, like `web`, `mobile` and `desktop`.
   - Exit 2 means `gh` is absent, so the lane is never taken.
-- **Red flags:** An eligible verdict for a record that touches `hooks/` or a merge-sensitive path; a verdict that lists only the first failure.
+  - A record carrying a kept risk flag (`Risk-flags: migrations`, or any slug) is ineligible, with the reason `record carries a kept risk flag`, because the lane composes no plan to carry the `Proof(<slug>)` line plan-audit Check G requires. A line that cannot be read counts as every category flagged. `Risk-flags: none` and no line at all do not block the lane (#4618).
+- **Red flags:** An eligible verdict for a record that touches `hooks/` or a merge-sensitive path; a verdict that changes when the record's own branch edits `protected-paths` (the gate reads the main checkout's `policy.yml`); a malformed `protected-paths` value (`["infra/**"]`, an empty element) protecting less than the shipped list; a verdict that lists only the first failure; an eligible verdict, or an express merge, for a record whose body carries a `Risk-flags:` line naming a slug or one that cannot be read.
 
 ### 3. Dispatch and watch one agent ship it
 - **URL:** `/claude-tweaks:dispatch` (or `/claude-tweaks:flow #{n}` for one record, auto mode, worktree strategy, no step list)
@@ -55,7 +59,9 @@ files:
   - `express-lane.js check` refuses to proceed without a runner pass stamp for HEAD. It also refuses a diff outside the bounds: a non-Key-File change, implementation lines plus deleted test lines over `auto-merge-max-lines`, or a protected or merge-sensitive path.
   - The push happens only when HEAD still equals the sha `check` verified.
   - The merge still needs `auto:merge` (or, from `/flow`, a typed `pre-authorize-merge`), a confirmed merge-check verdict, and green CI. Otherwise the PR waits in draft as `pending-review`.
+  - The run records which record it is for: `check`'s `configSet` carries `spec={n}`, so the run's `config.yml` holds `spec: {n}`. A PR left waiting is then merged with `/claude-tweaks:wrap-up #{n} merge` like any other run, with no binding to judge by hand, and the wrap-up pack's `claim` probe resolves the record from that line. The line never authorizes a merge on its own: it is not a closing source, and the console's merge members ignore it.
 - **Red flags:**
+  - An express run dir whose `config.yml` has no `spec:` line after the PR opened.
   - A merge with a red or unread check state.
   - A commit that landed after `check` and was pushed anyway.
   - `express: blocked` for a PR that actually merged. `verify` reads the archived run dir when the post-merge reconcile moved it.
@@ -72,16 +78,20 @@ files:
 - **Red flags:** An `already-shipped` close of an escalated record; a second express attempt in the same run dir; an escalation line after the PR exists.
 
 ### 5. Trust the post-merge sample review
-- **URL:** the end of a bare `/claude-tweaks:dispatch` drain, `node plugin/bin/express-lane.js samples`
+- **URL:** the end of a bare `/claude-tweaks:dispatch` drain, `node plugin/bin/express-lane.js samples`; or, for its own PR, the `/claude-tweaks:flow` or `/claude-tweaks:dispatch #N` session that merged it, `samples --pr {pr}`
 - **Action:** After several express merges, let a drain finish, then read the `express-review` comment on a sampled PR.
 - **Should feel:** The robustness check still exists. It just runs after merge, off the critical path.
 - **Should understand:**
   - Every Nth express merge (by ordinal, so the selection is stable) gets the normal review lenses at a tier of at least `medium`, at most 3 per firing. A capped backlog is named in the drain report.
   - Each confirmed finding is filed as a record at every autonomy level, then a marker comment means the PR is never sampled again.
   - A sampled PR left unreviewed 30 days after its merge ages out.
-  - Sampling runs only at the end of a bare drain, so an express merge made from `/flow` or an explicit `/dispatch #N` is reviewed only when a later bare drain runs within the 30-day lookback (whether the merging session should sample it is #4365).
+  - A bare drain's end sweeps every due PR. An express merge made from `/flow` or an explicit `/dispatch #N` checks its own PR right away (#4365): if the sampler picks it, that session reviews it. A PR the search index has not caught up with, or whose review did not complete, is named "left to the next drain's sweep" and covered by a later drain within the 30-day lookback.
 - **Red flags:** A sampled PR with a marker comment but a finding that was never filed; the same finding filed twice after a retried sweep (each filed body names `express-review of PR #{n}`, which the retry searches for before filing).
 
 ## Origin
 - Created during build of #4025: the express lane, a single-agent path for eligible trivial records, with an escalation hand-off to `/flow` and post-merge sampling.
+- Step 2's risk-flag ineligibility clause and red flag added during build of #4618 (risk flags at intent time; see `flag-invisible-risk-when-shaping-4618.md`).
+- Step 3's `spec: {n}` clause and red flag added during build of #5347 (express runs record their record; see `merge-a-parked-unattended-pr-3784.md` for the merge it unblocks and `gather-the-wrap-up-fact-pack-1930.md` for the pack's `config` rung).
+- Updated during the build of #6020: the protected list is the protected-paths policy value
+- Updated during the build of #4591: the lane is on by default (`express-lane: false` opts out), so step 1 became a pr-first/PR-CI check; a malformed value fails closed at the gate (`express-lane value invalid — treated as off`) and `resolve-policy.js --values` notes it (decision record 0041).
 - Related journeys: `add-a-fast-lane-skip-to-the-roster-1926.md` (the fast-lane ceremony an express-eligible record carries), `pre-authorize-a-flow-runs-merge.md` (the typed merge authorization the `/flow` entry honours), `recover-from-a-dispatch-config-deny-3225.md` (the config gate the express bind avoids by ordering).

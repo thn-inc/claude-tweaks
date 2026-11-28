@@ -23,9 +23,8 @@ function fingerprintFromBasis(prefix, basis) {
 // prefix ('journey-health' -> 'journeyhealth-<hash>'), matching every
 // existing per-skill prefix. Docs-health, harness-health, and journey-health
 // all use this; code-health's fingerprint.js is intentionally NOT built on
-// this factory — it hashes a different basis shape entirely (v1
-// lens/areaId/file/signature vs. v2 criterion/areaId/anchor, with its own
-// normalizeSignature/normalizeAnchor, not normalizeText).
+// this factory — it normalizes its anchor with its own normalizeAnchor, not
+// normalizeText.
 function createFingerprint(skillName, fields) {
   const prefix = skillName.replace(/-/g, '');
   function normalizeDescription(description) { return normalizeText(description); }

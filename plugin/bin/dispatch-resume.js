@@ -4,7 +4,9 @@
 // it to the pure verdict (lib/dispatch/resume-eligibility.js); the verdict, not this file, decides
 // what is eligible. Every read is read-only — resume mints, archives and binds in its own steps.
 //
-// Usage: dispatch-resume.js --issue <N> [--bound-run <run-dir>] [--help]
+// Usage: dispatch-resume.js --issue <N> [--bound-run <run-dir>] [--queue] [--help]
+//   --queue      a bare-drain sweep resumes the record: build authority is the real auto:build label only
+//                (resolveBuildAuthority gets named:false, so the typed-command stand-in never applies).
 //   (verdict)    Stdout is one JSON line. The PR is whichever open PR closes the record, on any head;
 //                the stalled worktree is derived from that PR's head.
 //     eligible → {eligible:true, issue, prUrl, prNumber, headRefName, priorRunId, priorRunDir,
@@ -36,7 +38,8 @@
 //   close-run for a crashed one; an unknown or other-host owner's line names how to settle that run).
 // Exit codes (a CLI-specific vocabulary — the verdict is data on stdout, no exit 1 at all):
 //   0  eligible, or {concurrent:false}
-//   2  malformed invocation (including a --bound-run outside the main checkout's pipelines dir),
+//   2  malformed invocation (including a --bound-run outside the main checkout's pipelines dir, and
+//      --queue with --bound-run, where it has no effect),
 //      `gh` absent, the main checkout or the repo slug unresolved
 //   3  refused / concurrent — JSON on stdout
 //   4  a read failed transiently (closing-PR read, truncated connection included, label or blocker
@@ -61,11 +64,14 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const claimStore = require('./lib/issues/claim-store');
 const { defaultRunner: gitCasRunner } = require('./lib/issues/claims-git-cas');
-const { parseDependencies } = require('./lib/issues/record');
+const { parseDependencies, openBlockerRefs, foreignBlockerBlocks, foreignBlockerRef } = require('./lib/issues/record');
+const { parseCrossRepoDependencies, foreignEntries, bodyOnlyForeign } = require('./lib/issues/cross-repo-refs');
+const { fetchCrossRepoStates } = require('./lib/issues/cross-repo-states');
+const { parseStatusPorcelainZ } = require('./lib/git-z');
 const { fetchNativeDependencies } = require('./lib/issues/native-dependencies');
 const { resolvePolicyConfig } = require('./lib/policy-schema');
 const { ghAvailable, ghOptions } = require('./lib/repo-resolve');
-const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
+const { GH_TIMEOUT_MS, GH_BATCH_TIMEOUT_MS, GIT_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 const { mainCheckoutRoot, safeReal } = require('./lib/hooks/worktree-detect');
 const { parseWorktreeList } = require('./lib/hooks/worktree-reap');
 const { findConflictingSession, findSessionOnWorktree } = require('./lib/hooks/sibling-sessions');
@@ -75,20 +81,24 @@ const { DEFAULT_PROBES } = require('./lib/run-liveness/probes');
 const { MAX_PID, probeOwnerPid } = require('./lib/run-liveness/owner-pid-probe');
 const { resolveTarget } = require('./lib/stage-item/write');
 const { lstatType } = require('./lib/path-guard');
+const { envTmpdir } = require('./lib/session-tmp');
+const { resolveBuildAuthority } = require('./lib/issues/build-authority');
+const { readTypedCommand } = require('./lib/issues/typed-command');
 const {
-  selectResumePr, resumeEligibility, resumeContext, worktreeNameForHead, refusalDetail, closeOutCannotResolve, ownMarkerRunId,
+  selectResumePr, resumeEligibility, resumeContext, worktreePathForHead, isObject, nonEmptyString, refusalDetail, closeOutCannotResolve,
+  ownMarkerRunId,
 } = require('./lib/dispatch/resume-eligibility');
 
-const USAGE = 'usage: dispatch-resume.js --issue <N> [--bound-run <run-dir>] [--help]\n'
+const USAGE = 'usage: dispatch-resume.js --issue <N> [--bound-run <run-dir>] [--queue] [--help]\n'
   + '  prints one JSON line: {eligible:true,…} (exit 0) or\n'
   + '  {eligible:false, issue, reason, line, prNumbers, disposition, remedy, headRefName[, liveRun]} (exit 3)\n'
+  + '  --queue            a queue-picked resume: the record must carry the real auto:build label, never the typed-command stand-in\n'
   + '  --bound-run <dir>  re-check concurrency after the new run dir is bound: {concurrent:false} (exit 0)\n'
   + '                     or {concurrent:true, reason, line[, liveRun]} (exit 3)\n'
   + '  exit 2 malformed invocation / gh absent / repo or main checkout unresolved; exit 4 read failure (transient, or an unlistable pipelines dir)\n';
 
 // The closing connection, so a PR that only mentions the record is never listed and any head resolves.
 const RESUME_PR_QUERY = 'query($owner:String!,$repo:String!,$issue:Int!){repository(owner:$owner,name:$repo){issue(number:$issue){closedByPullRequestsReferences(first:100){pageInfo{hasNextPage} nodes{url number state headRefName headRefOid isDraft isCrossRepository repository{nameWithOwner} closingIssuesReferences(first:1){totalCount} body}}}}}';
-const NATIVE_TIMEOUT_MS = 30000; // one aliased GraphQL call (resolve-blockers.js's precedent)
 // This build's own hooks.js, so the stale-bound-run remedy is a command the human can paste as is.
 const HOOKS_JS = path.join(__dirname, 'hooks.js');
 
@@ -110,9 +120,10 @@ function defaultGit(args) {
   });
 }
 
+// One aliased GraphQL call, so it gets the batched bound.
 function nativeGh(args) {
   return execFileSync('gh', args, ghOptions(args, {
-    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: NATIVE_TIMEOUT_MS,
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_BATCH_TIMEOUT_MS,
     maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true,
   }));
 }
@@ -163,7 +174,13 @@ const realDeps = {
   probes: DEFAULT_PROBES,
   sessionId: process.env.CLAUDE_CODE_SESSION_ID || '',
   now: () => Date.now(),
+  // The build-authority rule's inputs (#5584): a typed `/claude-tweaks:dispatch resume #N` grants an
+  // ungranted record when the transcript check accepts it.
+  env: process.env,
+  readTypedCommand,
   workLinks: resolveWorkLinks,
+  // The aliased foreign-state lookup: one batched GraphQL call, so it runs on the batched bound.
+  ghBatch: nativeGh,
   fetchNative: ({ numbers, owner, repo }) => fetchNativeDependencies({ numbers, owner, repo, runner: nativeGh }),
   resolveTarget,
   stdout: (s) => process.stdout.write(s),
@@ -173,10 +190,11 @@ const realDeps = {
 // ---- argv ----
 
 function parseArgs(argv) {
-  const o = { issue: null, boundRun: null, help: false };
+  const o = { issue: null, boundRun: null, queue: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') { o.help = true; continue; }
+    if (a === '--queue') { o.queue = true; continue; }
     if (a !== '--issue' && a !== '--bound-run') return { error: `unknown argument: ${a}` };
     const v = argv[++i];
     if (typeof v !== 'string' || !v.trim() || v.startsWith('--')) return { error: `${a} requires a value` };
@@ -185,6 +203,7 @@ function parseArgs(argv) {
       o.issue = Number(v);
     } else o.boundRun = v;
   }
+  if (o.queue && o.boundRun !== null && !o.help) return { error: '--queue has no effect with --bound-run' };
   return o;
 }
 
@@ -215,8 +234,6 @@ function parseJson(label, text) {
   return read(label, () => JSON.parse(text));
 }
 
-const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
-const nonEmptyString = (v) => (typeof v === 'string' && v !== '' ? v : null);
 const normalizePath = (p) => safeReal(p) || path.resolve(p);
 
 // ---- gathering ----
@@ -272,15 +289,27 @@ function readRecord(ctx) {
 }
 
 // The open blockers: body `Blocked by` records whose own state reads OPEN, plus — under work-links
-// native only, exactly as the queue gates it — the native openBlockerIds. Ascending, deduplicated.
+// native only, exactly as the queue gates it — the native open blockers. This repository's come first
+// as numbers (ascending, deduplicated), then each foreign blocker still blocking as an `owner/name#N`
+// string, with ` (state unreadable)` when its native state is neither OPEN nor CLOSED (#4793, Q5).
+// A body-declared `Blocked by owner/name#N` line (another repository, either work-links value) joins
+// the foreign blockers: refs already linked natively are dropped first (named once, no lookup), the
+// rest are looked up in one batched call through ctx.deps.ghBatch. A failed lookup leaves every state
+// unknown, so each ref is named `(state unreadable)` and one stderr line says why (fail closed, Q5).
 function readOpenBlockers(ctx, body) {
   const open = new Set();
+  const foreign = [];
+  // One gh issue view per body-declared blocker, serially: a record's Blocked-by list is a handful
+  // of entries and this runs once per manual resume, so batching them into one aliased query would
+  // add a second query shape and its partial-result handling for no measured cost (#4815 closed
+  // this out).
   for (const m of parseDependencies(body)) {
     const dep = issueView(ctx, m, 'state');
     if (typeof dep.state !== 'string') throw new Exit(4, `gh issue view #${m}: state unreadable`);
     if (dep.state === 'OPEN') open.add(m);
   }
   const workLinks = read('work-links policy', () => ctx.deps.workLinks());
+  let nativeCross = [];
   if (workLinks === 'native') {
     const [owner, repo] = ctx.slug.split('/').slice(-2);
     const map = read('native dependency read', () => ctx.deps.fetchNative({ numbers: [ctx.issue], owner, repo }));
@@ -288,9 +317,33 @@ function readOpenBlockers(ctx, body) {
     if (!entry || !Array.isArray(entry.openBlockerIds)) {
       throw new Exit(4, `native dependency read: no usable entry for #${ctx.issue}`);
     }
-    for (const id of entry.openBlockerIds) open.add(id);
+    for (const ref of openBlockerRefs(entry)) {
+      if (typeof ref === 'string') foreign.push(ref);
+      else open.add(ref);
+    }
+    if (Array.isArray(entry.crossRepoBlockers)) nativeCross = entry.crossRepoBlockers.filter((b) => b && typeof b === 'object');
   }
-  return [...open].sort((a, b) => a - b);
+  foreign.push(...bodyForeignBlockerRefs(ctx, body, nativeCross));
+  return [...[...open].sort((a, b) => a - b), ...foreign];
+}
+
+// The body-declared foreign blockers still blocking, as `owner/name#N` strings (see readOpenBlockers).
+// `nativeCross` is the native entry's crossRepoBlockers: those refs are dropped before the lookup.
+function bodyForeignBlockerRefs(ctx, body, nativeCross) {
+  // The empty Map is deliberate: foreignEntries only reshapes the refs into entries so bodyOnlyForeign can
+  // drop the natively linked ones; the states are looked up below.
+  const declared = foreignEntries(parseCrossRepoDependencies(body), new Map());
+  const refs = bodyOnlyForeign(nativeCross, declared).map((e) => `${e.repository}#${e.number}`);
+  if (refs.length === 0) return [];
+  const slugParts = ctx.slug.split('/');
+  const host = slugParts.length === 3 ? slugParts[0] : undefined;
+  let states = new Map();
+  try {
+    states = fetchCrossRepoStates({ refs, host, runner: ctx.deps.ghBatch });
+  } catch (e) {
+    ctx.deps.stderr(`dispatch-resume: foreign blocker state lookup failed (${errText(e).replace(/\s+/g, ' ').trim()}) — ${refs.join(', ')} read as state unreadable (fail closed)\n`);
+  }
+  return foreignEntries(refs, states).filter(foreignBlockerBlocks).map(foreignBlockerRef);
 }
 
 // One direct read, never an existence check first ([IL-146]): a missing file (ENOENT/ENOTDIR) is
@@ -319,8 +372,9 @@ function readJsonFile(deps, file) {
 // mkdirs archive/{runId} and writes `status: 'archiving'` there before moving anything, so a failed
 // attempt leaves the marker beside the real root dir. It wins when archive/{runId}/run-state.json parses
 // as an object whose status is not 'archiving' (archive-merged.js's own real-prior-archive test), or when
-// the root dir is absent or holds no run-state.json (a late-write `work/` stub, Review Focus 6). Any other
-// state falls through to the root classification, so a live root owner is still probed.
+// the root dir is absent or holds no run-state.json (a late-write `work/` stub that recreated the root
+// after archiving). Any other state falls through to the root classification, so a live root owner is
+// still probed.
 function classifyPriorRun(ctx, runId) {
   const { deps } = ctx;
   const archiveDir = path.join(ctx.root, 'archive', runId);
@@ -476,23 +530,24 @@ function parseBranchHeader(header) {
 }
 
 // `status --porcelain -b -z` → { branch, dirty }. First record is the `## ` branch header; every later
-// `XY path` record is a dirty path, a rename/copy being followed by its original-path record.
+// `XY path` record is a dirty path, a rename/copy being followed by its original-path record. The
+// records after the header go to git-z's `parseStatusPorcelainZ` in strict mode, so a short record
+// still fails loud rather than being skipped.
 function parseStatus(out) {
   const fail = (why) => new Exit(4, `git status (stalled worktree): ${why}`);
   if (typeof out !== 'string') throw fail('output was not text');
-  const records = out.split('\0');
-  if (!records[0].startsWith('## ')) throw fail('output did not start with a "## " branch header');
-  const branch = parseBranchHeader(records[0].slice(3));
+  const nul = out.indexOf('\0');
+  const header = nul < 0 ? out : out.slice(0, nul);
+  if (!header.startsWith('## ')) throw fail('output did not start with a "## " branch header');
+  const branch = parseBranchHeader(header.slice(3));
   if (branch === null) throw fail('the "## " branch header named no branch');
-  const dirty = [];
-  for (let i = 1; i < records.length; i++) {
-    const rec = records[i];
-    if (rec === '') continue;
-    if (rec.length < 4) throw fail(`a status record was shorter than "XY path" (${JSON.stringify(rec)})`);
-    dirty.push(rec.slice(3));
-    if (rec[0] === 'R' || rec[0] === 'C' || rec[1] === 'R' || rec[1] === 'C') i++;
+  let records;
+  try {
+    records = parseStatusPorcelainZ(nul < 0 ? '' : out.slice(nul + 1), { strict: true });
+  } catch (e) {
+    throw fail(e.message);
   }
-  return { branch, dirty };
+  return { branch, dirty: records.map((r) => r.path) };
 }
 
 function readWorktreeState(ctx) {
@@ -582,7 +637,7 @@ function runVerdict(ctx) {
   });
   if (!selected.ok) return refusal(ctx, prs, selected, prior);
   const { pr } = selected;
-  ctx.worktreePath = path.join(ctx.mainRoot, '.claude', 'worktrees', ...worktreeNameForHead(pr.headRefName).split('/'));
+  ctx.worktreePath = worktreePathForHead(ctx.mainRoot, pr.headRefName);
 
   const record = readRecord(ctx);
   const openBlockers = readOpenBlockers(ctx, record.body);
@@ -594,6 +649,15 @@ function runVerdict(ctx) {
     || siblingOnWorktree(ctx, priorListing, pr.headRefName, ctx.worktreePath) !== null;
   const wt = readWorktreeState(ctx);
   const local = wt.exists ? { localBranchSha: null, branchCheckedOutAt: null } : readLocalBranch(ctx, pr.headRefName);
+  const authority = resolveBuildAuthority({
+    number: issue,
+    labels: record.labels,
+    named: !ctx.queue,
+    env: deps.env,
+    typedCommand: () => deps.readTypedCommand({ number: issue, env: deps.env, now: new Date(deps.now()), tmpdir: envTmpdir(deps.env) }),
+    // Never the terminal route (only drive.js is run at a terminal): outside a session this answers none.
+    stdinIsTTY: false,
+  });
 
   const verdict = resumeEligibility({
     issue,
@@ -613,6 +677,8 @@ function runVerdict(ctx) {
     localBranchSha: local.localBranchSha,
     branchCheckedOutAt: local.branchCheckedOutAt,
     mainRoot: ctx.mainRoot,
+    buildAuthority: authority.authority,
+    authorityReasons: authority.reasons,
   });
   if (!verdict.eligible) return refusal(ctx, prs, verdict, prior);
   // The --bound-run scan, run here too so a run left bound to the worktree refuses at Step 2, before
@@ -647,6 +713,9 @@ function runBound(ctx, boundRun) {
   const target = read('--bound-run', () => deps.resolveTarget({ runDir: boundRun, mainRoot: ctx.mainRoot }));
   if (!target || !target.ok) throw new Exit(2, `--bound-run ${boundRun} is not a run dir under the main checkout (${target && target.reason})`);
   const bound = path.resolve(target.dir);
+  // resolveTarget returns the realpath'd run dir, while ctx.root is realpath'd only up to its
+  // main-checkout prefix: a symlinked .claude-tweaks or pipelines dir, or an injected mainRoot,
+  // leaves it spelled differently, so accept both.
   const pipelines = [ctx.root, normalizePath(ctx.root)];
   if (!pipelines.includes(path.dirname(bound))) {
     throw new Exit(2, `--bound-run ${boundRun} is not a top-level run dir of ${ctx.root}`);
@@ -696,6 +765,7 @@ function run(argv, deps) {
     const ctx = {
       deps,
       issue: opts.issue,
+      queue: opts.queue,
       mainRoot,
       root: path.join(mainRoot, '.claude-tweaks', 'pipelines'),
     };

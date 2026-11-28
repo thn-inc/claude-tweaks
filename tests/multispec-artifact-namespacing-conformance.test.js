@@ -105,3 +105,34 @@ test('Q11: the procedure omits --run only for waves that ran with two or more me
 test('go-red proof: the old "a parallel run omits --run" wording fails the Q11 assertion', () => {
   assert.throws(() => assertRunOmissionRule('a run started with the `parallel` token omits `--run`'));
 });
+
+// --- #4845: the run's events exclude the integration branch's history ---
+
+function assertRawWalkExcludesIntegrationRef(text) {
+  assert.match(text, /log --name-status --diff-filter=AM "\{EXPECTED_BASE\}\.\.HEAD" "\^origin\/\{integration-branch\}" -- docs\/journeys\/ stories\//);
+}
+test('AC6.1: the raw walk excludes the integration branch\'s history (Q1 decision)', () => {
+  assertRawWalkExcludesIntegrationRef(read(NAMESPACING_FILE));
+});
+test('go-red proof: the pre-#4845 raw walk fails the AC6.1 assertion', () => {
+  assert.throws(() => assertRawWalkExcludesIntegrationRef(flatten('git -C "$WORKTREE" log --name-status --diff-filter=AM "{EXPECTED_BASE}..HEAD" -- docs/journeys/ stories/')));
+});
+function assertIntegrationRefInCommand(text) {
+  assert.match(text, /check-artifact-overwrite\.js" --base "\{EXPECTED_BASE\}" --run "\{parent\}" --integration-ref "origin\/\{integration-branch\}"/);
+}
+test('AC1.1: the procedure passes --integration-ref "origin/{integration-branch}" to the check', () => {
+  assertIntegrationRefInCommand(read(NAMESPACING_FILE));
+});
+test('go-red proof: a command without --integration-ref fails the same assertion', () => {
+  assert.throws(() => assertIntegrationRefInCommand(flatten('node "${CLAUDE_PLUGIN_ROOT}/bin/check-artifact-overwrite.js" --base "{EXPECTED_BASE}" --run "{parent}" --path docs/journeys/')));
+});
+function assertMembershipClearing(text) {
+  assert.match(text, /blamed commit is not one of the run's own commits/);
+  assert.match(text, /merge commit inside the run is never cleared/);
+}
+test('AC2.1: the procedure names the membership check and the merge fail-closed', () => {
+  assertMembershipClearing(read(NAMESPACING_FILE));
+});
+test('go-red proof: a procedure naming only the five tests fails the membership assertion', () => {
+  assert.throws(() => assertMembershipClearing(flatten('Only a commit that deletes lines failing all five tests is a real overwrite.')));
+});

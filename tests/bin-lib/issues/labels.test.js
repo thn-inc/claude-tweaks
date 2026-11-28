@@ -165,7 +165,9 @@ test('AC5.1: work-record.md states the precedence rule, the marker and the trust
   assert.match(wr, /verdict label and comment disagree/);
   assert.match(wr, /#3358/);
   const matrix = readText(path.join(sharedDir, 'work-record-permission-matrix.md')).replace(/\s+/g, ' ');
-  assert.match(matrix, /reserved until the accept-skill record switches the writers/);
+  // #4613 switched /accept to accept:*; every other row stays reserved until its own switch.
+  assert.match(matrix, /`\/accept` is the one skill that adds an `accept:\*` label/);
+  assert.match(matrix, /never a widening of who may write/);
 });
 
 // Every real label description this plan introduces or keeps must pass — a single place

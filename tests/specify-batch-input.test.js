@@ -13,7 +13,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
-const { extractArgumentHint } = require('../plugin/bin/lib/skill-audit/argument-hint');
+const { extractArgumentHint } = require('./helpers/argument-hint');
 const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');

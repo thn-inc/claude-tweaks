@@ -71,7 +71,7 @@ function fakeDeps(o = {}) {
         const key = args.join(' ');
         if (key.startsWith('pr list')) return JSON.stringify(o.prs || []);
         if (key.startsWith('pr view')) return JSON.stringify({ commits: o.prCommits || [] });
-        if (key.startsWith('repo view')) return JSON.stringify({ nameWithOwner: 'o/r' });
+        if (key.startsWith('repo view')) return JSON.stringify({ nameWithOwner: 'o/r', url: o.repoUrl || 'https://github.com/o/r' });
         if (/^api repos\/o\/r\/commits\/.*\/check-runs/.test(key)) return JSON.stringify(o.checkRuns || { total_count: 0, check_runs: [] });
         // `gh api … --jq .sha` prints the bare value, not a JSON document.
         if (key.startsWith('api repos/o/r/commits/')) return `${o.headSha || SHA}\n`;
@@ -156,6 +156,19 @@ test('AC 6: integration-model unset → engine, releasePr and hook all degrade n
   assert.strictEqual(pack.lastTag.ok, true);
   const bad = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ policy: 'integration-model: gitlab\n' }).deps });
   assert.strictEqual(bad.engine.ok, false);
+});
+
+// #6006: the factory layer reaches the pack through deps.env (no HOME, so no factory file is read).
+test('release-preflight: a factory integration-model pin is a configured engine', async () => {
+  const factoryEnv = { CLAUDE_TWEAKS_FACTORY_POLICY: 'integration-model: local-merge\n' };
+  const pinned = await gatherReleasePreflight({ cwd: ROOT, deps: { ...fakeDeps({ policy: '' }).deps, env: factoryEnv } });
+  assert.deepStrictEqual([pinned.engine.ok, pinned.engine.value, pinned.ciTip.value], [true, 'local-merge', 'n/a']);
+  // policy.yml still beats the factory pin.
+  const repo = await gatherReleasePreflight({ cwd: ROOT, deps: { ...fakeDeps().deps, env: factoryEnv } });
+  assert.strictEqual(repo.engine.value, 'pr-first');
+  // An invalid factory value is not a configured engine.
+  const bad = await gatherReleasePreflight({ cwd: ROOT, deps: { ...fakeDeps({ policy: '' }).deps, env: { CLAUDE_TWEAKS_FACTORY_POLICY: 'integration-model: gitlab\n' } } });
+  assert.match(bad.engine.error, /integration-model unresolved/);
 });
 
 test('ruling 3: without origin/{branch} the tip is refs/heads/{branch}; integration-branch policy renames it', async () => {
@@ -351,9 +364,52 @@ test('isBotAuthor / isReleasePr helpers', () => {
   assert.strictEqual(isBotAuthor({ login: 'github-actions', name: 'github-actions[bot]', email: '41898282+github-actions[bot]@users.noreply.github.com' }), true);
   assert.strictEqual(isBotAuthor({ login: 'release-please[bot]', name: '', email: '' }), true);
   assert.strictEqual(isBotAuthor({ login: 'thomas', name: 'Thomas', email: 't@x' }), false);
-  assert.strictEqual(isReleasePr({ headRefName: 'release-please--branches--main', title: 'x' }), true);
-  assert.strictEqual(isReleasePr({ headRefName: 'feature', title: 'chore(main): release 1.3.0' }), true);
-  assert.strictEqual(isReleasePr({ headRefName: 'feature', title: 'chore: release notes' }), false);
+  assert.strictEqual(isReleasePr({ headRefName: 'release-please--branches--main', title: 'x' }, 'main'), true);
+  assert.strictEqual(isReleasePr({ headRefName: 'release-please--branches--main--components--web', title: 'x' }, 'main'), true);
+  // #3931: the title never selects, and another target branch's release PR is not this one.
+  assert.strictEqual(isReleasePr({ headRefName: 'feature', title: 'chore(main): release 1.3.0' }, 'main'), false);
+  assert.strictEqual(isReleasePr({ headRefName: 'release-please--branches--develop', title: 'x' }, 'main'), false);
+  assert.strictEqual(isReleasePr({ headRefName: 'release-please--branches--main-next', title: 'x' }, 'main'), false);
+  assert.strictEqual(isReleasePr({ headRefName: 'feature', title: 'chore: release notes' }, 'main'), false);
+});
+
+const DEVELOP = { policy: 'integration-model: pr-first\nintegration-branch: develop\n' };
+const HUMAN = { number: 12, state: 'OPEN', mergeable: 'MERGEABLE', headRefName: 'feature/x', title: 'chore: release 1.4.0 review follow-ups' };
+const RP = { number: 10, state: 'OPEN', mergeable: 'MERGEABLE', headRefName: 'release-please--branches--develop', title: 'chore(develop): release 1.4.0' };
+
+test('#3931: a newer human PR with a release title never outranks release-please\'s own PR', async () => {
+  const both = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ ...DEVELOP, prs: [HUMAN, RP] }).deps });
+  assert.strictEqual(both.releasePr.value.number, 10);
+});
+
+test('#3931: a title-only match alone is never the release PR — the probe degrades naming it', async () => {
+  const alone = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ ...DEVELOP, prs: [HUMAN] }).deps });
+  assert.strictEqual(alone.releasePr.ok, false);
+  assert.match(alone.releasePr.error, /release PR not identified: #12 has a release title but head feature\/x/);
+});
+
+test('#3931: two open PRs on release-please--branches--{branch} heads are inconclusive', async () => {
+  const two = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ ...DEVELOP, prs: [{ ...RP, number: 11, headRefName: 'release-please--branches--develop--components--web' }, RP] }).deps });
+  assert.strictEqual(two.releasePr.ok, false);
+  assert.match(two.releasePr.error, /release PR search inconclusive: 2 open PRs .*#11, #10/);
+});
+
+test('#3931: ciTip\'s gh api calls carry an Enterprise origin\'s host; an exported GH_HOST wins', async () => {
+  const ghe = fakeDeps({ repoUrl: 'https://ghe.example.com/o/r' });
+  ghe.deps.env = {};
+  const a = await gatherReleasePreflight({ cwd: ROOT, deps: ghe.deps });
+  assert.strictEqual(a.ciTip.ok, true, a.ciTip.error);
+  const api = ghe.calls.gh.filter((c) => c.startsWith('gh api '));
+  assert.strictEqual(api.length, 2, api.join(' | '));
+  for (const c of api) assert.ok(c.endsWith(' --hostname ghe.example.com'), c);
+  const pinned = fakeDeps({ repoUrl: 'https://ghe.example.com/o/r' });
+  pinned.deps.env = { GH_HOST: 'other.example.com' };
+  await gatherReleasePreflight({ cwd: ROOT, deps: pinned.deps });
+  assert.ok(!pinned.calls.gh.some((c) => c.includes('--hostname')), pinned.calls.gh.join(' | '));
+  const dotcom = fakeDeps();
+  dotcom.deps.env = {};
+  await gatherReleasePreflight({ cwd: ROOT, deps: dotcom.deps });
+  assert.ok(!dotcom.calls.gh.some((c) => c.includes('--hostname')), dotcom.calls.gh.join(' | '));
 });
 
 test('releasePr (pr-first): the open release-please PR, or none', async () => {
@@ -406,6 +462,15 @@ test('a dependency that fails is named in the dependent field\'s error, never re
   deps.git = ((orig) => (args) => { if (args[0] === 'tag' && args[1] === '--merged') throw new Error('fatal: not a git repository'); return orig(args); })(deps.git);
   const broken = await gatherReleasePreflight({ cwd: ROOT, deps });
   for (const k of ['lastTag', 'unreleased', 'proposedVersion']) assert.match(broken[k].error, /^history unresolved: .*not a git repository/, k);
+});
+
+test('ciTip (pr-first): a cancelled, action_required or stale tip run is pending, never failure (#3467 family rule)', async () => {
+  const runs = { total_count: 4, check_runs: [{ status: 'completed', conclusion: 'success', head_sha: SHA }, { status: 'completed', conclusion: 'cancelled' }, { status: 'completed', conclusion: 'action_required' }, { status: 'completed', conclusion: 'stale' }] };
+  const r = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ checkRuns: runs }).deps });
+  assert.equal(r.ciTip.value.state, 'pending');
+  assert.deepEqual([r.ciTip.value.success, r.ciTip.value.failure, r.ciTip.value.pending], [1, 0, 3]);
+  const red = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ checkRuns: { total_count: 2, check_runs: [{ status: 'completed', conclusion: 'cancelled', head_sha: SHA }, { status: 'completed', conclusion: 'failure' }] } }).deps });
+  assert.equal(red.ciTip.value.state, 'failure', 'a failing run still reads failure');
 });
 
 test('ciTip (pr-first): the branch is asked by name, paginated, with local/remote skew recorded (ruling 11); AC 3: a gh failure degrades ciTip and releasePr alone', async () => {
@@ -473,4 +538,48 @@ test('AC7.2: the unreleased probe returns two empty lists for a commit with neit
   const pack = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ subjects: ['fix: bundle (#10)', 'chore: plain'], bodies: ['Fixes #10', ''] }).deps });
   const plain = pack.unreleased.value.commits[1];
   assert.deepStrictEqual([plain.fixes, plain.refs], [[], []]);
+});
+
+// default exec bounds (#5050): each runner's spawn is recorded by command, in order. The async runner is
+// started inside exercise (so it sees the stubs) and awaited after the probe returns.
+const PACK_MOD = require.resolve('../../../plugin/bin/lib/release-preflight/pack.js');
+const execBounds = async (cmd, env) => {
+  const { captureExecTimeouts } = require('../../helpers/gh-timeout-probe');
+  const pending = [];
+  const seen = captureExecTimeouts({
+    env,
+    modulePaths: [PACK_MOD],
+    exercise: (setEnv) => {
+      setEnv();
+      const deps = require(PACK_MOD).defaultDeps(process.cwd());
+      if (cmd === 'git') deps.git(['--version']);
+      else pending.push(deps.execFileAsync(cmd, ['--version']));
+    },
+  });
+  await Promise.all(pending);
+  return seen;
+};
+
+test('default exec bounds (#5050): the sync git runner follows CLAUDE_TWEAKS_GIT_TIMEOUT_MS above the floor', async () => {
+  const seen = await execBounds('git', { CLAUDE_TWEAKS_GIT_TIMEOUT_MS: '90000' });
+  assert.strictEqual(seen.git[0], 90000);
+  assert.deepStrictEqual(seen.node, []);
+});
+
+test('default exec bounds (#5050): the sync git runner keeps the 30000 default when the env is unset', async () => {
+  const seen = await execBounds('git', { CLAUDE_TWEAKS_GIT_TIMEOUT_MS: undefined });
+  assert.strictEqual(seen.git[0], 30000);
+});
+
+test('default exec bounds (#5050): the async gh runner follows CLAUDE_TWEAKS_GH_TIMEOUT_MS above the floor', async () => {
+  const seen = await execBounds('gh', { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '45000' });
+  assert.strictEqual(seen.gh[0], 45000);
+  assert.deepStrictEqual(seen.node, []);
+});
+
+test('default exec bounds (#5050): the async gh runner keeps the 30000 default when the env is unset or below the floor', async () => {
+  const unset = await execBounds('gh', { CLAUDE_TWEAKS_GH_TIMEOUT_MS: undefined });
+  assert.strictEqual(unset.gh[0], 30000, 'unset');
+  const low = await execBounds('gh', { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '10000' });
+  assert.strictEqual(low.gh[0], 30000, '10000');
 });

@@ -32,9 +32,10 @@ const fs = require('fs');
 const path = require('path');
 const { lstatType } = require('../path-guard');
 const { isPathContained } = require('../shared-primitives');
+const { listHeaderDirs } = require('../run-header');
 const { readManifest } = require('../flow/manifest');
 const { formatRecordSteps } = require('../flow/record-steps');
-const { locateTranscripts, subagentsDirFor, readUsage } = require('./transcript');
+const { locateTranscripts, subagentsDirFor, readUsage, mergeUsage } = require('./transcript');
 
 // #4027's measured latency curve: 5.0 s per turn under 100k context and
 // 12.1 s per turn above 300k, so 200k — the midpoint — is the cap.
@@ -225,31 +226,26 @@ function findAgentTranscript({ runId, sessionId, cwd, configDir, fsImpl = fs } =
 // from the file's last `tailBytes` bytes, or null when that window holds no
 // assistant message (a last turn larger than the window, a transcript with no
 // turn, an unreadable file) — the caller then falls back to readUsage. A turn's
-// lines share a message.id and readUsage keeps the per-field max across them,
-// so this does too; the last turn is the id whose first line comes last.
+// lines share a message.id and mergeUsage keeps the per-field max across them
+// (as readUsage does), so this does too; the last turn is the id whose first
+// line comes last.
 function tailContextTokens(filePath, { fsImpl = fs, tailBytes = GAUGE_TAIL_BYTES } = {}) {
   const lines = tailLines(filePath, { fsImpl, tailBytes });
   if (!lines) return null;
-  const turns = []; // [{ id, input, cacheRead, cacheCreate }] in first-line order
-  const byId = new Map();
+  const turns = []; // one UsageMax per turn, in first-line order
+  const indexById = new Map(); // message.id -> its index in turns
   for (const line of lines) {
     const entry = messageEntry(line);
     if (!entry || entry.message.role !== 'assistant') continue;
     const u = entry.message.usage || {};
-    const usage = {
-      input: Number(u.input_tokens) || 0,
-      cacheRead: Number(u.cache_read_input_tokens) || 0,
-      cacheCreate: Number(u.cache_creation_input_tokens) || 0,
-    };
     const id = typeof entry.message.id === 'string' ? entry.message.id : null;
-    const turn = id !== null ? byId.get(id) : undefined;
-    if (!turn) {
-      const fresh = { ...usage };
-      turns.push(fresh);
-      if (id !== null) byId.set(id, fresh);
-      continue;
+    const at = id !== null ? indexById.get(id) : undefined;
+    if (at === undefined) {
+      if (id !== null) indexById.set(id, turns.length);
+      turns.push(mergeUsage(null, u));
+    } else {
+      turns[at] = mergeUsage(turns[at], u);
     }
-    for (const field of Object.keys(usage)) turn[field] = Math.max(turn[field], usage[field]);
   }
   if (turns.length === 0) return null;
   const last = turns[turns.length - 1];
@@ -283,14 +279,19 @@ function numberedEntries(dir, re, wantType, fsImpl) {
 }
 
 // { runDir, worktree?, gitRoot?, fsImpl?, manifest? } -> ['#N', ...] | null.
-// A multi-spec run's records are its spec-{N}/ subdirectories, in the order
-// of manifest.yml's specs list (lib/flow/manifest.js) when the run has one —
-// a spec dir the manifest does not list goes after, ascending — else
-// ascending. A single-record run's are its work/{n}-spec.md names, and that
-// spec is committed inside the worktree at the run dir's path relative to the
-// main checkout — so the worktree copy (run-state.json's `worktree`) is read
-// first, the run dir's own work/ second. `manifest` is the parsed manifest
-// (readManifest's shape); undefined reads {runDir}/manifest.yml.
+// Each root is read at its live location and at its archived one (a header
+// moves there after wrap-up), through lib/run-header.js's listHeaderDirs.
+// A multi-spec run's records are its spec-{N}/ subdirectories, live or
+// archived, in the order of manifest.yml's specs list (lib/flow/manifest.js)
+// when the run has one — a spec dir the manifest does not list goes after,
+// ascending — else ascending. A single-record run's are its {n}-spec.md
+// header names, and that spec is committed inside the worktree at the run
+// dir's path relative to the main checkout — so the worktree copy
+// (run-state.json's `worktree`) is read first, the run dir second, root by
+// root: within a root the live and archived headers merge by record, and the
+// first root holding any header answers. `manifest` is the parsed manifest
+// (readManifest's shape); undefined reads {runDir}/manifest.yml, which stays
+// at the live run dir.
 function resolveTargetRecords({ runDir, worktree = null, gitRoot = null, fsImpl = fs, manifest } = {}) {
   const roots = [];
   if (typeof worktree === 'string' && worktree && gitRoot && isPathContained(runDir, gitRoot)) {
@@ -298,7 +299,13 @@ function resolveTargetRecords({ runDir, worktree = null, gitRoot = null, fsImpl 
   }
   roots.push(runDir);
   const format = (nums) => [...new Set(nums)].sort((a, b) => a - b).map((n) => `#${n}`);
-  const specDirs = roots.flatMap((r) => numberedEntries(r, /^spec-([1-9]\d*)$/, 'directory', fsImpl));
+  // Header dirs per root, live and archived (lib/run-header.js); an unreadable base lists as empty.
+  // The lstat filter below keeps the old rule that a `spec-N` symlink or file is not a spec dir.
+  const readdir = (d) => { try { return fsImpl.readdirSync(d); } catch { return []; } };
+  const dirsByRoot = roots.map((r) => listHeaderDirs([r], { readdir }));
+  const specDirs = dirsByRoot.flat()
+    .filter((e) => e.specN !== null && lstatType(path.dirname(e.dir), { fsImpl }).type === 'directory')
+    .map((e) => e.specN);
   if (specDirs.length) {
     const m = manifest === undefined ? readManifest(runDir) : manifest;
     const listed = m && m.multispec && Array.isArray(m.multispec.specs) ? m.multispec.specs.map((s) => Number(s.id)) : [];
@@ -307,8 +314,10 @@ function resolveTargetRecords({ runDir, worktree = null, gitRoot = null, fsImpl 
     const rest = format(specDirs.filter((n) => !ordered.includes(n)));
     return [...ordered.map((n) => `#${n}`), ...rest];
   }
-  for (const r of roots) {
-    const specs = numberedEntries(path.join(r, 'work'), /^([1-9]\d*)-spec\.md$/, 'file', fsImpl);
+  // Within a root the live and archived flat headers merge by record; roots keep first-non-empty order.
+  for (const entries of dirsByRoot) {
+    const specs = entries.filter((e) => e.specDir === null)
+      .flatMap((e) => numberedEntries(e.dir, /^([1-9]\d*)-spec\.md$/, 'file', fsImpl));
     if (specs.length) return format(specs);
   }
   return null;

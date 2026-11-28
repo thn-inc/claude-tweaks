@@ -15,30 +15,27 @@
 //      (archiveRunDir's own TTL-bounded lock, context.js's
 //      ARCHIVE_CLAIM_TTL_MS) left behind by a prior failed archival attempt.
 //      A stale stub must not permanently block every later retry.
+//
+// In-process (#5376): archive-run's script-entry smoke tests are in
+// tests/archive-run-verb.test.js.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const { gitRepo, linkedWorktreeOf } = require('./helpers/git-fixtures');
+const { gitRepo, linkedWorktreeOf, hookEnv } = require('./helpers/git-fixtures');
+const { runCli } = require('./helpers/run-cli');
 
 const HOOKS_JS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
-function runHooks(cmd, args, cwd) {
-  try {
-    // #1270/#1130: neutralize any ambient PIPELINE_RUN_DIR so this spawn
-    // can't silently resolve against a real run dir it never named.
-    const stdout = execFileSync('node', [HOOKS_JS, cmd, ...args], {
-      cwd, timeout: 15000, env: { ...process.env, PIPELINE_RUN_DIR: '' },
-    });
-    return { code: 0, stdout: stdout.toString('utf8') };
-  } catch (e) {
-    return {
-      code: typeof e.status === 'number' ? e.status : 1,
-      stdout: e.stdout ? e.stdout.toString('utf8') : '',
-    };
-  }
+async function runHooks(cmd, args, cwd) {
+  // #1270/#1130: neutralize any ambient PIPELINE_RUN_DIR (present in every
+  // /flow-dispatched shell) so this call can't silently resolve against a
+  // real run dir it never named.
+  const r = await runCli(HOOKS_JS, [cmd, ...args], {
+    cwd, env: hookEnv(),
+  });
+  return { code: r.code, stdout: r.stdout };
 }
 
 // A worktree-local run dir that's INITIALIZED (has a marker file) and has no
@@ -51,7 +48,7 @@ function trappedInitializedRunDir(wt, runId) {
   return dir;
 }
 
-test('#1452: archive-run defers (not git-mv-failed) when a worktree-local-fallback run dir has a tracked work/', () => {
+test('#1452: archive-run defers (not git-mv-failed) when a worktree-local-fallback run dir has a tracked work/', async () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const trapped = trappedInitializedRunDir(wt, '2026-01-01T000000-worktree-local-work-1452');
@@ -59,7 +56,7 @@ test('#1452: archive-run defers (not git-mv-failed) when a worktree-local-fallba
   fs.mkdirSync(path.join(trapped, 'work'), { recursive: true });
   fs.writeFileSync(path.join(trapped, 'work', '1452-spec.md'), '# spec\n');
 
-  const result = runHooks('archive-run', ['--run', trapped], wt);
+  const result = await runHooks('archive-run', ['--run', trapped], wt);
 
   assert.match(result.stdout, /archival deferred/);
   assert.match(result.stdout, /git mv.*cannot move it across worktree boundaries/s);
@@ -68,13 +65,13 @@ test('#1452: archive-run defers (not git-mv-failed) when a worktree-local-fallba
   assert.ok(fs.existsSync(path.join(trapped, 'work', '1452-spec.md')));
 });
 
-test('#1452: archive-run does not defer a worktree-local-fallback run dir with no work/ (falls through to the normal path)', () => {
+test('#1452: archive-run does not defer a worktree-local-fallback run dir with no work/ (falls through to the normal path)', async () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const trapped = trappedInitializedRunDir(wt, '2026-01-01T000000-worktree-local-nowork-1452');
   fs.writeFileSync(path.join(trapped, 'run-state.json'), JSON.stringify({ status: 'clean' }));
 
-  const result = runHooks('archive-run', ['--run', trapped], wt);
+  const result = await runHooks('archive-run', ['--run', trapped], wt);
 
   assert.doesNotMatch(result.stdout, /archival deferred/);
   // Falls through to the real archival attempt instead of the new #1452
@@ -86,7 +83,8 @@ test('#1452: archive-run does not defer a worktree-local-fallback run dir with n
   assert.match(result.stdout, /archival refused/);
 });
 
-test('#1452: a stale "archiving" claim stub at the main-checkout archive twin does not block the worktree-local fallback', () => {
+// #5376 injected-value proof: fails when spec-status reads process.cwd() instead of the injected cwd
+test('#1452: a stale "archiving" claim stub at the main-checkout archive twin does not block the worktree-local fallback', async () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const runId = '2026-01-01T000000-stale-twin-1452';
@@ -101,7 +99,7 @@ test('#1452: a stale "archiving" claim stub at the main-checkout archive twin do
     updatedAt: '2020-01-01T00:00:00.000Z',
   }));
 
-  const result = runHooks('spec-status', ['--run', trapped], wt);
+  const result = await runHooks('spec-status', ['--run', trapped], wt);
 
   // A genuine twin refuses with "not anchored under the main checkout" and
   // never prints the fallback disclosure. A stale claim must not read as a
@@ -110,7 +108,7 @@ test('#1452: a stale "archiving" claim stub at the main-checkout archive twin do
   assert.match(result.stdout, /worktree-local fallback \(#280\)/i);
 });
 
-test('#1452: a fresh (non-stale) "archiving" claim stub at the main-checkout archive twin still blocks the worktree-local fallback', () => {
+test('#1452: a fresh (non-stale) "archiving" claim stub at the main-checkout archive twin still blocks the worktree-local fallback', async () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const runId = '2026-01-01T000000-fresh-twin-1452';
@@ -123,7 +121,7 @@ test('#1452: a fresh (non-stale) "archiving" claim stub at the main-checkout arc
     updatedAt: new Date().toISOString(),
   }));
 
-  const result = runHooks('spec-status', ['--run', trapped], wt);
+  const result = await runHooks('spec-status', ['--run', trapped], wt);
 
   assert.match(result.stdout, /not anchored under the main checkout/);
   assert.doesNotMatch(result.stdout, /worktree-local fallback \(#280\)/i);

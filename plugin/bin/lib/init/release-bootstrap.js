@@ -331,9 +331,10 @@ function renderPolicyRows() {
 // 'git-error'> } on any throw (not a git repo, git absent, permission
 // denied, …) — a git failure must read as distinguishable from "no tags",
 // even though both fall through to the same manifest/0.1.0 seed.
-function defaultListTags(root) {
+// `env` is the child's complete environment; absent, it inherits.
+function defaultListTags(root, env) {
   try {
-    const tags = execFileSync('git', ['-C', root, 'tag', '-l', 'v*'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true })
+    const tags = execFileSync('git', ['-C', root, 'tag', '-l', 'v*'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, env })
       .split('\n').map((s) => s.trim()).filter(Boolean);
     return { tags, failure: null };
   } catch (e) {
@@ -353,7 +354,7 @@ function normalizeListTagsResult(result) {
 // the prose step to land through init/worktree-policy-finalization.md's
 // isolated-worktree write (a direct edit would be denied under
 // worktree-always, the same reason Step 6 defers its own row).
-function bootstrapRelease({ root, integrationModel, branch, dryRun = false, listTags, releaseType: releaseTypeOverride, extraFile } = {}) {
+function bootstrapRelease({ root, integrationModel, branch, dryRun = false, listTags, releaseType: releaseTypeOverride, extraFile, env } = {}) {
   const empty = { written: [], policyRows: [] };
   // A missing/non-directory root is a caller bug (a mistyped --root), never
   // a state this step should detect its way around — throw before any
@@ -372,7 +373,7 @@ function bootstrapRelease({ root, integrationModel, branch, dryRun = false, list
   const detected = detectReleaseProcess(root, { integrationModel });
   if (detected.verdict !== 'fresh') return { ...detected, ...empty };
   const { releaseType, extraFiles } = resolveReleaseType(root, { releaseType: releaseTypeOverride, extraFile });
-  const { tags, failure: tagsFailure } = normalizeListTagsResult((listTags || defaultListTags)(root));
+  const { tags, failure: tagsFailure } = normalizeListTagsResult((listTags || ((r) => defaultListTags(r, env)))(root));
   const seedSourceVersion = extraFiles.length
     ? versionOfJson(path.join(root, extraFiles[0].path))
     : readStackManifestVersion(root, releaseType);

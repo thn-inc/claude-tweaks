@@ -32,14 +32,16 @@ function parseFilesField(content) {
 // splitLogZ (../git-z) walks the NUL stream. Entries absent from the returned
 // map (git unavailable, no history) are treated as "never changed" by the
 // caller, same as before.
-function gitLastChangedMap(root, relPaths) {
+function gitLastChangedMap(root, relPaths, { env } = {}) {
   const result = {};
   if (!relPaths || relPaths.length === 0) return result;
   try {
     const out = execFileSync(
       'git',
       ['-C', root, 'log', '-z', '--format=%x01%ct', '--name-only', '--', ...relPaths],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 30000, windowsHide: true },
+      {
+        encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 30000, windowsHide: true, ...(env !== undefined ? { env } : {}),
+      },
     );
     for (const { header, tokens } of splitLogZ(out, (t) => t.startsWith('\x01'))) {
       const timestampMs = parseInt(header.slice(1), 10) * 1000;
@@ -62,7 +64,8 @@ function gitLastChangedMap(root, relPaths) {
 // is flagged stale against a null baseline)? Mechanical signal only — the
 // JUDGE step in docs-health/SKILL.md decides whether a flagged change is
 // substantive enough to matter.
-function checkTrackedFreshness(content, root, sinceTimestamp) {
+// opts: { env? } — the child git's environment (omitted = inherited).
+function checkTrackedFreshness(content, root, sinceTimestamp, { env } = {}) {
   const files = parseFilesField(content);
   const missing = [];
   const existing = [];
@@ -75,7 +78,7 @@ function checkTrackedFreshness(content, root, sinceTimestamp) {
   }
 
   const stale = [];
-  const lastChangedByPath = gitLastChangedMap(root, existing);
+  const lastChangedByPath = gitLastChangedMap(root, existing, { env });
   for (const relPath of existing) {
     const lastChangedMs = relPath in lastChangedByPath ? lastChangedByPath[relPath] : null;
     if (lastChangedMs !== null && sinceTimestamp !== null && lastChangedMs > sinceTimestamp) {

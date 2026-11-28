@@ -4,14 +4,20 @@
 // skills, /capture, /specify, /backlog, and /dispatch is exposed here (defined in the
 // sub-modules below); other modules import from this file, never their own copies. No network.
 //
-// #2805: split into four cohesive sub-modules — this file is now a thin
-// aggregator that re-exports the exact same public API from them, so every
+// #2805: split into cohesive sub-modules (seven: four then, a fifth added in #4618, a sixth in #4615, a seventh in #6052) — this
+// file is a thin aggregator that re-exports the exact same public API from them, so every
 // existing `require('./record')`/`require('../issues/record')` call site
 // (or a re-require of this same path from any depth) keeps working unchanged:
 //   - record-vocabulary.js  — label/facet vocabulary and parsing
 //   - record-payload.js     — recordPayload/specShapedBody composition
 //   - record-fingerprint.js — fingerprint handling
 //   - record-dependencies.js — dependency/blocker/sub-issue query building
+//   - record-risk-flags.js  — the `Risk-flags:` body line: parseRiskFlags and its
+//                             sanctioned writers (#4618), and the `Risk-flags-added-by-tripwire:` line:
+//                             parseTripwireFlags, addTripwireRiskFlags and carryTripwireFlags (#4619)
+//   - record-acceptance-target.js — the `Acceptance-target:` body line: parseAcceptanceTarget
+//                             and itemOverrideOf (#4615)
+//   - plan-line.js          — the `Plan:` body line (#6052): parsePlanLine, composePlanLine and specHash
 // It also re-exports fenceFor/fencedBlock/extractSection, the fence and section
 // primitives that live in ../markdown-blocks.js.
 // New code that only needs one boundary's exports may require that
@@ -25,26 +31,41 @@ const {
 
 const {
   DEFER_REASONS, recordPayload, specShapedBody, isRepoRelativeKeyFilePath,
-  extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp,
+  extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, ownOriginLine,
 } = require('./record-payload');
 
 const { fenceFor, fencedBlock, extractSection } = require('../markdown-blocks');
 
 const {
-  FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, defuse, checkFingerprint, recordFingerprint,
+  FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, extractFingerprints, defuse, checkFingerprint, recordFingerprint,
 } = require('./record-fingerprint');
 
 const {
   parseDependencies, parseDependencyAssumptions, buildNativeDependencyQuery,
-  hasOpenNativeBlocker, parseSubIssues, parseParent, buildNativeSubIssuesQuery, buildNativeParentQuery,
+  hasOpenNativeBlocker, parseSubIssues, parseParent, buildNativeSubIssuesQuery, buildNativeParentQuery, buildAuthorAssociationQuery,
   partitionByOpenBodyBlockers, partitionByOpenNativeBlockers, buildLinkedPRQuery, partitionByOpenLinkedPR,
+  crossRepositoryBlockers, withoutCrossRepoBlockers, foreignBlockerBlocks, foreignBlockerRef, withoutUnreadableSuffix, openBlockerRefs, openNativeBlockerRefs,
 } = require('./record-dependencies');
+
+const {
+  RISK_FLAGS_NONE, RISK_FLAGS_UNKNOWN, parseRiskFlags, addRiskFlags, removeRiskFlag, confirmRiskFlags, appendRiskProofGotcha,
+  parseTripwireFlags, addTripwireRiskFlags, carryTripwireFlags,
+} = require('./record-risk-flags');
+
+const { parseAcceptanceTarget, itemOverrideOf } = require('./record-acceptance-target');
+
+const { parsePlanLine, composePlanLine, specHash } = require('./plan-line');
 
 module.exports = {
   ORIGINS, TYPES, TIERS, PRIORITIES, DEFER_REASONS, LABELS, TYPE_LABELS, recordPayload, specShapedBody, isRepoRelativeKeyFilePath,
-  FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, defuse, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, normalizeLabelNames, parseRecordFacets,
+  FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, extractFingerprints, defuse, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, ownOriginLine, normalizeLabelNames, parseRecordFacets,
   parseDependencies, parseDependencyAssumptions, buildNativeDependencyQuery,
   hasOpenNativeBlocker, CLASSIFICATION_SCORING, fenceFor, fencedBlock, parseSubIssues, parseParent,
-  buildNativeSubIssuesQuery, buildNativeParentQuery, partitionByOpenBodyBlockers, partitionByOpenNativeBlockers,
+  buildNativeSubIssuesQuery, buildNativeParentQuery, buildAuthorAssociationQuery, partitionByOpenBodyBlockers, partitionByOpenNativeBlockers,
   buildLinkedPRQuery, partitionByOpenLinkedPR, typeOf, extractSection,
+  RISK_FLAGS_NONE, RISK_FLAGS_UNKNOWN, parseRiskFlags, addRiskFlags, removeRiskFlag, confirmRiskFlags, appendRiskProofGotcha,
+  parseTripwireFlags, addTripwireRiskFlags, carryTripwireFlags,
+  parseAcceptanceTarget, itemOverrideOf,
+  parsePlanLine, composePlanLine, specHash,
+  crossRepositoryBlockers, withoutCrossRepoBlockers, foreignBlockerBlocks, foreignBlockerRef, withoutUnreadableSuffix, openBlockerRefs, openNativeBlockerRefs,
 };

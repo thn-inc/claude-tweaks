@@ -48,16 +48,16 @@ const BOX_CHARS = /[┌─┐│├┤└┘]/;
 // See the file header: this list can drift from a live argument-hint without
 // warning. Keep it in sync with step-6-auto.md's Yours-grouping sentence
 // ("Today that is /claude-tweaks:flow …, /claude-tweaks:dispatch …,
-// /claude-tweaks:specify …, and /claude-tweaks:demo …") whenever that
+// /claude-tweaks:specify …, and /claude-tweaks:accept …") whenever that
 // sentence changes.
 const BATCHABLE_SKILLS = new Set([
   '/claude-tweaks:flow',
   '/claude-tweaks:dispatch',
   '/claude-tweaks:specify',
-  '/claude-tweaks:demo',
+  '/claude-tweaks:accept',
 ]);
 
-const YOURS_FIXED_PREFIX = ['specify', 'demo', 'git', 'capture', 'backlog refine'];
+const YOURS_FIXED_PREFIX = ['specify', 'accept', 'git', 'capture', 'backlog refine'];
 
 // A command line: an optional leading env-var assignment, then a
 // fully-qualified skill invocation or a bare executable. Matches the same

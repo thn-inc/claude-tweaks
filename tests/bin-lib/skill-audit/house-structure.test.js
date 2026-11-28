@@ -53,7 +53,11 @@ const { readText } = require('../../helpers/read-skill');
 // it is a wrapper that passes control entirely to its target skill, so the
 // terminal output the user sees is the target skill's own Next Actions (if
 // any), never this skill's.
-const NO_NEXT_ACTIONS = new Set(['assess-agent-autonomy', 'routine-kickoff']);
+//
+// demo: a deprecated alias stub (#4613) that prints one notice and forwards to
+// /claude-tweaks:accept with the same arguments — the forwarded skill renders
+// its own Next Actions, so a block here would be a second, duplicate one.
+const NO_NEXT_ACTIONS = new Set(['assess-agent-autonomy', 'demo', 'routine-kickoff']);
 
 const skills = fs
   .readdirSync(SKILLS_DIR)

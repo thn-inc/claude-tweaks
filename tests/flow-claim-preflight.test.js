@@ -300,7 +300,7 @@ test('AC1.1, AC6.1: parallel waves — decision sub-file, opt-in token, merge-ba
 });
 
 test('parallel waves run on isolated agent worktrees, over the merge-gate kept set, with a consumed member marker (#2677 final review)', () => {
-  const { extractArgumentHint } = require('../plugin/bin/lib/skill-audit/argument-hint');
+  const { extractArgumentHint } = require('./helpers/argument-hint');
   const doc = read('plugin/skills/flow/multispec-parallel-waves.md');
   assert.match(doc, /isolation: "worktree"/);
   assert.match(doc, /worktreeBranch/);
@@ -423,15 +423,16 @@ test('a dispatched first call learns the exact gate value, and teardown skips th
 
 test('the other "move on" sites name the Claim permission stop (#4899)', () => {
   assert.match(read('plugin/skills/dispatch/sequential-execution.md'), /group N\+1 \(none after a Claim permission stop/);
-  assert.match(read('plugin/skills/dispatch/two-call-gate.md'), /next group's worktree \(none after a Claim permission stop: the firing ends, `SKILL\.md`\)\.\n\n## 8\./);
+  assert.match(read('plugin/skills/dispatch/two-call-gate.md'), /next group's worktree \(none after a Claim permission stop or a render-failure stop: the firing ends, `SKILL\.md`\)\.\n\n## 8\./);
   assert.match(read('plugin/skills/_shared/express-lane.md'), /on a Claim permission stop, exit 7, Settle skips steps 1-7/);
-  assert.match(read('plugin/skills/dispatch/SKILL.md'), /the ranking returns `null`, or a Claim permission stop\), close/);
+  // #5230 final review M3: a queue-pull or --rank stop also ends the drain into this close-out.
+  assert.match(read('plugin/skills/dispatch/SKILL.md'), /the ranking returns `null`, or a Claim permission stop, Render-failure stop or queue-pull\/`--rank` stop\), close/);
 });
 
 test('dispatch/SKILL.md loop, move-on and close-out sites carve out the Claim permission stop (#4899)', () => {
   const skill = read('plugin/skills/dispatch/SKILL.md');
-  assert.match(skill, /the ranking returns `null`, or a Claim permission stop ends the firing/);
-  assert.match(skill, /move straight to the next group \(none after a Claim permission stop\)/);
+  assert.match(skill, /the ranking returns `null`, or a Claim permission stop or Render-failure stop ends the firing/);
+  assert.match(skill, /move straight to the next group \(none after a Claim permission stop or a Render-failure stop\)/);
   assert.match(skill, /the repo-wide infra-outage stop, the Claim permission stop, a queue-pull/);
 });
 
@@ -448,12 +449,13 @@ test('AC7.1: dispatch/SKILL.md stops the firing on a claim permission denied sto
   assert.match(paragraph, /named records after it as not attempted and unclaimed/);
 });
 
-test('firing-exclusion.md and next-ranking.md name the stop; reporting.md relays it (#4899)', () => {
-  for (const file of ['firing-exclusion.md', 'next-ranking.md']) {
-    const content = read(`plugin/skills/dispatch/${file}`);
-    assert.match(content, /claim-permission-denied/, `${file} must name the stop`);
-    assert.match(content, /ends the firing/, `${file} must say the stop ends the firing`);
-  }
+// #5230: the ranking script's copy of the stop is no longer pinned. The stop is agent-side: the
+// firing ends before the next pick, as firing-exclusion.md (pinned here) states; the ranking
+// (`rankNext`, behind `queue-pull.js --rank`) only picks a group.
+test('firing-exclusion.md names the stop; reporting.md relays it (#4899)', () => {
+  const content = read('plugin/skills/dispatch/firing-exclusion.md');
+  assert.match(content, /claim-permission-denied/, 'firing-exclusion.md must name the stop');
+  assert.match(content, /ends the firing/, 'firing-exclusion.md must say the stop ends the firing');
   const relayed = read('plugin/skills/dispatch/reporting.md');
   assert.match(relayed, /claim-permission-denied/);
   assert.match(relayed, /its report block names the record and the stop, says the firing stopped, lists any named records after it as not attempted and unclaimed/);
@@ -465,6 +467,17 @@ test('headless-self-report.md files its diagnostic through --body-file, never a 
   assert.equal(template.match(/--body-file "\{body-file\}"/g)?.length, 2);
   assert.doesNotMatch(template, /--body "/);
   assert.doesNotMatch(read('plugin/skills/dispatch/settle-and-merge.md'), /template's `--body`/);
+});
+
+test('#4794: the exit-2 bullet names the unknown-host refusal and its transport limit', () => {
+  const content = read('plugin/skills/flow/claim-targets.md');
+  const start = content.indexOf('- **2** —');
+  assert.ok(start !== -1, 'exit-2 bullet should exist');
+  const end = content.indexOf('**On exit', start);
+  assert.ok(end !== -1, 'exit-2 bullet should end before the On-exit paragraph');
+  const bullet = content.slice(start, end).replace(/\s+/g, ' ');
+  assert.match(bullet, /unknown-host/);
+  assert.match(bullet, /does not reach that refusal/);
 });
 
 test('AC8.1: no prose says a claim read or write 401/403 exits 4 (#4899)', () => {

@@ -334,7 +334,9 @@ on either form — use the HTML-comment form for compatibility with every existi
 read going through `pull_request_read` (or `update_pull_request`'s own re-fetch) has every
 `<!-- ... -->` span stripped from what it returns — key on the plain-text companion form
 instead. Neither form is ever removed once written, so a run that starts `gh`-absent and
-later gains `gh` (or vice versa) never loses recognition.
+later gains `gh` (or vice versa) never loses recognition. A repair after an MCP read
+(`repairPrBody`) puts back the HTML-comment form the read stripped, so an MCP write-back keeps
+both forms (#5358).
 
 **Phase checklist rows are delimited by `<!-- phases-start -->`/`<!-- phases-end -->` HTML
 comments** so `_shared/pr-checklist-refresh.md`'s phase-checklist update procedure can re-compose reliably (read body,
@@ -481,16 +483,6 @@ gh pr view {recorded-number} --repo {host}/{owner}/{repo} --json state,isDraft,u
   one (Step 3) and re-`record-pr` (Step 4) to overwrite the stale value. Log:
 
   `AUTO {time} — PR-early run lifecycle: recorded PR #{old} no longer open; {reused #{new} | created #{new}}. Reversibility: high.`
-
-## Phase-checklist update and pre-merge title/description refresh — moved
-
-Both moved to `_shared/pr-checklist-refresh.md` (#2002), which now carries the "Phase-checklist
-update (every phase exit)" and "Pre-merge title/description refresh" sections in full — read
-there. They moved out of this file so the two merge-time compose call sites
-(`wrap-up/auto-merge-short-circuit.md`, `wrap-up/review-console.md`) no longer need to compose
-this file's run-start-only Steps 1-4, Root cause, and Resume sections (below and above) just to
-reach that content — this file alone was 30+ KB of the ~57-60 KB the `merge` composed bundle
-measured, most of it never read again after run start.
 
 ## Skip / degrade behavior
 

@@ -3,9 +3,12 @@
 // tests/resolve-blockers-cli.test.js's deps-injection style (never a
 // spawnSync-a-real-process style, since this CLI's whole point is a
 // `gh api graphql` call that must never be live in a test — a fake runner
-// in deps.runner stands in for it). Covers argument parsing and the
-// number-keyed {openPR} output shape; the GraphQL query-building logic
-// itself (buildLinkedPRQuery) already has coverage in
+// in deps.runner stands in for it). Argument parsing and repo resolution
+// are tested once in `tests/bin-lib/number-list-cli.test.js` (the shared
+// `makeNumberListCli` scaffold); this file keeps only this CLI's usage name,
+// its `gh` argv (`-f owner=`/`-f repo=`, `--hostname`), its output shapes and
+// its GraphQL failure. The GraphQL query-building logic itself
+// (buildLinkedPRQuery) already has coverage in
 // tests/bin-lib/issues/record.test.js and is not re-verified here.
 'use strict';
 const { test } = require('node:test');
@@ -44,51 +47,6 @@ test('missing <n> is a malformed invocation — exit 1, usage on stderr, gh neve
   assert.match(deps.calls.stderr.join(''), /usage: resolve-linked-prs\.js/);
 });
 
-test('non-integer <n> is malformed — exit 1', () => {
-  const deps = fakeDeps();
-  const code = run(['abc'], deps);
-  assert.equal(code, 1);
-  assert.match(deps.calls.stderr.join(''), /malformed <n>/);
-});
-
-test('non-positive <n> is malformed — exit 1', () => {
-  const deps = fakeDeps();
-  const code = run(['0'], deps);
-  assert.equal(code, 1);
-  assert.match(deps.calls.stderr.join(''), /malformed <n>/);
-});
-
-test('a comma list with one malformed entry is malformed — exit 1, no network call', () => {
-  const deps = fakeDeps({ ghAvailable: () => { throw new Error('should not be called'); } });
-  const code = run(['1224,abc,257'], deps);
-  assert.equal(code, 1);
-  assert.match(deps.calls.stderr.join(''), /malformed <n>/);
-});
-
-test('unknown flag is a malformed invocation — exit 1', () => {
-  const deps = fakeDeps();
-  const code = run(['1224', '--bogus'], deps);
-  assert.equal(code, 1);
-  assert.match(deps.calls.stderr.join(''), /unknown argument: --bogus/);
-});
-
-test('trailing --repo with no value is malformed — exit 1, no network call', () => {
-  const deps = fakeDeps({
-    ghAvailable: () => { throw new Error('should not be called'); },
-    remoteUrl: () => { throw new Error('should not be called'); },
-  });
-  const code = run(['1224', '--repo'], deps);
-  assert.equal(code, 1);
-  assert.match(deps.calls.stderr.join(''), /missing value for --repo/);
-  assert.deepStrictEqual(deps.calls.runner, []);
-});
-
-test('--repo owner/name (well-formed) is unaffected', () => {
-  const deps = fakeDeps();
-  const code = run(['1224', '--repo', 'acme/widgets'], deps);
-  assert.equal(code, 0);
-});
-
 test('--help prints usage and exits 0 without touching gh/git', () => {
   const deps = fakeDeps({
     ghAvailable: () => { throw new Error('should not be called'); },
@@ -100,23 +58,6 @@ test('--help prints usage and exits 0 without touching gh/git', () => {
 });
 
 // --- gh / repo resolution ------------------------------------------------
-
-test('`gh` absent — exit 2, no attempt to resolve owner/repo', () => {
-  const deps = fakeDeps({
-    ghAvailable: () => false,
-    remoteUrl: () => { throw new Error('should not be called'); },
-  });
-  const code = run(['1224'], deps);
-  assert.equal(code, 2);
-  assert.match(deps.calls.stderr.join(''), /`gh` is required/);
-});
-
-test('no --repo and no resolvable origin remote — exit 2', () => {
-  const deps = fakeDeps({ remoteUrl: () => { throw new Error('no remote'); } });
-  const code = run(['1224'], deps);
-  assert.equal(code, 2);
-  assert.match(deps.calls.stderr.join(''), /could not resolve owner\/repo/);
-});
 
 test('--repo owner/name overrides the git remote', () => {
   const deps = fakeDeps({ remoteUrl: () => { throw new Error('should not be called'); } });
@@ -153,7 +94,31 @@ test('success: one runner call, a number-keyed JSON line on stdout, exit 0', () 
   assert.equal(deps.calls.runner.length, 1, 'exactly one gh api graphql call');
   assert.equal(deps.calls.stderr.length, 0, 'success path writes nothing to stderr');
   assert.equal(deps.calls.stdout.length, 1, 'exactly one stdout write');
-  assert.deepEqual(JSON.parse(deps.calls.stdout[0]), { 1224: { openPR: 1572, mentions: [], hasClosingPRReference: true } });
+  assert.deepEqual(JSON.parse(deps.calls.stdout[0]), { 1224: { openPR: 1572, mentions: [], hasClosingPRReference: true, lastShapedAt: null } });
+});
+
+test('#5722: the CLI prints lastShapedAt beside openPR, mentions and hasClosingPRReference', () => {
+  const deps = fakeDeps({
+    runner: () => JSON.stringify({
+      data: {
+        repository: {
+          i1224: {
+            number: 1224,
+            closedByPullRequestsReferences: { nodes: [] },
+            labelEvents: { nodes: [
+              { createdAt: '2026-11-16T10:50:38Z', label: { name: 'ready' } },
+              { createdAt: '2026-11-16T10:51:03Z', label: { name: 'auto:build' } },
+            ] },
+          },
+        },
+      },
+    }),
+  });
+  const code = run(['1224'], deps);
+  assert.equal(code, 0);
+  assert.deepEqual(JSON.parse(deps.calls.stdout[0]), {
+    1224: { openPR: null, mentions: [], hasClosingPRReference: false, lastShapedAt: '2026-11-16T10:51:03Z' },
+  });
 });
 
 test('success: owner/repo parsed from the origin remote when --repo is absent', () => {
@@ -171,7 +136,7 @@ test('success: no linked PR reports openPR null', () => {
   });
   const code = run(['1224'], deps);
   assert.equal(code, 0);
-  assert.deepEqual(JSON.parse(deps.calls.stdout[0]), { 1224: { openPR: null, mentions: [], hasClosingPRReference: false } });
+  assert.deepEqual(JSON.parse(deps.calls.stdout[0]), { 1224: { openPR: null, mentions: [], hasClosingPRReference: false, lastShapedAt: null } });
 });
 
 test('success: a merged (not open) linked PR reports openPR null', () => {
@@ -182,7 +147,7 @@ test('success: a merged (not open) linked PR reports openPR null', () => {
   });
   const code = run(['1224'], deps);
   assert.equal(code, 0);
-  assert.deepEqual(JSON.parse(deps.calls.stdout[0]), { 1224: { openPR: null, mentions: [], hasClosingPRReference: true } });
+  assert.deepEqual(JSON.parse(deps.calls.stdout[0]), { 1224: { openPR: null, mentions: [], hasClosingPRReference: true, lastShapedAt: null } });
 });
 
 test('success: a comma list of numbers resolves in ONE runner call, one key per requested number', () => {
@@ -202,8 +167,8 @@ test('success: a comma list of numbers resolves in ONE runner call, one key per 
   assert.equal(code, 0);
   assert.equal(deps.calls.runner.length, 1, 'one aliased call covers the whole list, never one call per number');
   assert.deepEqual(JSON.parse(deps.calls.stdout[0]), {
-    1224: { openPR: 1572, mentions: [], hasClosingPRReference: true },
-    257: { openPR: null, mentions: [], hasClosingPRReference: false },
+    1224: { openPR: 1572, mentions: [], hasClosingPRReference: true, lastShapedAt: null },
+    257: { openPR: null, mentions: [], hasClosingPRReference: false, lastShapedAt: null },
   });
 });
 

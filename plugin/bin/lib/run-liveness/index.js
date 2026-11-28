@@ -4,8 +4,14 @@
 // injectable probes. Consumers: reconcile/archive-merged.js's `adhoc-session-ended`
 // sweep, through `adHocSessionLiveness` (#4179), and its `abandoned-interrupted`
 // kind, through `defaultRunVerdict` (#4421), plus `blocksResume`'s two resume
-// callers (#4420). runIdMs and LIVE_PROBES are exported so reconcile's
-// abandoned-interrupted decision reuses them rather than copying (#4421).
+// callers (#4420), and teardown-run's `--merged` foreign-owner override (#5293: only a `dead`
+// verdict proceeds — the one consumer acting destructively on another session's run), and
+// review-lens/history.js's closed check (#5998: only `live` reads as not closed, for a run its file
+// test has not already ruled not closed; `unknown` and `dead` read alike as closed), and
+// archive-merged.js's loop-top `live` skip and report-only disposition pass (#3977, through
+// `defaultRunVerdict`; session-residue.js's orphaned-runs banner re-checks through the same).
+// runIdMs and LIVE_PROBES are exported so reconcile's abandoned-interrupted decision reuses
+// them rather than copying (#4421).
 //
 // Shape: gatherEvidence() asks every probe once and records a tagged entry
 // ({ probe, result: positive | negative | error, detail }) plus the "death
@@ -22,7 +28,7 @@ const fs = require('fs');
 const path = require('path');
 const { lstatType } = require('../path-guard');
 const { runStartIso } = require('../hooks/run-integrity');
-const { DEFAULT_PROBES } = require('./probes');
+const { probesFor } = require('./probes');
 const { call, errorMessage, probeOwnerPid } = require('./owner-pid-probe');
 const { LIVE_WINDOW_MS, LEGACY_DEAD_MS } = require('./constants');
 
@@ -125,8 +131,8 @@ function probeOwnEvents(runDir, p, now, ownerSessionId) {
 
 // -> { evidence: [{ probe, result, detail }] (always all five, PROBE_ORDER),
 //      witnesses: ('pid' | 'session-end' | 'legacy')[] }
-function gatherEvidence(runDir, { now = Date.now(), probes = {} } = {}) {
-  const p = { pathType: (wt) => lstatType(wt), ...DEFAULT_PROBES, ...probes };
+function gatherEvidence(runDir, { now = Date.now(), probes = {}, env } = {}) {
+  const p = { pathType: (wt) => lstatType(wt), ...probesFor(env), ...probes };
   const read = readState(runDir);
   const state = read.state || {};
   const owner = isPlainObject(state.owner) ? state.owner : null;
@@ -214,13 +220,13 @@ function decideVerdict({ evidence, witnesses }) {
 // Never throws: any internal failure reads as `unknown` with every probe an error.
 function runLiveness(runDir, opts) {
   try {
-    const { now = Date.now(), probes = {} } = isPlainObject(opts) ? opts : {};
+    const { now = Date.now(), probes = {}, env } = isPlainObject(opts) ? opts : {};
     // Every age comparison goes false on a non-finite clock, which would read a
     // fresh heartbeat as stale — refuse to judge.
     if (!Number.isFinite(now)) {
       return { verdict: 'unknown', evidence: PROBE_ORDER.map((probe) => ({ probe, result: 'error', detail: 'invalid-now' })) };
     }
-    const gathered = gatherEvidence(runDir, { now, probes });
+    const gathered = gatherEvidence(runDir, { now, probes, env });
     return { verdict: decideVerdict(gathered), evidence: gathered.evidence };
   } catch (err) {
     const detail = errorMessage(err);

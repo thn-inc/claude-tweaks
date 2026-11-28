@@ -12,7 +12,7 @@ const { runClassified, runClassifiedAsync } = require('../shared-primitives');
 // binding — so a test's `t.mock.method(cp, 'execFileSync', ...)` or
 // `cp.execFile = stub` still reaches them (#381, #872 follow-up); see timing.js.
 const { execFileSyncTimed, execFileAsyncTimed } = require('../reconcile/timing');
-const { gateOriginRepo } = require('../repo-resolve');
+const { gateOriginRepo, resolveRepoTarget } = require('../repo-resolve');
 
 // Budget for one git query, sized from measurement rather than intuition (#134).
 //
@@ -202,32 +202,68 @@ function repoPinnedEnv(env = process.env) {
   return out;
 }
 
-// origin remote URL -> 'owner/repo' slug, or null when unparseable/absent.
-// Moved here from reconcile/release-merged.js (#1082) — pr-state.js is a
-// second consumer, and a third copy of this parse is how drift starts.
-function repoSlugOf(repoRoot) {
+// The origin remote URL of `repoRoot`, or null when git fails or origin is empty/absent.
+function originOf(repoRoot) {
   const remote = runGit(['remote', 'get-url', 'origin'], repoRoot);
-  if (remote.failure || !remote.stdout) return null;
-  const m = /[:/]([^/]+\/[^/]+?)(\.git)?$/.exec(remote.stdout);
-  return m ? m[1] : null;
+  return remote.failure || !remote.stdout ? null : remote.stdout;
 }
 
 // origin remote URL -> { host, owner, repo } (repo-resolve.js's gateOriginRepo), `{ refusal }`
 // when the origin names a host that is not a known GitHub host (#4933: the caller must not send
-// it to gh), or null when unparseable/absent. repoSlugOf's twin for a caller that must keep the
-// host: its bare `owner/repo` sends a GitHub Enterprise origin's gh calls to gh's default host.
+// it to gh), or null when unparseable/absent. The origin's host is kept, since a bare `owner/repo`
+// would send a GitHub Enterprise origin's gh calls to gh's default host (#4794). Moved here from
+// reconcile/release-merged.js (#1082): pr-state.js is a second consumer, and a third copy of this
+// parse is how drift starts.
+// repoSpecOfRemote is the remote-taking core (#5109: claim-targets.js and stale-claim-pr.js read
+// origin their own way and call it too); repoSpecOf reads origin and calls it. The remote is
+// trimmed, since a caller's origin read may be untrimmed stdout. `opts.loose` (default true)
+// keeps the #4857 fallback below; `{ loose: false }` turns it off, so a remote the gate neither
+// admits nor refuses is null.
 // `gateDeps` is gateOriginRepo's injectable env/readFile seam (undefined in production).
-function repoSpecOf(repoRoot, gateDeps) {
-  const remote = runGit(['remote', 'get-url', 'origin'], repoRoot);
-  if (remote.failure || !remote.stdout) return null;
-  const gated = gateOriginRepo(remote.stdout, gateDeps);
+function repoSpecOfRemote(remote, gateDeps, opts = {}) {
+  const url = String(remote == null ? '' : remote).trim();
+  if (!url) return null;
+  const gated = gateOriginRepo(url, gateDeps);
   if (gated.refusal) return { refusal: gated.refusal };
   if (gated.spec) return gated.spec;
-  // A remote the gate does not read (an `ssh://` URL, say) still resolved through repoSlugOf's
-  // looser parse before the host was kept; fall back to it, host unknown, so the caller does not
-  // regress to `no-remote` for a remote it used to work with (#4857).
-  const m = /[:/]([^/]+)\/([^/]+?)(\.git)?$/.exec(remote.stdout);
+  if ((opts && opts.loose) === false) return null;
+  // A remote the gate does not read (a cloud sandbox's `http://local_proxy@127.0.0.1:{port}/git/{owner}/{repo}`
+  // proxy remote, a local path, or a `file://` URL) still resolved through a looser trailing
+  // `owner/repo` parse before the host was kept; fall back to it, host unknown, so the caller does
+  // not regress to `no-remote` for a remote it used to work with (#4857).
+  const m = /[:/]([^/]+)\/([^/]+?)(\.git)?$/.exec(url);
   return m ? { host: null, owner: m[1], repo: m[2] } : null;
 }
 
-module.exports = { runGit, runGitAsync, isIndeterminate, FAILURE, DEFAULT_TIMEOUT_MS, repoSlugOf, repoSpecOf, repoPinnedEnv };
+// repoSpecOfRemote on `repoRoot`'s origin remote (null when git fails or origin is empty/absent),
+// with the loose fallback on.
+function repoSpecOf(repoRoot, gateDeps) {
+  return repoSpecOfRemote(originOf(repoRoot), gateDeps);
+}
+
+// #4794: origin remote URL -> { owner, repo, slug, host, ghRepo }, `{ refusal }` (the gate's text,
+// unchanged) or null, repoSpecOfRemote's gated answer plus the one resolved host and the `--repo`
+// slug for it (repo-resolve.js's resolveRepoTarget). `slug` is the bare `owner/repo` (a path, a
+// comparison, a GraphQL owner/name pair); `ghRepo` is what `gh --repo` takes. The host comes only
+// from the #4933 gate (or an exported GH_HOST), so an SSH alias or an unknown host is a refusal,
+// never a bare slug; a remote the gate cannot read (the cloud proxy remote, a local path, a
+// `file://` URL) has no host (`host: null`), so it falls back to github.com with a bare slug —
+// unless `{ loose: false }`, which makes that remote null (#5109). repoTargetOf reads origin and
+// calls repoTargetOfRemote.
+function repoTargetOfRemote(remote, gateDeps, opts = {}) {
+  const spec = repoSpecOfRemote(remote, gateDeps, opts);
+  if (!spec) return null;
+  if (spec.refusal) return { refusal: spec.refusal };
+  const { owner, repo } = spec;
+  const { host, ghRepo } = resolveRepoTarget({ owner, repo, originHost: spec.host }, gateDeps || {});
+  return { owner, repo, slug: `${owner}/${repo}`, host, ghRepo };
+}
+
+function repoTargetOf(repoRoot, gateDeps) {
+  return repoTargetOfRemote(originOf(repoRoot), gateDeps);
+}
+
+module.exports = {
+  runGit, runGitAsync, isIndeterminate, FAILURE, DEFAULT_TIMEOUT_MS,
+  repoSpecOf, repoTargetOf, repoSpecOfRemote, repoTargetOfRemote, repoPinnedEnv,
+};

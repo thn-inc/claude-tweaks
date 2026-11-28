@@ -1,10 +1,10 @@
 'use strict';
 
-// Mechanical drift guard for the four health-sweep skills' FILE step (#240).
+// Mechanical drift guard for the five health-sweep skills' FILE step (#240).
 //
 // skills/_shared/health-filing-mechanics.md documents a canonical shape for
 // two boilerplate paragraphs each of code-health/harness-health/docs-health/
-// journey-health's own FILE step re-writes inline (never reads-and-substitutes
+// journey-health/ci-health's own FILE step re-writes inline (never reads-and-substitutes
 // at runtime — that file's own header explains why: the FILE step is
 // procedural, literal bash a session executes step by step, with no mid-step
 // file switch, so an "inline from this file" convention plus a MECHANICAL
@@ -29,6 +29,7 @@ const SOURCES = {
     + readText(path.join(ROOT, 'plugin/skills/harness-health/filing.md')),
   'docs-health': readText(path.join(ROOT, 'plugin/skills/docs-health/SKILL.md')),
   'journey-health': readText(path.join(ROOT, 'plugin/skills/journey-health/SKILL.md')),
+  'ci-health': readText(path.join(ROOT, 'plugin/skills/ci-health/SKILL.md')),
 };
 
 // Extracts a paragraph starting at `startMarker` up to (not including) the
@@ -45,7 +46,7 @@ function extractParagraph(source, startMarker) {
 }
 
 // Replaces this skill's own name wherever it appears as `by:{skill}` or a
-// bare `{skill}` token, so the four paragraphs compare equal modulo the one
+// bare `{skill}` token, so the five paragraphs compare equal modulo the one
 // legitimate per-skill substitution.
 function normalize(paragraph, skillName) {
   return paragraph.split(skillName).join('{SKILL}');
@@ -67,7 +68,7 @@ function extractSection(source, heading) {
   return body.trim();
 }
 
-test('the "Subject check before filing" paragraph is byte-identical (modulo skill name) across all four health sweeps', () => {
+test('the "Subject check before filing" paragraph is byte-identical (modulo skill name) across all five health sweeps', () => {
   const marker = '**Subject check before filing.**';
   const normalized = {};
   for (const [skill, source] of Object.entries(SOURCES)) {
@@ -78,13 +79,13 @@ test('the "Subject check before filing" paragraph is byte-identical (modulo skil
   for (let i = 0; i < rest.length; i++) {
     assert.strictEqual(
       rest[i], first,
-      `Subject-check paragraph drifted in one of the four skills (compared against code-health's). `
+      `Subject-check paragraph drifted in one of the five skills (compared against code-health's). `
       + `Got:\n${rest[i]}\n\nExpected (normalized):\n${first}`,
     );
   }
 });
 
-test('the "Exception — a headless D5 finding" paragraph is byte-identical (modulo by:{skill}) across all four health sweeps', () => {
+test('the "Exception — a headless D5 finding" paragraph is byte-identical (modulo by:{skill}) across all five health sweeps', () => {
   const marker = '**Exception — a headless D5 finding.**';
   const normalized = {};
   for (const [skill, source] of Object.entries(SOURCES)) {
@@ -95,13 +96,13 @@ test('the "Exception — a headless D5 finding" paragraph is byte-identical (mod
   for (let i = 0; i < rest.length; i++) {
     assert.strictEqual(
       rest[i], first,
-      `D5-exception paragraph drifted in one of the four skills (compared against code-health's). `
+      `D5-exception paragraph drifted in one of the five skills (compared against code-health's). `
       + `Got:\n${rest[i]}\n\nExpected (normalized):\n${first}`,
     );
   }
 });
 
-test('the "## Component-Skill Contract" section is byte-identical (modulo skill name) across all four health sweeps', () => {
+test('the "## Component-Skill Contract" section is byte-identical (modulo skill name) across all five health sweeps', () => {
   const heading = '## Component-Skill Contract';
   const normalized = {};
   for (const [skill, source] of Object.entries(SOURCES)) {
@@ -112,7 +113,7 @@ test('the "## Component-Skill Contract" section is byte-identical (modulo skill 
   for (let i = 0; i < rest.length; i++) {
     assert.strictEqual(
       rest[i], first,
-      `Component-Skill Contract section drifted in one of the four skills (compared against code-health's). `
+      `Component-Skill Contract section drifted in one of the five skills (compared against code-health's). `
       + `Got:\n${rest[i]}\n\nExpected (normalized):\n${first}`,
     );
   }

@@ -82,16 +82,18 @@ bug. File plain (no chain) and proceed straight to Backend Selection's filing st
 
 Resolve it as a **single decision, before filing**, and only under `work-backend: github-issues`
 (the trust table reads acceptance labels, which do not exist on the `local-files` driver). Resolve
-both policy values in ONE call — `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values autonomy trust-revert-window-days`
+all four policy values in ONE call — `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values autonomy trust-revert-window-days trust-evaluation-window-days trust-follow-up-rate-max-percent`
 (one value per line, in request order) — and substitute the first line's literal value for
 `{resolved-ceiling}`. When it resolves to `supervised`, skip
 this block entirely rather than fetching anything.
 
-Substitute the second line's literal value (the resolved `trust-revert-window-days`) for
-`{resolved-window}` below. If the `gh` call, the `git log`
+Substitute the second, third and fourth lines' literal values (the resolved
+`trust-revert-window-days`, `trust-evaluation-window-days` and `trust-follow-up-rate-max-percent`)
+for `{resolved-window}`, `{resolved-eval-window}` and `{resolved-follow-up-rate}` below. If the
+`gh` call, the `git log`
 call, or the node block fails for any reason, skip the chain — the record stays a plain capture:
-this path fails toward the default, never toward the grant (unchanged from before this sub-issue). `{resolved-window}` reaches the
-script as a `process.argv` arg after `--`, never spliced into the JS source — a value containing a
+this path fails toward the default, never toward the grant (unchanged from before this sub-issue). The three values reach the
+script as `process.argv` args after `--`, never spliced into the JS source — a value containing a
 quote character would otherwise break out of the string literal, the same reason
 `code-health/focus-mode.md`'s F1 block passes its own values that way.
 
@@ -146,11 +148,11 @@ CAPTURE_TRUST_COMMIT_LOG="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.
 node -e "
   const fs = require('fs');
   const root = '${CLAUDE_PLUGIN_ROOT}';
-  const { trustRows, parseGitLog } = require(root + '/bin/lib/issues/trust.js');
+  const { trustRows, parseGitLog, TRUST_POLICY_KEYS } = require(root + '/bin/lib/issues/trust.js');
   const { resolveCeiling, permittedGrants } = require(root + '/bin/lib/issues/autonomy.js');
   const issues = require('$CAPTURE_TRUST_RECORDS').map((i) => ({ ...i, labels: i.labels.map((l) => l.name) }));
   const gitLog = parseGitLog(fs.readFileSync('$CAPTURE_TRUST_COMMIT_LOG', 'utf8'));
-  const policy = { 'trust-revert-window-days': process.argv[1] };
+  const policy = Object.fromEntries(TRUST_POLICY_KEYS.map((k, i) => [k, process.argv[1 + i]]));
   // This skill's own class. A fresh capture carries by:capture and no risk
   // score, and riskBand() bands an unscored record 'elevated' — so that is the
   // cell the record about to be filed will land in, and the only one that may
@@ -161,7 +163,7 @@ node -e "
   const permitted = permittedGrants({ ceiling, row });
   const g = permitted.grants.bornReady;
   console.log(JSON.stringify({ bornReady: g.granted, reason: g.reason, verdict: row ? row.verdict : 'no-cell' }));
-" -- "{resolved-window}"
+" -- "{resolved-window}" "{resolved-eval-window}" "{resolved-follow-up-rate}"
 ```
 
 Never add `ready` to the label set below — a capture files plain at every ceiling. When
@@ -338,10 +340,10 @@ On match, skip Entry Format's stub assembly and its character-budget cap, and ru
 
 1. **Judging Definition first — and it wins.** `needs:definition` (judged, or `--needs-definition`, or an `## Open Question` section present) → compose via `specShapedBody` with `openQuestion`, `releaseNote: 'No user-visible change yet — pending definition.'` (#2660 — required on every `specShapedBody` call, `openQuestion` included; a genuinely undecided record has nothing more specific to say yet), `filedBy: 'capture'`, footer `_Filed by \`capture\` via specShapedBody._`, and file with `needs:definition`, no `ready`, no scoring (an undecided record is never born-ready); when the affected files are known, pass `keyFiles` here too (repo-relative file paths only; step 3 has the sourcing). `--defer-reason=` is **not** required here — a needs-you record is not a deferral; when supplied it is still rendered via `provenance.deferReason`.
 2. **The deferral check.** The filing is a deferral when the body carries an `Origin:` line, `--origin=` was supplied (both content signals — either way the composed body carries provenance), **or** any `--source` value other than `intake` was given — the rule keys on "any `--source`", not named producers. A deferral with no `--defer-reason=` and no `Defer-reason:` line in the text → **stop and report the missing reason; file nothing** (the same hard gate `wrap-up/refused-proposals.md` enforces at the console). This check is evaluated before branch selection — a supplied `--defer-reason=` is never silently dropped on the stub path (a stub deferral's validated value is passed to `recordPayload({deferReason})`, which inserts the body line). This is the one deliberate content-keyed exception where invoker identity enters (`--source` as the headless-caller equivalent of the `Origin:` content signal), named as such.
-3. **Score and file born-ready.** Judge `risk`/`size` per `_shared/work-record.md`'s Scoring axis (or take `--risk=`/`--size=` overrides), compose via `specShapedBody({ header, currentState, deliverables, acceptanceCriteria, releaseNote: <a plain-language, verb-first sentence describing what becomes true for a user once this record is built, or 'No user-visible change.' for a purely internal one — #2660, required>, filedBy: 'capture', provenance: { origin: <the lifted line's value (the text after `Origin: `), else the `--origin=` text, else omitted>, deferReason }, footer: '_Filed by `capture` via specShapedBody._' })`, and file via Backend Selection's existing filing step with `recordPayload({ …, origin: 'capture', risk, size, ready: true, deferReason })` — `ready` regardless of the autonomy ceiling. When the affected files are known — from a `### Key Files` list in the supplied `$BODY` (its bullets, which the section split would otherwise drop) or from the caller — also pass `keyFiles: [{ path, change }]` to this call and to the `needs:definition` call above, repo-relative file paths only (no directories; drop any out-of-repo target) and omitted when unknown, so build's micro-plan gate and dispatch's file-overlap grouping can read the record.
+3. **Score, judge ceremony, and file born-ready.** Judge `risk`/`size` per `_shared/work-record.md`'s Scoring axis (or take `--risk=`/`--size=` overrides), compose via `specShapedBody({ header, currentState, deliverables, acceptanceCriteria, releaseNote: <a plain-language, verb-first sentence describing what becomes true for a user once this record is built, or 'No user-visible change.' for a purely internal one — #2660, required>, filedBy: 'capture', provenance: { origin: <the lifted line's value (the text after `Origin: `), else the `--origin=` text, else omitted>, deferReason }, footer: '_Filed by `capture` via specShapedBody._' })`, and file via Backend Selection's existing filing step with `recordPayload({ …, origin: 'capture', risk, size, ready: true, deferReason })` — `ready` regardless of the autonomy ceiling. After scoring, judge ceremony with the canonical pattern in `_shared/ceremony-check-invocation.md`, as bare `ceremony-check` over the composed body held in memory, wrapped per that file's untrusted-content paragraph, and pass the verdict as `ceremony` to `recordPayload` (under local-files, as `facets.ceremony` in the `createRecord` call, beside `risk`/`size`). This call site's delta: writeback, per-record, without `#{n}` (there is no issue number yet — the same pre-numbering exception as `/specify`'s decomposition loop). If the inline ceremony check fails, stalls, or its output has no `CEREMONY:` line, file the record without a ceremony label (today's behavior; `/flow`'s Manifesto fallback still judges it), say so in the presentation line, and never block or delay the filing on it — a missing verdict is never defaulted to `standard`. The `needs:definition` branch above stays label-free: an undecided record is not shaped. When the affected files are known — from a `### Key Files` list in the supplied `$BODY` (its bullets, which the section split would otherwise drop) or from the caller — also pass `keyFiles: [{ path, change }]` to this call and to the `needs:definition` call above, repo-relative file paths only (no directories; drop any out-of-repo target) and omitted when unknown, so build's micro-plan gate and dispatch's file-overlap grouping can read the record.
 
    This branch's full `recordPayload` call, spelled out (`record.js`'s accepted keys are wider —
-   `ceremony`, `solutionUnjustified`, `parked`, `priority`, `fingerprint` — this branch never
+   `solutionUnjustified`, `parked`, `priority`, `fingerprint` — this branch never
    passes those):
 
    ```json
@@ -353,13 +355,14 @@ On match, skip Entry Format's stub assembly and its character-budget cap, and ru
      "risk": "<low|medium|high>",
      "size": "<low|medium|high>",
      "ready": true,
+     "ceremony": "<fast-lane|standard>, present only when the ceremony check returned a verdict — omit the key otherwise (null throws)",
      "deferReason": "<one of DEFER_REASONS, present only when the deferral check above applies>"
    }
    ```
 
 **Decision (recorded, not an omission):** `ready` on this branch follows from the born-ready rule's own reasoning — a `specShapedBody`-composed, scored body is structurally what health skills file, and they are `ready` by construction — not from a trust verdict; the human gate stays the grant at `refine`, and the trust ledger's `producer:capture` class grades outcomes post-hoc. Self-judged scoring is likewise deliberately unconditional (the same judgment `/specify` shaping mode makes).
 
-**Skips on this branch:** the `gh issue list`/git-log trust fetch and #575's chain-into-`/claude-tweaks:specify` step never run — the record is already the shape that chain exists to produce. Presentation line: `Added: '{title}' (Type: {t}, Definition: clear, shaped — risk:{r} size:{s}, ready)`.
+**Skips on this branch:** the `gh issue list`/git-log trust fetch and #575's chain-into-`/claude-tweaks:specify` step never run — the record is already the shape that chain exists to produce. Presentation line: `Added: '{title}' (Type: {t}, Definition: clear, shaped — risk:{r} size:{s}, ceremony:{c}, ready)`; when the ceremony check yielded no verdict, omit `ceremony:{c}` and append `ceremony check failed — filed without a ceremony label`.
 
 ## Entry Format
 
@@ -410,16 +413,13 @@ The guess rides in the existing "Added: '{title}' (Type: {t})" presentation (see
 
 ### Judging Definition
 
-When `--needs-definition` or `--no-needs-definition` is supplied, skip this entirely and use it
-as `$NEEDS_DEFINITION` — no judgment, and the presentation line below renders with no rationale
-clause (the human already decided). Otherwise, judge from the idea's content in this same turn:
-does it name a genuine open choice with no tradeoff made yet — two or more viable directions,
-no stated preference — or does it read as a single clear ask? This is a content call, not a
-structural heuristic: resist scoring it by length or keyword match, the same way `solution:unjustified`'s
-judgment is a content call rather than a mechanical check. `$NEEDS_DEFINITION` is `true` only when
-the idea genuinely names an undecided choice; default `false` (clear) otherwise. When `true`, form
-a one-line rationale naming the open choice — this becomes `$DEFINITION_RATIONALE`, surfaced in
-the presentation line below and, later, bootstrapped/labeled per Backend Selection above.
+When `--needs-definition` or `--no-needs-definition` is supplied, skip this entirely and use it as
+`$NEEDS_DEFINITION` — no judgment, and the presentation line below renders with no rationale clause
+(the human already decided). Otherwise, read `_shared/needs-definition-judgment.md` and judge the
+idea's content by it in this same turn: `needed` sets `$NEEDS_DEFINITION` to `true`, `clear` to
+`false`. When `true`, form a one-line rationale naming the open choice — this becomes
+`$DEFINITION_RATIONALE`, surfaced in the presentation line below and, later, bootstrapped/labeled
+per Backend Selection above.
 
 The judgment rides in the same "Added: '{title}' (Type: {t}, Definition: {needed|clear})"
 presentation the Type guess uses (see Immediate Routing below) — no new question is added.
@@ -445,7 +445,7 @@ When invoked by a parent skill, omit this block — the parent owns the handoff.
 
 ## Component-Skill Contract
 
-This skill is a **component skill** — directly invoked by `/claude-tweaks:build` (Common Step 4, design-mode follow-up capture) and by `/claude-tweaks:reflect` (both `full` and `hindsight` modes' Capture disposition, routing an insight/finding that's too complex or uncertain to act on without brainstorming — a distinct path from reflect's Defer disposition, which files directly and is not a capture parent). `/claude-tweaks:visual-review`, `/claude-tweaks:wrap-up`, and `/claude-tweaks:demo` file a new backlog record directly without going through this skill, so they are NOT capture parents — they only recommend `/capture` in Next Actions for the user's next session.
+This skill is a **component skill** — directly invoked by `/claude-tweaks:build` (Common Step 4, design-mode follow-up capture) and by `/claude-tweaks:reflect` (both `full` and `hindsight` modes' Capture disposition, routing an insight/finding that's too complex or uncertain to act on without brainstorming — a distinct path from reflect's Defer disposition, which files directly and is not a capture parent). `/claude-tweaks:visual-review`, `/claude-tweaks:wrap-up`, and `/claude-tweaks:accept` file a new backlog record directly without going through this skill, so they are NOT capture parents — they only recommend `/capture` in Next Actions for the user's next session.
 
 Parent invocation of `/capture` is signaled by `$PIPELINE_RUN_DIR` being set in the environment. Direct invocation may pass `--source <parent-skill>` (e.g. `--source build`, `--source intake`) as an explicit fallback when ambiguity exists (rare; `$PIPELINE_RUN_DIR` is the primary signal) — prose-trusted. This fallback matters here specifically: a standalone (non-`/flow`) design-mode `/build` invocation never resolves a run dir of its own (per `_shared/run-dir-resolution.md`'s resolution order, the record-mode materialization exception and the standalone-auto allowlist both exclude design-mode `/build` — confirmed by `build/SKILL.md`'s own "Auto mode (including a standalone `auto` invocation with no pipeline run dir)" language). Standalone `/reflect` likewise has no run dir of its own to forward. When invoked from within a parent's workflow (via either signal), omit the `## Next Actions` block — the parent owns the handoff. When invoked directly by a user (neither signal present), render Next Actions as shown above.
 

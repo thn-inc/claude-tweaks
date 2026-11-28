@@ -216,7 +216,7 @@ Write the array to `$CH_FINDINGS` (session-scoped, session-tmp-root.md).
 
 **Step 7 — VERIFY GATE: sanity-check surviving findings before dedup.**
 
-Before fingerprinting and dedup, re-examine each finding the judge emitted and ask five questions — this is the canonical shape in `_shared/health-verify-gate.md` (worded here against this skill's own finding schema); check that file when either changes to keep this skill's copy in sync with `docs-health`/`journey-health`'s own inline copies and `harness-health`'s embedded one:
+Before fingerprinting and dedup, re-examine each finding the judge emitted and ask five questions — this is the canonical shape in `_shared/health-verify-gate.md` (worded here against this skill's own finding schema); check that file when either changes to keep this skill's copy in sync with `docs-health`/`journey-health`/`ci-health`'s own inline copies and `harness-health`'s embedded one:
 
 1. **Is it real?** Does the code actually exhibit the problem, or did the judge misread the structure? If the code is correctly guarded (a timeout IS configured, a check IS present), drop the finding.
 2. **Is it actionable?** Is the `suggestedApproach` concrete and executable? A finding like "consider improving error handling" with no specific location or change is not actionable — drop it or refine it until it is.
@@ -317,7 +317,7 @@ A skipped run (e.g., `next-slice` returns `null` because all slices are fresh) i
 
 ## CI Integration
 
-Read `ci-integration.md` in this skill's directory when wiring `/code-health` state into CI, a pre-push hook, or a periodic validation step — it owns `status --fail-on regressed|risk-high` (Regression and Risk Gating) and `churn-report --fail-on-high-churn <r>` (Fingerprint Churn), with their exit-code contracts. Nothing in the main Workflow depends on it.
+Read `ci-integration.md` in this skill's directory when wiring `/code-health` state into a local pre-push hook, CI, or a periodic validation step — it owns `status --fail-on regressed|risk-high` (Regression and Risk Gating) and `churn-report --fail-on-high-churn <r>` (Fingerprint Churn), with their exit-code contracts. Nothing in the main Workflow depends on it.
 
 ## Next Actions
 

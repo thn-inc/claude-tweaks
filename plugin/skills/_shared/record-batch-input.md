@@ -4,7 +4,7 @@ One shared home for the batch-invocation surface (#762's extraction, extended by
 holding two contracts:
 
 - **The ref-list grammar** — cited by `/claude-tweaks:flow`, `/claude-tweaks:dispatch`,
-  `/claude-tweaks:specify`, and `/claude-tweaks:demo`, the four skills whose first argument
+  `/claude-tweaks:specify`, and `/claude-tweaks:accept`, the four skills whose first argument
   accepts a comma-separated list of work-record references. States the grammar **only**:
   notation, tokenization, and element classification. It deliberately does not state what
   happens after classification — resolution-failure handling and execution shape (sequential

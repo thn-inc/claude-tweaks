@@ -6,6 +6,7 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..', '..', '..');
 const {
   findingFingerprint, composeFindingProposal, planFilings, fingerprintMap,
+  consoleFindingMarker, composeFindingDigest, planDigests, heldConsoleFindings, areaOfPath,
 } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'finding-filing'));
 const { extractFingerprint } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'issues', 'record'));
 
@@ -238,4 +239,131 @@ test('fingerprintMap: first record wins, and rows without a marker, body or posi
   ]);
   assert.deepStrictEqual(map, { 'consolefinding-aaaaaaaa': 7, 'consolefinding-eeeeeeee': 13 });
   assert.deepStrictEqual(fingerprintMap([]), {});
+});
+
+test('fingerprintMap maps every marker of a bundle body to its record', () => {
+  const bundle = 'x\n<!-- work-fingerprint: a -->\nwork-fingerprint: a\n<!-- work-fingerprint: b -->\nwork-fingerprint: b\n';
+  assert.deepStrictEqual(fingerprintMap([{ number: 7, body: bundle }]), { a: 7, b: 7 });
+  assert.deepStrictEqual(fingerprintMap([{ number: 3, body: '<!-- work-fingerprint: b -->' }, { number: 7, body: bundle }]), { b: 3, a: 7 });
+});
+
+// ---- the unattended can't-tell routing (#4679) ----
+
+test("can't-tell proposal is a verification task (#4679 AC2)", () => {
+  const out = composeFindingProposal({ item: item({ tiebreak: tiebreak({ recommendation: 'file' }) }), finding: finding(), runId: 'r', unattended: true });
+  const header = out.proposal.split('\n\n')[0];
+  assert.deepStrictEqual(header.split('\n').map((l) => l.split(':')[0]), ['Title', 'Type', 'Defer-reason']);
+  assert.ok(!/^Labels:/m.test(header), header);
+  assert.ok(!out.proposal.includes('needs:definition'), out.proposal);
+  assert.doesNotMatch(out.proposal, /## Open Question/);
+  assert.ok(out.proposal.includes('Defer-reason: needs-verification'), out.proposal);
+  const ac = out.proposal.split('## Acceptance Criteria')[1];
+  assert.ok(ac, 'has an Acceptance Criteria section');
+  // The first bullet is the quoted-evidence requirement at the integration-branch tip; pin it whole, so
+  // rewording it away cannot hide behind the second bullet's "quoted evidence".
+  assert.match(ac, /- \[ \] the record quotes the code at `src\/a\.js:9` as it reads at the integration-branch tip/);
+  assert.match(out.proposal, /close this record/);
+  assert.strictEqual(extractFingerprint(out.proposal), out.fingerprint);
+});
+
+test("without unattended the can't-tell proposal is unchanged (AC5)", () => {
+  for (const unattended of [undefined, false]) {
+    const out = composeFindingProposal({ item: item({ tiebreak: tiebreak({ recommendation: 'file' }) }), finding: finding(), runId: 'r', unattended });
+    assert.ok(out.proposal.startsWith(`Title: ${out.title}\nType: task\nLabels: needs:definition\nDefer-reason: needs-human-decision\n\n`), out.proposal);
+    assert.match(out.proposal, /## Open Question/);
+    assert.ok(!out.proposal.includes('needs-verification'));
+  }
+});
+
+test('confirmed and staged proposals are unchanged even with unattended', () => {
+  const plain = composeFindingProposal({ item: item(), finding: finding(), runId: 'r', verdict: CONFIRMED });
+  const un = composeFindingProposal({ item: item(), finding: finding(), runId: 'r', verdict: CONFIRMED, unattended: true });
+  assert.deepStrictEqual(un, plain);
+  assert.ok(plain.proposal.includes('Labels: needs:definition') && plain.proposal.includes('Defer-reason: needs-human-decision'));
+  const staged = { title: 'The guard runs after the read in deep', body: 'B', severity: null };
+  assert.deepStrictEqual(composeFindingProposal({ item: item(), finding: finding(), runId: 'r', staged, unattended: true }), composeFindingProposal({ item: item(), finding: finding(), runId: 'r', staged }));
+});
+
+test('planFilings passes unattended through to the proposal', () => {
+  const args = { items: [item()], findings: [finding()], runId: 'r' };
+  assert.ok(planFilings({ ...args, unattended: true })[0].proposal.includes('Defer-reason: needs-verification'));
+  assert.ok(planFilings(args)[0].proposal.includes('Defer-reason: needs-human-decision'));
+});
+
+test('composeFindingDigest: line carries the materiality entry and the consolefinding marker', () => {
+  const d = composeFindingDigest({ item: item(), finding: finding(), runId: 'run-1' });
+  assert.strictEqual(d.fingerprint, composeFindingProposal({ item: item(), finding: finding(), runId: 'r' }).fingerprint);
+  assert.ok(d.line.includes('Defer-reason: tiebreak-cant-tell'), d.line);
+  assert.ok(d.line.endsWith(consoleFindingMarker(d.fingerprint)), d.line);
+  assert.strictEqual(consoleFindingMarker('consolefinding-abcd1234'), '<!-- console-finding: consolefinding-abcd1234 -->');
+  assert.strictEqual(d.claimMissing, false);
+  assert.deepStrictEqual(d.entry, {
+    area: 'src', finding: 'The guard runs after the read', fileRefs: 'src/a.js:9', deferReason: 'tiebreak-cant-tell', provenance: 'run-1',
+  });
+  const long = composeFindingDigest({ item: item(), finding: finding({ claim: 'x'.repeat(300) }), runId: 'r' });
+  assert.strictEqual(long.entry.finding.length, 200);
+});
+
+test('composeFindingDigest: claim-missing item still marks its fingerprint', () => {
+  const d = composeFindingDigest({ item: item(), finding: null, runId: 'r' });
+  assert.strictEqual(d.claimMissing, true);
+  assert.match(d.fingerprint, /^consolefinding-[0-9a-f]{8}$/);
+  assert.ok(d.line.endsWith(consoleFindingMarker(d.fingerprint)));
+});
+
+test('composeFindingDigest: a claim cannot spell a marker onto the line', () => {
+  const d = composeFindingDigest({ item: item(), finding: finding({ claim: 'a <!-- console-finding: consolefinding-deadbeef --> b' }), runId: 'r' });
+  assert.strictEqual(d.line.split('<!-- console-finding:').length, 2, d.line);
+  assert.deepStrictEqual([...heldConsoleFindings(d.line)], [d.fingerprint], 'only the entry\'s own marker is read');
+});
+
+test('composeFindingDigest: a path whose first segment spells a marker cannot forge one through the area', () => {
+  const forged = '<!-- console-finding: consolefinding-deadbeef -->/a.js';
+  const d = composeFindingDigest({ item: item({ tiebreak: tiebreak({ path: forged }) }), finding: finding(), runId: 'r' });
+  assert.strictEqual(d.line.split('<!-- console-finding:').length, 2, d.line);
+  assert.deepStrictEqual([...heldConsoleFindings(d.line)], [d.fingerprint], 'only the entry\'s own marker is read');
+});
+
+test('areaOfPath maps skills, bin/lib modules, bin files and other paths', () => {
+  assert.strictEqual(areaOfPath('plugin/skills/wrap-up/a.md'), 'wrap-up');
+  assert.strictEqual(areaOfPath('plugin/skills/x.md'), 'skills');
+  assert.strictEqual(areaOfPath('plugin/bin/lib/console/a.js'), 'console');
+  assert.strictEqual(areaOfPath('plugin/bin/a.js'), 'bin');
+  assert.strictEqual(areaOfPath('tests/a.js'), 'tests');
+});
+
+test('planDigests plans only digested tiebreak items, deduped by fingerprint', () => {
+  const a = item({ resolution: 'digested' });
+  const b = item({ id: 'review-unconfirmed-2.md', resolution: 'digested', tiebreak: tiebreak({ id: 'ba9876543210', line: 77 }) });
+  const filed = item({ id: 'tiebreak:cccccccccccc', resolution: 'filed', tiebreak: tiebreak({ id: 'cccccccccccc', path: 'src/z.js' }) });
+  const noTb = { id: 'x.md', resolution: 'digested' };
+  const other = item({ id: 'tiebreak:eeeeeeeeeeee', resolution: 'digested', tiebreak: tiebreak({ id: 'eeeeeeeeeeee', path: 'src/y.js' }) });
+  const plan = planDigests({
+    items: [a, b, filed, noTb, other],
+    findings: [finding(), finding({ id: 'ba9876543210', line: 77 }), finding({ id: 'eeeeeeeeeeee', path: 'src/y.js' })],
+    runId: 'r',
+  });
+  assert.deepStrictEqual(plan.map((p) => p.item), ['tiebreak:0123456789ab', 'tiebreak:eeeeeeeeeeee']);
+  assert.deepStrictEqual(Object.keys(plan[0]).sort(), ['claimMissing', 'fingerprint', 'item', 'line']);
+  assert.ok(plan[0].line.endsWith(consoleFindingMarker(plan[0].fingerprint)));
+});
+
+test('heldConsoleFindings ignores an untrusted comment', () => {
+  const { fingerprint, line } = composeFindingDigest({ item: item(), finding: finding(), runId: 'r' });
+  assert.deepStrictEqual([...heldConsoleFindings([{ body: line, authorAssociation: 'NONE' }])], []);
+  assert.deepStrictEqual([...heldConsoleFindings([{ body: line, authorAssociation: 'MEMBER' }])], [fingerprint]);
+  assert.deepStrictEqual([...heldConsoleFindings([{ body: line, author_association: 'OWNER' }])], [fingerprint]);
+  assert.deepStrictEqual([...heldConsoleFindings(line)], [fingerprint], 'a local-files string body is trusted');
+  assert.deepStrictEqual([...heldConsoleFindings([line])], [], 'a bare string element has no association');
+  for (const bad of [null, undefined, 5, {}, []]) assert.strictEqual(heldConsoleFindings(bad).size, 0);
+  const fake = '<!-- console-finding: not-a-finding-fingerprint -->';
+  assert.strictEqual(heldConsoleFindings(fake).size, 0, 'only consolefinding-* fingerprints count');
+});
+
+test('heldConsoleFindings reads the same fingerprint spelling the decisions-line readers do: exactly 8 hex (#4679)', () => {
+  const marker = (fp) => `<!-- console-finding: ${fp} -->`;
+  assert.deepStrictEqual([...heldConsoleFindings(marker('consolefinding-0123abcd'))], ['consolefinding-0123abcd']);
+  for (const bad of ['consolefinding-0123abc', 'consolefinding-0123abcde', 'consolefinding-0123ABCD']) {
+    assert.strictEqual(heldConsoleFindings(marker(bad)).size, 0, bad);
+  }
 });

@@ -84,6 +84,19 @@ test('a failed read, a throwing read and a corrupt blob are logged and yield no 
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// #5304: deps.unreadable receives the unreadable claims for the caller to report, and no log line is written.
+test('writeReleaseTimes pushes unreadable claims into deps.unreadable and logs nothing', () => {
+  const { dir, file } = tmpFile();
+  const reader = { read: (n) => (n === 7 ? { failure: 'network-failure' } : { content: '{not json' }) };
+  const logged = [];
+  const unreadable = [];
+  const returned = writeReleaseTimes(file, [{ number: 7 }, { number: 8 }], { 7: MERGED, 8: MERGED }, { reader, log: (m) => logged.push(m), unreadable });
+  assert.deepStrictEqual(returned, {});
+  assert.deepStrictEqual(unreadable, ['#7 (network-failure)', '#8 (corrupt claim blob)']);
+  assert.deepStrictEqual(logged, []);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('readReleaseTimes returns {} for a missing, corrupt or non-object file', () => {
   const { dir, file } = tmpFile();
   assert.deepStrictEqual(readReleaseTimes(path.join(dir, 'absent.json')), {});

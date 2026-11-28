@@ -30,6 +30,7 @@ const { worktreeMirror } = require('../wrap-up/pack');
 const { hasCanonicalClaimLogFor } = require('../log-decision/claim-log');
 const { FLOW_STEPS } = require('../claim-targets/claim-targets');
 const { parseRecordSteps } = require('../flow/record-steps');
+const { headerFileCandidates } = require('../run-header');
 
 function defaultReadFile(p) {
   return fs.readFileSync(p, 'utf8');
@@ -71,7 +72,9 @@ function resolveIntegrationModel(configRaw) {
 //      `pr.number` is recorded AND `pr.branch` exists on `origin`.
 //   5. Every member of `issueNumbers` has a materialized header (#2775): a readable
 //      `{n}-spec.md` at `work/{n}-spec.md` or `spec-{n}/work/{n}-spec.md`, in the run
-//      dir or its worktree mirror -- the same two shapes and mirror rule
+//      dir or its worktree mirror, live before moved (`run-header.js`'s precedence,
+//      so a run whose header moved after wrap-up still reads as materialized) -- the
+//      same two shapes and mirror rule
 //      `wrap-up/pack.js`'s resolveRecords ladder reads, so a group that clears this
 //      gate never reaches its second call with records unresolved. A header whose
 //      `record:` line names another number does not count. A group mixing `work/` and
@@ -110,13 +113,11 @@ function headerBases(runDir, runState) {
 }
 
 function hasMaterializedHeader(readFile, bases, n) {
-  for (const base of bases) {
-    for (const rel of [path.join('work', `${n}-spec.md`), path.join(`spec-${n}`, 'work', `${n}-spec.md`)]) {
-      let text;
-      try { text = readFile(path.join(base, rel)); } catch { continue; }
-      const rec = /^record:\s*(\d+)\s*$/m.exec(text);
-      if (!rec || Number(rec[1]) === n) return true;
-    }
+  for (const candidate of headerFileCandidates(bases, n)) {
+    let text;
+    try { text = readFile(candidate); } catch { continue; }
+    const rec = /^record:\s*(\d+)\s*$/m.exec(text);
+    if (!rec || Number(rec[1]) === n) return true;
   }
   return false;
 }
@@ -382,10 +383,11 @@ function replyLines(reply) {
 // `#N`) go to that grammar, a refusal returns as next-steps-{its reason}, and `steps` is the
 // union; `stepArg` is the `record-steps={canonical}` token a continuation passes to /flow. A
 // flat value under more than one target -> next-steps-flat-multi-record: it cannot say which
-// record each step belongs to. Absent `targets` checks neither, by design: the parse has no
-// code caller (two-call-gate.md section 8, run by the dispatching agent, is its only one), so
-// a required argument would enforce nothing; section 8 instead has every group, a
-// single-record one included, pass its records, and a flat value with one target stays flat.
+// record each step belongs to. Absent `targets` checks neither, by design. The parse has two
+// code callers: `bin/dispatch-prompt.js` (#4589) always passes `targets`, and
+// `resolveFirstCallGate` below forwards its own `targets`, absent (read here as `null`) when its
+// caller passes none. two-call-gate.md section 8's prose has every group pass its records to either, so a flat
+// value with one target stays flat — no code change.
 function parseNextSteps(reply, allowed = FLOW_STEPS, { targets = null } = {}) {
   const line = replyLines(reply).map((l) => NEXT_STEPS_LINE_RE.exec(l)).find(Boolean);
   if (!line) return fail('next-steps-missing', 'handoff without NEXT_STEPS');

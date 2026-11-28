@@ -18,7 +18,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { escalateResidue, resolveResidue, errorText } = require('./escalate-residue');
+const { escalateResidue, resolveResidue, residueErrorText } = require('./escalate-residue');
 const { lstatType } = require('../path-guard');
 const { isPathContained } = require('../shared-primitives');
 
@@ -46,6 +46,12 @@ const SHARED_HEALTH_TTL_MS = 10 * 1000;
 // stronger signal (documented in the issue, not derived from measurement).
 const RESIDUE_ESCALATE_THRESHOLD = 3;
 
+// #4209: a gone-path escalated entry whose resolve keeps failing is kept and retried by later
+// passes; the pass that records this many failed retries drops it. Passes run roughly once per
+// session start (and other reconcile entry points), so the bound is approximate wall-clock-wise:
+// 5 rides out a multi-session gh outage, and a gh-absent machine gives up after 5 cheap ENOENT spawns.
+const RESIDUE_RETRY_LIMIT = 5;
+
 function cachePath(root) {
   return path.join(root, '.claude-tweaks', CACHE_FILENAME);
 }
@@ -62,7 +68,8 @@ function parseResidueIssueIndex(raw) {
 
 // -> { lastRunAt: number|null, claimShas: {[issueNumber]: string},
 //      residueFailures: {[reason:path]: {count, firstFailedAt, lastError, escalated,
-//        lastResidueError?: {op: 'escalate'|'resolve', reason, at}}},  (#4180, set by recordResidueError)
+//        lastResidueError?: {op: 'escalate'|'resolve', reason, at}, residueRetries?: number}},
+//        (#4180, set by recordResidueError; #4209 residueRetries counts failed resolve retries)
 //      lastHealthCheckOkAt: number|null, lastOriginHeadRepairFailedAt: number|null,
 //      prStates: {['n:N'|'b:branch']: {v, at}},  (#4032, pr-state-cache.js owns the shape)
 //      claimBlobs: {[blobSha]: content},  (#4032, release-merged.js: active claims' content by blob sha)
@@ -99,10 +106,34 @@ function readCache(root) {
       ...(Number.isInteger(parsed.ownerlessNonClean) && parsed.ownerlessNonClean >= 0 ? { ownerlessNonClean: parsed.ownerlessNonClean } : {}),
       ...(typeof parsed.ownerlessNonCleanZeroSince === 'string' && Number.isFinite(Date.parse(parsed.ownerlessNonCleanZeroSince))
         ? { ownerlessNonCleanZeroSince: parsed.ownerlessNonCleanZeroSince } : {}),
+      ...(Array.isArray(parsed.wouldClose) ? { wouldClose: parsed.wouldClose.filter(isDispositionEntry) } : {}),
+      ...(Array.isArray(parsed.orphaned) ? { orphaned: parsed.orphaned.filter(isDispositionEntry) } : {}),
+      ...(typeof parsed.reportOnlyPassAt === 'string' && Number.isFinite(Date.parse(parsed.reportOnlyPassAt))
+        ? { reportOnlyPassAt: parsed.reportOnlyPassAt } : {}),
     };
   } catch {
     return empty;
   }
+}
+
+// #3977: a cached disposition entry is kept only with a string runId and reason;
+// the banner reads these lists, so a malformed row is dropped, never rendered.
+function isDispositionEntry(e) {
+  return !!e && typeof e === 'object' && !Array.isArray(e)
+    && typeof e.runId === 'string' && e.runId !== '' && typeof e.reason === 'string' && e.reason !== '';
+}
+
+// #3977: record a report-only disposition pass (archive-merged.js reportRunDispositions)
+// on a cache object. Pure — a new object, `nowMs` passed in. `reportOnlyPassAt` is
+// the marker the enabling record (#3978) reads: auto-close never acts on a checkout
+// that has not first had a report-only pass.
+function applyRunDispositions(cache, report, nowMs) {
+  return {
+    ...cache,
+    wouldClose: report.wouldClose.map(({ runId, runDir, reason, evidence }) => ({ runId, runDir, reason, evidence })),
+    orphaned: report.orphaned.map(({ runId, runDir, reason, pr }) => ({ runId, runDir, reason, pr: Number.isInteger(pr) ? pr : null })),
+    reportOnlyPassAt: new Date(nowMs).toISOString(),
+  };
 }
 
 // #4421: record archiveMerged's ownerless-non-clean count on a cache object. Pure — a new object,
@@ -266,9 +297,15 @@ function ownedPathExists(target) {
 // #4180: a failed `gh` call's text (message + stderr + stdout) is multi-line and unbounded, and it
 // reaches one-line surfaces — the residue summary and SessionStart's model context. Collapse it to
 // one line and cap it at the same 200 characters the background status file's failure message uses.
+// #4794: the cap bounds `error` (a gh failure's text) only. The optional `detail` is a gate refusal
+// (`unknown-host`), 215-340 characters ending in its remedy, so it is appended whole (whitespace
+// collapsed): cut at 200 it loses the alias advice or leaves `export GH_HOST=gi`.
 const RESIDUE_ERROR_MAX_CHARS = 200;
-function boundedError(error) {
-  return String(error).replace(/\s+/g, ' ').trim().slice(0, RESIDUE_ERROR_MAX_CHARS);
+const oneLine = (text) => String(text).replace(/\s+/g, ' ').trim();
+function boundedError(error, detail) {
+  const head = oneLine(error).slice(0, RESIDUE_ERROR_MAX_CHARS);
+  const tail = detail ? oneLine(detail) : '';
+  return tail ? `${head} (${tail})` : head;
 }
 
 // #4180: the one channel for a swallowed escalate/resolve failure — the reason sits on the
@@ -277,21 +314,25 @@ function boundedError(error) {
 // carries the field forward unchanged (escalation is one-shot, so the reason must survive later
 // failing passes); it is dropped only when the entry itself is dropped (recordResidueSuccess /
 // prune), so it never outlives the streak. Batch-aware like its siblings.
-function recordResidueError(target, reason, targetPath, { op, error, now = Date.now() } = {}) {
+function recordResidueError(target, reason, targetPath, {
+  op, error, detail, now = Date.now(),
+} = {}) {
   const batch = isCacheBatch(target);
   const cache = batch ? target.cache : readCache(target);
   const key = residueKey(reason, targetPath);
   const existing = cache.residueFailures[key];
   if (!existing) return;
-  const failures = { ...cache.residueFailures, [key]: { ...existing, lastResidueError: { op, reason: boundedError(error), at: now } } };
+  const failures = { ...cache.residueFailures, [key]: { ...existing, lastResidueError: { op, reason: boundedError(error, detail), at: now } } };
   const nextCache = { ...cache, residueFailures: failures };
   if (batch) { target.cache = nextCache; target.dirty = true; } else { writeCache(target, nextCache); }
 }
 
-// Why a resolve result is not a landed resolution: its own reason, else the unexpected status.
-function unresolvedReason(resolved) {
-  if (!resolved) return 'no result';
-  return resolved.reason || `status ${resolved.status}`;
+// Why a resolve result is not a landed resolution: its own reason, else the unexpected status, as
+// `{ error, detail? }` — #4794: the `detail` a refused origin carries rides beside the reason so
+// the recorded text is `unknown-host (<refusal>)` and only the reason is capped.
+function unresolvedError(resolved) {
+  if (!resolved) return { error: 'no result' };
+  return { error: resolved.reason || `status ${resolved.status}`, detail: resolved.detail };
 }
 
 // #2724: drop a tracked entry for a path that is no longer stuck, and — only
@@ -300,7 +341,7 @@ function unresolvedReason(resolved) {
 // dropped only once the resolution landed (a throw or any other status keeps
 // it). #4202: two callers — #2724's ad-hoc exemption (path still exists, so
 // the next pass calls this again) and archive success (path now gone, so the
-// same pass's pruneResidueFailures retries the resolve once).
+// same pass's pruneResidueFailures retries the resolve; #4209: a failed retry keeps the entry for later passes).
 const RESIDUE_RESOLVED_STATUSES = new Set(['closed', 'path-removed', 'not-found', 'already-closed']);
 
 // #4180: the read-only twin of clearResidue's first branches — what a clear would do for this
@@ -313,7 +354,7 @@ function planClear(target, reason, targetPath) {
   return { action: entry.escalated ? 'would-resolve' : 'would-clear', reason, path: targetPath };
 }
 
-function clearResidue(target, repoSlug, reason, targetPath, { resolve = resolveResidue, runner, why } = {}) {
+function clearResidue(target, residueRepo, reason, targetPath, { resolve = resolveResidue, runner, why } = {}) {
   const cache = isCacheBatch(target) ? target.cache : readCache(target);
   const entry = cache.residueFailures[residueKey(reason, targetPath)];
   if (!entry) return { cleared: false, resolved: null };
@@ -323,13 +364,13 @@ function clearResidue(target, repoSlug, reason, targetPath, { resolve = resolveR
   }
   let resolved;
   try {
-    resolved = resolve({ repo: repoSlug, reason, targetPath, runner, why, pathExists: ownedPathExists(target) });
+    resolved = resolve({ repo: residueRepo, reason, targetPath, runner, why, pathExists: ownedPathExists(target) });
   } catch (err) {
-    recordResidueError(target, reason, targetPath, { op: 'resolve', error: errorText(err) });
+    recordResidueError(target, reason, targetPath, { op: 'resolve', error: residueErrorText(err) });
     return { cleared: false, resolved: null };
   }
   if (!resolved || !RESIDUE_RESOLVED_STATUSES.has(resolved.status)) {
-    recordResidueError(target, reason, targetPath, { op: 'resolve', error: unresolvedReason(resolved) });
+    recordResidueError(target, reason, targetPath, { op: 'resolve', ...unresolvedError(resolved) });
     return { cleared: false, resolved };
   }
   recordResidueSuccess(target, reason, targetPath);
@@ -348,7 +389,7 @@ function clearResidue(target, repoSlug, reason, targetPath, { resolve = resolveR
 // #4180: with `dryRun` it returns before any cache write, `escalate` call, or `target.dirty`
 // change, and returns the plan it would have executed (`{ action, reason, path[, count] }`); a
 // real run returns undefined.
-function trackResidue(target, repoSlug, reason, targetPath, { failed, lastError, dirtyFiles }, { escalate = escalateResidue, runner, dryRun = false } = {}) {
+function trackResidue(target, residueRepo, reason, targetPath, { failed, lastError, dirtyFiles }, { escalate = escalateResidue, runner, dryRun = false } = {}) {
   if (dryRun) {
     const cache = isCacheBatch(target) ? target.cache : readCache(target);
     const existing = cache.residueFailures[residueKey(reason, targetPath)];
@@ -365,15 +406,15 @@ function trackResidue(target, repoSlug, reason, targetPath, { failed, lastError,
   if (!streak.shouldEscalate) return;
   try {
     const result = escalate({
-      repo: repoSlug, reason, targetPath,
+      repo: residueRepo, reason, targetPath,
       count: streak.count, firstFailedAt: streak.firstFailedAt, lastError, dirtyFiles, runner, pathExists: ownedPathExists(target),
     });
     if (result && result.status === 'escalation-failed') {
-      recordResidueError(target, reason, targetPath, { op: 'escalate', error: result.reason || 'status escalation-failed' });
+      recordResidueError(target, reason, targetPath, { op: 'escalate', error: result.reason || 'status escalation-failed', detail: result.detail });
     }
   } catch (err) {
     // best-effort — never let escalation turn a residue-tracking call into a thrown error
-    recordResidueError(target, reason, targetPath, { op: 'escalate', error: errorText(err) });
+    recordResidueError(target, reason, targetPath, { op: 'escalate', error: residueErrorText(err) });
   }
 }
 
@@ -401,12 +442,19 @@ function listResidueFailures(root) {
 // escalation streak. Reason-agnostic by design (#1811's `structurally-stuck`
 // prune shares this same call rather than duplicating it) — every entry, not
 // only `move-failed`, is checked the same way. Best-effort and never throws:
-// a resolution failure (gh absent, network) still drops the cache entry —
-// the path itself is gone either way — leaving the filed issue open for a
-// human to close manually later, same posture as escalateResidue's own
-// never-breaks-a-session contract. #4180: the entry is gone, so a failed resolve cannot ride on
-// it — the failures come back as `{ failures: [{ reason, path, op: 'resolve', error }] }` instead.
-function pruneResidueFailures(root, repoSlug, { resolve = resolveResidue, runner } = {}) {
+// #4209 — a resolution failure (gh absent, network) on an ESCALATED
+// entry keeps it, counting `residueRetries` and recording `lastResidueError`,
+// so a later pass retries the resolve instead of leaving the filed issue open
+// for good; the pass that records the RESIDUE_RETRY_LIMIT-th failed retry drops
+// it (bound rationale: see the constant). A non-escalated entry, or one whose
+// resolve landed, is dropped at once. A path that comes back resets the
+// counter, since `recordResidueSuccess` drops the entry and
+// `recordResidueFailure` rebuilds it carrying only `lastResidueError`; only a
+// path that returns and is never touched again keeps its count. #4180: the
+// failures still come back as
+// `{ failures: [{ reason, path, op: 'resolve', error }] }` — a kept entry's
+// failure also rides on its `lastResidueError`.
+function pruneResidueFailures(root, residueRepo, { resolve = resolveResidue, runner, now = Date.now() } = {}) {
   const cache = readCache(root);
   const failures = { ...cache.residueFailures };
   let changed = false;
@@ -416,23 +464,27 @@ function pruneResidueFailures(root, repoSlug, { resolve = resolveResidue, runner
     const reason = sep === -1 ? key : key.slice(0, sep);
     const targetPath = sep === -1 ? '' : key.slice(sep + 1);
     if (!targetPath || fs.existsSync(targetPath)) continue;
-    delete failures[key];
     changed = true;
-    if (entry && entry.escalated) {
-      let error = null;
-      try {
-        const resolved = resolve({ repo: repoSlug, reason, targetPath, runner, pathExists: ownedPathExists(root) });
-        if (!resolved || !RESIDUE_RESOLVED_STATUSES.has(resolved.status)) error = unresolvedReason(resolved);
-      } catch (err) { error = errorText(err); }
-      if (error !== null) resolveFailures.push({ reason, path: targetPath, op: 'resolve', error: boundedError(error) });
-    }
+    if (!(entry && entry.escalated)) { delete failures[key]; continue; }
+    let failure = null;
+    try {
+      const resolved = resolve({ repo: residueRepo, reason, targetPath, runner, pathExists: ownedPathExists(root) });
+      if (!resolved || !RESIDUE_RESOLVED_STATUSES.has(resolved.status)) failure = unresolvedError(resolved);
+    } catch (err) { failure = { error: residueErrorText(err) }; }
+    if (failure === null) { delete failures[key]; continue; }
+    const error = boundedError(failure.error, failure.detail);
+    resolveFailures.push({ reason, path: targetPath, op: 'resolve', error });
+    const priorRetries = Number.isInteger(entry.residueRetries) && entry.residueRetries > 0 ? entry.residueRetries : 0;
+    const retries = priorRetries + 1;
+    if (retries >= RESIDUE_RETRY_LIMIT) delete failures[key];
+    else failures[key] = { ...entry, residueRetries: retries, lastResidueError: { op: 'resolve', reason: error, at: now } };
   }
   if (changed) writeCache(root, { ...cache, residueFailures: failures });
   return { failures: resolveFailures };
 }
 
 module.exports = {
-  readCache, writeCache, applyOwnerlessNonClean, isFresh, CACHE_FILENAME, DEFAULT_TTL_MS, SHARED_HEALTH_TTL_MS, cachePath,
-  RESIDUE_ESCALATE_THRESHOLD, residueKey, recordResidueFailure, recordResidueSuccess, clearResidue, listResidueFailures,
+  readCache, writeCache, applyOwnerlessNonClean, applyRunDispositions, isFresh, CACHE_FILENAME, DEFAULT_TTL_MS, SHARED_HEALTH_TTL_MS, cachePath,
+  RESIDUE_ESCALATE_THRESHOLD, RESIDUE_RETRY_LIMIT, residueKey, recordResidueFailure, recordResidueSuccess, clearResidue, listResidueFailures,
   recordResidueError, planClear, trackResidue, pruneResidueFailures, beginCacheBatch, commitCacheBatch,
 };

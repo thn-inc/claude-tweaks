@@ -7,12 +7,13 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const residue = require('../../../plugin/bin/lib/hooks/session-residue');
 
 function tmpProject() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-residue-'));
+  const dir = scratchDir('ct-residue-');
   fs.mkdirSync(path.join(dir, '.claude-tweaks', 'pipelines'), { recursive: true });
   return dir;
 }
@@ -28,53 +29,126 @@ function mkStagedFile(run, name, content) {
   fs.writeFileSync(path.join(stagedDir, name), content || '{}');
 }
 
-test('collectStaleRuns: returns interrupted/active runs newest-first, capped at MAX_REPORTED', () => {
+// #3977: a run is listed only when the last reconcile pass cached it as orphaned
+// and its liveness reads `dead` now. `DEAD`/`LIVE` stand in for the verdict.
+const { seedOrphan, deadOwner, writeOldEvents } = require('../../helpers/orphan-fixture');
+const DEAD = () => ({ verdict: 'dead', evidence: [] });
+const LIVE = () => ({ verdict: 'live', evidence: [] });
+const UNKNOWN = () => ({ verdict: 'unknown', evidence: [] });
+function mkOrphan(project, name, state, reason) {
+  const run = mkRun(project, name, state);
+  seedOrphan(project, run, reason);
+  return run;
+}
+
+test('collectStaleRuns: returns dead orphaned runs newest-first, capped at MAX_REPORTED', () => {
   const project = tmpProject();
-  mkRun(project, '2026-07-01T090000-spec-1', { status: 'interrupted' });
-  mkRun(project, '2026-07-02T090000-spec-2', { status: 'active' });
-  mkRun(project, '2026-07-03T090000-spec-3', { status: 'interrupted' });
-  mkRun(project, '2026-07-04T090000-spec-4', { status: 'active' });
+  mkOrphan(project, '2026-07-01T090000-spec-1', { status: 'interrupted' });
+  mkOrphan(project, '2026-07-02T090000-spec-2', { status: 'active' });
+  mkOrphan(project, '2026-07-03T090000-spec-3', { status: 'interrupted' });
+  mkOrphan(project, '2026-07-04T090000-spec-4', { status: 'active' });
   mkRun(project, '2026-06-30T090000-spec-0', { status: 'clean' });
-  const entries = residue.collectStaleRuns(project);
-  assert.strictEqual(entries.length, residue.MAX_REPORTED);
+  const entries = residue.collectStaleRuns(project, { liveness: DEAD });
+  assert.strictEqual(entries.length, residue.MAX_REPORTED + 1);
   assert.ok(entries[0].line.includes('spec-4'));
   assert.ok(entries[1].line.includes('spec-3'));
   assert.ok(entries[2].line.includes('spec-2'));
-  assert.ok(!entries.some((e) => e.line.includes('spec-1')), 'oldest of 4 non-clean runs excluded by the cap');
+  assert.strictEqual(entries[3].overflow, 1, 'the fourth run is counted in the overflow line, not listed');
+  assert.ok(!entries.some((e) => e.line.includes('spec-1')), 'oldest of 4 orphaned runs excluded by the cap');
   assert.ok(!entries.some((e) => e.line.includes('spec-0')), 'clean run excluded before the cap runs');
 });
 
-test('collectStaleRuns: an ordinary interrupted/active run renders the base status line, no shipped-unclosed embellishment', () => {
+test('collectStaleRuns: an ordinary orphaned run renders its reason and resume command, no shipped-unclosed embellishment', () => {
   const project = tmpProject();
-  mkRun(project, '2026-07-01T090000-spec-1', { status: 'interrupted' });
-  const entries = residue.collectStaleRuns(project, { pluginRoot: '/plugins/claude-tweaks' });
+  const run = mkOrphan(project, '2026-07-01T090000-spec-1', { status: 'interrupted' }, 'draft PR #12, session gone');
+  const entries = residue.collectStaleRuns(project, { pluginRoot: '/plugins/claude-tweaks', liveness: DEAD });
   assert.strictEqual(entries.length, 1);
-  assert.strictEqual(entries[0].line, '- 2026-07-01T090000-spec-1 (status: interrupted)');
+  assert.strictEqual(entries[0].line, `- 2026-07-01T090000-spec-1 (status: interrupted) — draft PR #12, session gone: resume with PIPELINE_RUN_DIR="${run}" /claude-tweaks:flow #1`);
   assert.doesNotMatch(entries[0].line, /appears shipped/);
 });
 
 test('collectStaleRuns: exclude drops the named run dir from the result, even given a non-realpath\'d path', () => {
   const project = tmpProject();
-  const own = mkRun(project, '2026-07-02T090000-spec-2', { status: 'active' });
-  mkRun(project, '2026-07-01T090000-spec-1', { status: 'interrupted' });
-  const entries = residue.collectStaleRuns(project, { exclude: own });
+  const own = mkOrphan(project, '2026-07-02T090000-spec-2', { status: 'active' });
+  mkOrphan(project, '2026-07-01T090000-spec-1', { status: 'interrupted' });
+  const entries = residue.collectStaleRuns(project, { exclude: own, liveness: DEAD });
   assert.strictEqual(entries.length, 1);
   assert.match(entries[0].line, /spec-1/);
   assert.ok(!entries.some((e) => e.line.includes('spec-2')), "the excluded run's own dir must never appear");
 });
 
-test('#2783 collectStaleRuns: ad-hoc dirs never crowd a genuinely interrupted formal run out of the capped report', () => {
+test('#2783 collectStaleRuns: ad-hoc dirs never crowd a genuinely orphaned formal run out of the capped report', () => {
   const project = tmpProject();
-  mkRun(project, '2026-10-01T000000-spec-9', { status: 'interrupted', sessionId: 'X', worktree: '/gone/a' });
-  for (let i = 2; i <= 4; i++) mkRun(project, `2026-10-0${i}T000000-adhoc-standalone`, { status: 'active', sessionId: `S${i}`, worktree: `/gone/w${i}` });
-  const lines = residue.collectStaleRuns(project).map((e) => e.line);
-  assert.deepStrictEqual(lines, ['- 2026-10-01T000000-spec-9 (status: interrupted)']);
+  mkOrphan(project, '2026-10-01T000000-spec-9', { status: 'interrupted', sessionId: 'X', worktree: '/gone/a' }, 'unpushed commits on feat-9');
+  for (let i = 2; i <= 4; i++) mkOrphan(project, `2026-10-0${i}T000000-adhoc-standalone`, { status: 'active', sessionId: `S${i}`, worktree: `/gone/w${i}` }, 'staged items need an outcome');
+  const lines = residue.collectStaleRuns(project, { liveness: DEAD }).map((e) => e.line);
+  assert.strictEqual(lines.length, 1);
+  assert.match(lines[0], /^- 2026-10-01T000000-spec-9 \(status: interrupted\) — unpushed commits on feat-9: resume with /);
 });
 
 test('collectStaleRuns: empty when no non-clean run dir exists', () => {
   const project = tmpProject();
   mkRun(project, '2026-06-30T090000-spec-0', { status: 'clean' });
-  assert.deepStrictEqual(residue.collectStaleRuns(project), []);
+  assert.deepStrictEqual(residue.collectStaleRuns(project, { liveness: DEAD }), []);
+});
+
+test('#3977 AC7: five dead orphans print three rows and one overflow line naming 2 and the listing command', () => {
+  const project = tmpProject();
+  for (let i = 1; i <= 5; i++) mkOrphan(project, `2026-07-0${i}T090000-record-${i}`, { status: 'active' });
+  const entries = residue.collectStaleRuns(project, { pluginRoot: '/p', liveness: DEAD });
+  assert.deepStrictEqual(entries.slice(0, 3).map((e) => path.basename(e.dir)), ['2026-07-05T090000-record-5', '2026-07-04T090000-record-4', '2026-07-03T090000-record-3']);
+  assert.strictEqual(entries.length, 4);
+  assert.strictEqual(entries[3].line, '- … and 2 more orphaned run(s) (newest 3 shown): node "/p/bin/hooks.js" reconcile --dry-run --json --checks archive');
+  assert.strictEqual(entries[3].line, residue.ORPHANED_OVERFLOW_LINE(2, '/p'));
+});
+
+test('#3977 AC7: three dead orphans print no overflow line', () => {
+  const project = tmpProject();
+  for (let i = 1; i <= 3; i++) mkOrphan(project, `2026-07-0${i}T090000-record-${i}`, { status: 'active' });
+  const entries = residue.collectStaleRuns(project, { liveness: DEAD });
+  assert.strictEqual(entries.length, 3);
+  assert.ok(entries.every((e) => e.overflow === undefined));
+});
+
+test('#3977 AC7: live, unknown, would-close-only or no cache print nothing', () => {
+  const project = tmpProject();
+  mkRun(project, '2026-07-01T090000-record-1', { status: 'active' });
+  assert.deepStrictEqual(residue.collectStaleRuns(project, { liveness: DEAD }), [], 'no cache, nothing listed');
+  const file = path.join(project, '.claude-tweaks', 'reconcile-cache.json');
+  fs.writeFileSync(file, JSON.stringify({ wouldClose: [{ runId: '2026-07-01T090000-record-1', reason: 'nothing-to-resume' }], orphaned: [] }));
+  assert.deepStrictEqual(residue.collectStaleRuns(project, { liveness: DEAD }), [], 'a would-close run is reconcile\'s to report');
+  seedOrphan(project, path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-record-1'));
+  assert.deepStrictEqual(residue.collectStaleRuns(project, { liveness: LIVE }), []);
+  assert.deepStrictEqual(residue.collectStaleRuns(project, { liveness: UNKNOWN }), []);
+  assert.deepStrictEqual(residue.collectStaleRuns(project, { liveness: () => { throw new Error('ps'); } }), []);
+});
+
+test('#3977 AC7: a cached orphan whose verdict is now live is dropped (real probes)', () => {
+  const project = tmpProject();
+  const dead = mkOrphan(project, '2026-07-01T090000-record-1', { status: 'interrupted', ...deadOwner('S1') });
+  writeOldEvents(dead);
+  const live = mkOrphan(project, '2026-07-02T090000-record-2', {
+    status: 'interrupted', ...deadOwner('S2'), owner: { ...deadOwner('S2').owner, heartbeatAt: new Date().toISOString() },
+  });
+  writeOldEvents(live);
+  const lines = residue.collectStaleRuns(project).map((e) => e.line);
+  assert.strictEqual(lines.length, 1, JSON.stringify(lines));
+  assert.match(lines[0], /record-1/);
+});
+
+test('#3977 banner drops a cached orphan whose dir is gone', () => {
+  const project = tmpProject();
+  seedOrphan(project, path.join(project, '.claude-tweaks', 'pipelines', '2026-07-09T090000-record-9'));
+  assert.deepStrictEqual(residue.collectStaleRuns(project, { liveness: DEAD }), []);
+});
+
+test('#3977 AC8: each row names its reason and a resume command; a slug with no record gets the listing command', () => {
+  const project = tmpProject();
+  mkOrphan(project, '2026-07-01T090000-record-41-42', { status: 'active' }, 'unpushed commits on feat-41');
+  mkOrphan(project, '2026-07-02T090000-topic-x', { status: 'active' }, 'staged items need an outcome');
+  const lines = residue.collectStaleRuns(project, { pluginRoot: '/p', liveness: DEAD }).map((e) => e.line);
+  assert.match(lines[0], /topic-x \(status: active\) — staged items need an outcome: list with node "\/p\/bin\/hooks\.js" reconcile --dry-run --json --checks archive$/);
+  assert.match(lines[1], /record-41-42 \(status: active\) — unpushed commits on feat-41: resume with PIPELINE_RUN_DIR=".*record-41-42" \/claude-tweaks:flow #41,#42$/);
 });
 
 test('collectApprovableStandalone: reports a clean tidy-standalone run with non-empty staged/', () => {
@@ -352,13 +426,20 @@ test('scanUnresolvedConsoles: window Infinity with limit Infinity reaches runs b
 // (modeled on tests/run-integrity.test.js's fixtureRepo): `trunk` integration
 // branch, a linked worktree on `feat-branch` with one commit dated after the
 // run dir's own start prefix, and a multi-spec run dir recording that worktree.
-const { reentryFixture, reentryGit, writeReentryManifest, EV_BUILD } = require('../../helpers/reentry-fixture');
+const { reentryFixture, reentryGit, writeReentryManifest, EV_BUILD, RUN_ID } = require('../../helpers/reentry-fixture');
 
+// #3977: the re-entry fixture's run is listed only once cached as orphaned and dead.
+const { mainCheckoutRoot } = require('../../../plugin/bin/lib/hooks/worktree-detect');
+function staleOf(cwd) {
+  const main = mainCheckoutRoot(cwd) || cwd;
+  seedOrphan(main, path.join(main, '.claude-tweaks', 'pipelines', RUN_ID));
+  return residue.collectStaleRuns(cwd, { pluginRoot: '/plugins/claude-tweaks', liveness: DEAD });
+}
 const reentrySuffix = (runDir) => ` — consolidated pass never ran: PIPELINE_RUN_DIR="${runDir}" /claude-tweaks:flow #11,#12 review-console`;
 
 test('AC5.1 eligible multi-spec parent line ends with the review-console command', () => {
   const { root, runDir } = reentryFixture();
-  const entries = residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' });
+  const entries = staleOf(root);
   assert.strictEqual(entries.length, 1);
   assert.ok(entries[0].line.startsWith('- 2026-08-01T090000-spec-11-12 (status: active)'), entries[0].line);
   assert.ok(entries[0].line.endsWith(reentrySuffix(runDir)), entries[0].line);
@@ -367,7 +448,7 @@ test('AC5.1 eligible multi-spec parent line ends with the review-console command
 test('AC1.1 local-files CLAUDE.md -> suffix lists bare ids', () => {
   const { root, runDir } = reentryFixture();
   fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# P\n\nwork-backend: local-files\n');
-  const entries = residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' });
+  const entries = staleOf(root);
   assert.strictEqual(entries.length, 1);
   assert.ok(entries[0].line.endsWith(` — consolidated pass never ran: PIPELINE_RUN_DIR="${runDir}" /claude-tweaks:flow 11,12 review-console`), entries[0].line);
 });
@@ -375,7 +456,7 @@ test('AC1.1 local-files CLAUDE.md -> suffix lists bare ids', () => {
 test('AC1.2 github-issues CLAUDE.md keeps the # ids', () => {
   const { root, runDir } = reentryFixture();
   fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# P\n\nwork-backend: github-issues\n');
-  const entries = residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' });
+  const entries = staleOf(root);
   assert.strictEqual(entries.length, 1);
   assert.ok(entries[0].line.endsWith(reentrySuffix(runDir)), entries[0].line);
 });
@@ -383,7 +464,7 @@ test('AC1.2 github-issues CLAUDE.md keeps the # ids', () => {
 test('#3554 unknown work-backend keeps the # ids', () => {
   const { root, runDir } = reentryFixture();
   fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# P\n\nwork-backend: jira\n');
-  const entries = residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' });
+  const entries = staleOf(root);
   assert.strictEqual(entries.length, 1);
   assert.ok(entries[0].line.endsWith(reentrySuffix(runDir)), entries[0].line);
 });
@@ -391,7 +472,7 @@ test('#3554 unknown work-backend keeps the # ids', () => {
 test('#3554 the suffix reads the main checkout CLAUDE.md, not the worktree one', () => {
   const { wt, runDir } = reentryFixture();
   fs.writeFileSync(path.join(wt, 'CLAUDE.md'), '# P\n\nwork-backend: local-files\n');
-  const entries = residue.collectStaleRuns(wt, { pluginRoot: '/plugins/claude-tweaks' });
+  const entries = staleOf(wt);
   assert.strictEqual(entries.length, 1);
   assert.ok(entries[0].line.endsWith(reentrySuffix(runDir)), entries[0].line);
 });
@@ -400,7 +481,7 @@ test('#3497 review a non-integer manifest id suppresses the suffix', () => {
   const { root, runDir } = reentryFixture();
   const text = fs.readFileSync(path.join(runDir, 'manifest.yml'), 'utf8').replace('- id: 12', '- id: 12; rm -rf x');
   fs.writeFileSync(path.join(runDir, 'manifest.yml'), text);
-  const entries = residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' });
+  const entries = staleOf(root);
   assert.strictEqual(entries.length, 1);
   assert.doesNotMatch(entries[0].line, /review-console/);
 });
@@ -414,7 +495,7 @@ test('AC5.1 ineligible variants carry no suffix', () => {
   for (const [label, mutate] of Object.entries(mutations)) {
     const { root, runDir } = reentryFixture();
     mutate(runDir);
-    const entries = residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' });
+    const entries = staleOf(root);
     assert.strictEqual(entries.length, 1, label);
     assert.doesNotMatch(entries[0].line, /review-console/, label);
   }
@@ -423,7 +504,7 @@ test('AC5.1 ineligible variants carry no suffix', () => {
 test('AC5.1 merged branch -> no suffix and no shipped line', () => {
   const { root } = reentryFixture();
   reentryGit(root, 'merge', '-q', '--no-edit', 'feat-branch');
-  const entries = residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' });
+  const entries = staleOf(root);
   assert.strictEqual(entries.length, 1);
   assert.doesNotMatch(entries[0].line, /review-console/);
   assert.doesNotMatch(entries[0].line, /appears shipped/);
@@ -432,7 +513,7 @@ test('AC5.1 merged branch -> no suffix and no shipped line', () => {
 test('AC5.1 shipped-unclosed keeps the shipped line, no suffix', () => {
   const { root } = reentryFixture({ events: [EV_BUILD] });
   reentryGit(root, 'merge', '-q', '--no-edit', 'feat-branch');
-  const entries = residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' });
+  const entries = staleOf(root);
   assert.strictEqual(entries.length, 1);
   assert.match(entries[0].line, /appears shipped/);
   assert.doesNotMatch(entries[0].line, /review-console/);
@@ -441,8 +522,129 @@ test('AC5.1 shipped-unclosed keeps the shipped line, no suffix', () => {
 test('#3497 I1 banner carries no suffix while the parent worktree is locked by a live pid', () => {
   const { root, wt } = reentryFixture();
   reentryGit(root, 'worktree', 'lock', '--reason', `claude session (pid ${process.pid})`, wt);
-  const entries = residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks' });
+  const entries = staleOf(root);
   assert.strictEqual(entries.length, 1);
   assert.ok(entries[0].line.startsWith('- 2026-08-01T090000-spec-11-12 (status: active)'), entries[0].line);
   assert.doesNotMatch(entries[0].line, /review-console/);
+});
+
+// #5377: collectStaleRuns and the check-session-residue verb run the integrity check's git children in
+// the env the caller passes. The passed env is clean while the real process.env names no repository for
+// the length of the call (restored in `finally`); the same call without `env` is the control and cannot
+// see the merge. #3977: each run is seeded as a cached orphan and judged dead (the seam), so the
+// banner lists it; the verb test below reaches a real dead verdict instead.
+const { hookEnv, runHookCli } = require('../../helpers/hook-event');
+const seedFixtureOrphan = (root) => seedOrphan(root, path.join(root, '.claude-tweaks', 'pipelines', RUN_ID));
+const { withBrokenGitDir } = require('../../helpers/process-env');
+
+test('#5377 collectStaleRuns env: the shipped-unclosed verdict is reached through the passed env', () => {
+  const { root } = reentryFixture({ events: [EV_BUILD] });
+  reentryGit(root, 'merge', '-q', '--no-edit', 'feat-branch');
+  seedFixtureOrphan(root);
+  const env = hookEnv();
+  const withEnv = withBrokenGitDir(() => residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks', env, liveness: DEAD }));
+  assert.match(withEnv[0].line, /appears shipped/);
+  const control = withBrokenGitDir(() => residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks', liveness: DEAD }));
+  assert.doesNotMatch(control[0].line, /appears shipped/, 'control: without env the broken GIT_DIR is seen');
+});
+
+// checkPassReentry's liveness probes take the passed env too, but this test reads only the landed
+// check's options, through an injected spy, with the caller's own session id skipping liveness.
+test('#5377 checkPassReentry env: checkBranchLanded gets the passed env, and exactly { cache } when none is passed', () => {
+  const { runDir } = reentryFixture();
+  const stateFile = path.join(runDir, 'run-state.json');
+  fs.writeFileSync(stateFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(stateFile, 'utf8')), sessionId: 'S-5377' }));
+  const passReentry = require('../../../plugin/bin/lib/flow/consolidated-pass');
+  const seen = [];
+  const deps = { checkBranchLanded: (_dir, opts) => { seen.push(opts); return { landed: false }; } };
+  const env = hookEnv();
+  assert.strictEqual(passReentry.checkPassReentry(runDir, { env, sessionId: 'S-5377', deps }).eligible, true);
+  assert.strictEqual(passReentry.checkPassReentry(runDir, { sessionId: 'S-5377', deps }).eligible, true);
+  assert.strictEqual(seen[0].env, env);
+  assert.deepStrictEqual(Object.keys(seen[1]), ['cache']);
+});
+
+// The recorded worktree is live, so parentLiveDetail runs the liveness probes (worktree lock, last commit)
+// and the landed check, every one of them a git child that must run in the passed env.
+test('#5377 collectStaleRuns env: the re-entry check with a live recorded worktree runs its probes and landed check in the passed env', () => {
+  const { root, wt, runDir } = reentryFixture();
+  assert.ok(fs.existsSync(wt), 'precondition: the recorded worktree exists');
+  seedFixtureOrphan(root);
+  const env = hookEnv();
+  const withEnv = withBrokenGitDir(() => residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks', env, liveness: DEAD }));
+  assert.ok(withEnv[0].line.endsWith(reentrySuffix(runDir)), withEnv[0].line);
+  const control = withBrokenGitDir(() => residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks', liveness: DEAD }));
+  assert.doesNotMatch(control[0].line, /review-console/, 'control: without env the broken GIT_DIR is seen');
+});
+
+test('#5377 checkResumeFreshness env: an interrupted run with a live worktree is judged stale through the passed env', () => {
+  const { runDir } = reentryFixture();
+  const stateFile = path.join(runDir, 'run-state.json');
+  fs.writeFileSync(stateFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(stateFile, 'utf8')), status: 'interrupted' }));
+  const { checkResumeFreshness } = require('../../../plugin/bin/lib/hooks/resume-freshness');
+  const env = hookEnv();
+  assert.strictEqual(withBrokenGitDir(() => checkResumeFreshness(runDir, { env })).verdict, 'stale');
+  assert.strictEqual(withBrokenGitDir(() => checkResumeFreshness(runDir)).verdict, 'indeterminate', 'control: without env the broken GIT_DIR is seen');
+});
+
+test('#5377 collectStaleRuns env: an interrupted multi-spec run reaches checkResumeFreshness and the landed check through the passed env', () => {
+  const { root, runDir } = reentryFixture();
+  const stateFile = path.join(runDir, 'run-state.json');
+  fs.writeFileSync(stateFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(stateFile, 'utf8')), status: 'interrupted' }));
+  seedFixtureOrphan(root);
+  const env = hookEnv();
+  const withEnv = withBrokenGitDir(() => residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks', env, liveness: DEAD }));
+  assert.ok(withEnv[0].line.endsWith(reentrySuffix(runDir)), withEnv[0].line);
+  const control = withBrokenGitDir(() => residue.collectStaleRuns(root, { pluginRoot: '/plugins/claude-tweaks', liveness: DEAD }));
+  assert.doesNotMatch(control[0].line, /review-console/, 'control: without env the broken GIT_DIR is seen');
+});
+
+test('#5377 lastCommitMs env: an unborn HEAD is recognised through the passed env', () => {
+  const { execFileSync } = require('child_process');
+  const { lastCommitMs } = require('../../../plugin/bin/lib/run-liveness/probes');
+  const repo = fs.realpathSync(scratchDir('ct-sr5377-unborn-'));
+  execFileSync('git', ['init', '-q', repo], { env: hookEnv() });
+  const env = hookEnv();
+  assert.strictEqual(withBrokenGitDir(() => lastCommitMs(repo, env)), null);
+  assert.throws(() => withBrokenGitDir(() => lastCommitMs(repo)), /could not read the last commit time/, 'control: without env the broken GIT_DIR is seen');
+});
+
+test('#5377 probesFor: no env returns DEFAULT_PROBES itself, an env binds the ps child to it', () => {
+  const cp = require('child_process');
+  const { probesFor, DEFAULT_PROBES } = require('../../../plugin/bin/lib/run-liveness/probes');
+  assert.strictEqual(probesFor(undefined), DEFAULT_PROBES);
+  const real = cp.execFileSync;
+  let seen = null;
+  cp.execFileSync = (file, args, opts) => { seen = opts; return 'Sat Oct 24 08:08:15 2026\n'; };
+  let started;
+  try {
+    started = probesFor({ SENTINEL_5377: 'ctx-env' }).pidStartTime(process.pid);
+  } finally {
+    cp.execFileSync = real;
+  }
+  if (process.platform === 'win32') {
+    // pidStartTime is null on win32 by design (process-probe.js) and never starts ps.
+    assert.strictEqual(started, null);
+    assert.strictEqual(seen, null);
+  } else {
+    assert.strictEqual(started, 'Sat Oct 24 08:08:15 2026');
+    assert.strictEqual(seen.env.SENTINEL_5377, 'ctx-env');
+    assert.strictEqual(seen.env.LC_ALL, 'C');
+  }
+});
+
+test('#5377 check-session-residue verb: the shipped-unclosed verdict is reached through the verb env', async () => {
+  const { root, runDir } = reentryFixture({ events: [EV_BUILD] });
+  reentryGit(root, 'merge', '-q', '--no-edit', 'feat-branch');
+  const stateFile = path.join(runDir, 'run-state.json');
+  fs.writeFileSync(stateFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(stateFile, 'utf8')), ...deadOwner() }));
+  seedFixtureOrphan(root);
+  const own = path.join(root, '.claude-tweaks', 'pipelines', '2026-08-02T090000-own');
+  fs.mkdirSync(own, { recursive: true });
+  fs.writeFileSync(path.join(own, 'decisions.md'), '');
+  const env = hookEnv();
+  // The broken GIT_DIR stays in place until the awaited call settles.
+  const { code, stdout } = await withBrokenGitDir(() => runHookCli(['check-session-residue', '--run', own], { cwd: root, env }));
+  assert.strictEqual(code, 0);
+  assert.match(stdout, /appears shipped/);
 });

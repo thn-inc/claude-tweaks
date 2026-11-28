@@ -84,8 +84,11 @@ marker instead (`flow/multispec-parallel-waves.md` runs the wave's build phase e
 merge-back).
 
 Ship at every phase exit, not batched — measured at ≥50× headroom against the GitHub API budget
-(spike #405; `git push` itself costs zero REST/GraphQL calls, so per-phase cadence is free
-regardless of phase count).
+(spike #405; `git push` itself costs zero REST/GraphQL calls, so the API cost of per-phase cadence
+is free regardless of phase count). Actions minutes are the cost that does scale: under `pr-first`
+every push to the draft PR runs the project's `pull_request` CI unless the project follows
+`_shared/ci-skips-drafts.md`'s convention. That convention is the mitigation; the cadence stays
+per-phase for durability and visibility.
 
 **Failure degrades per-attempt, never persists.** A failed phase-exit push (network, auth, a
 rejected non-fast-forward) logs a warning to the run's `decisions.md` and the phase continues —

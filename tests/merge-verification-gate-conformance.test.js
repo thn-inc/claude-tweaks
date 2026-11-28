@@ -9,6 +9,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
 const { toPosix } = require('../plugin/bin/lib/shared-primitives');
+const { sectionOf } = require('./helpers/conformance-asserts');
+const os = require('node:os');
+const { spawnSync } = require('node:child_process');
+const { HEAD_RUN_FIELDS, PR_EVENT_SETTLE_MS } = require('../plugin/bin/lib/pr-checks/classify');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
 const GATE_FILE = path.join(SKILLS, '_shared', 'pr-first-merge.md');
@@ -97,7 +101,9 @@ test('the gate cross-checks head-sha workflow runs before reading green (#3405)'
   const signatures = appendix.slice(appendix.indexOf('## Signatures'), appendix.indexOf('\n## ', appendix.indexOf('## Signatures') + 1));
   assert.ok(signatures.includes('#3390') && signatures.includes('39042323352'), 'Signatures list missing the #3390 capture (run 39042323352)');
   // The resume confirmation's one read-then-decide classifies from both reads, not the rollup alone.
-  const resume = section.slice(section.indexOf('**Resume-to-merge is one-shot.**'));
+  // The rule moved to the appendix (#5153, composed-bundle byte rail); Step 2.5 keeps a labeled stub that points at it.
+  assert.ok(section.includes('**Resume-to-merge is one-shot.**') && section.includes('"Resume-to-merge"'), 'Step 2.5 must keep the resume stub and its pointer to the appendix');
+  const resume = sectionOf(appendix, '## Resume-to-merge');
   assert.ok(resume.includes('gh run list') && resume.includes('not-yet-completed head run reads pending'), 'resume paragraph must classify from the head-run read too');
   // The RC=0 re-read names the not-yet-completed head run case and resumes the watch, never a blind merge.
   const rc0 = section.slice(section.indexOf('`RC=0` → **green**'), section.indexOf('`RC=1` (a check failed'));
@@ -108,6 +114,184 @@ test('the gate cross-checks head-sha workflow runs before reading green (#3405)'
   }
   // The 0) branch breaks only at zero pending head runs, and a failed runs read stops the watch rather than breaking green.
   assert.ok(zeroBranch.includes('"${PENDING_RUNS:-x}" = 0 ] && break') && zeroBranch.includes('RC=2; break'), 'bounded-watch 0) branch must gate its break on zero pending head runs and stop on a failed read');
+  // #5153: the 0) arm re-runs bin/ready-run.js and an `awaiting` read keeps the watch going.
+  assert.ok(zeroBranch.includes('bin/ready-run.js'), 'bounded-watch 0) branch must re-run bin/ready-run.js');
+  const awaitingAt = zeroBranch.indexOf('[ "$READY" = awaiting ] && PENDING_RUNS=1');
+  const breakAt = zeroBranch.indexOf('"${PENDING_RUNS:-x}" = 0 ] && break');
+  assert.ok(awaitingAt !== -1 && breakAt !== -1 && awaitingAt < breakAt, 'the awaiting line must sit before the PENDING_RUNS break line');
+  assert.ok(!zeroBranch.slice(zeroBranch.indexOf('bin/ready-run.js'), breakAt).includes('1)'), 'the inserted ready-run lines must not contain a 1) that truncates the 0) arm slice');
+  assert.ok(section.includes('awaitingReadyRun'), 'the watch prose names awaitingReadyRun');
+  // #3467: a held conclusion keeps the watch going. The 0) arm requests HEAD_RUN_FIELDS and counts heldChecks.
+  assert.ok(zeroBranch.includes(`--json ${HEAD_RUN_FIELDS} >`), 'the 0) head-run read requests HEAD_RUN_FIELDS');
+  const pendingLine = zeroBranch.split('\n').find((l) => l.includes('PENDING_RUNS=$('));
+  assert.ok(pendingLine && pendingLine.includes('heldChecks'), 'PENDING_RUNS counts heldChecks');
+  assert.ok(!/--jq/.test(watch), 'no --jq program inside the loop (worktree guard)');
+  assert.ok(rc0.includes('not yet `completed` **or held**'), 'the RC=0 bullet names a held head run as resuming the bounded watch');
+  const rc1 = section.slice(section.indexOf('- `RC=1`'), section.indexOf('- `RC=3`'));
+  assert.ok(rc1.includes('{pr-checks-json-path}') && rc1.includes('FAILING_CONCLUSIONS') && !rc1.includes('`fail` rows'), 'the RC=1 bullet takes names from the --json rows in FAILING_CONCLUSIONS, never gh\'s fail bucket');
+});
+
+// #3468: the PR-event settle window. The prose twin of classify.js's prEventSettle.
+const CLASSIFY_JS = path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'pr-checks', 'classify.js');
+function step25Of(gateText) {
+  return gateText.slice(gateText.indexOf('## Step 2.5: Merge-verification gate'), gateText.indexOf('## Step 3:'));
+}
+function watchZeroArm(section) {
+  const watch = section.slice(section.indexOf('DEADLINE='), section.indexOf('\n```', section.indexOf('DEADLINE=')));
+  return watch.slice(watch.indexOf('0)'), watch.indexOf('1)'));
+}
+
+test('#3468: Step 2.5 states the settle window and its code twin', () => {
+  const section = step25Of(readText(GATE_FILE));
+  const lines = section.split('\n');
+  const at = lines.findIndex((l) => l.startsWith('- ') && l.includes('prEventSettle'));
+  assert.ok(at !== -1, 'Step 2.5 carries a classification bullet naming prEventSettle');
+  const bullet = lines.slice(at, lines.findIndex((l, i) => i > at && l.startsWith('- '))).join('\n');
+  // A DIRTY/CONFLICTING PR takes the Conflict path before the window (#3607; driver merge.js isConflicting before classify).
+  for (const needle of ['`pull_request_target`', 'prEventSettle', `${PR_EVENT_SETTLE_MS / 1000} seconds`, '{pr-created-at}', '{head-committed-at}', '`DIRTY`/`CONFLICTING` takes the **Conflict path** first', '`merge-when-green`/`wait`']) {
+    assert.ok(bullet.includes(needle), `settle bullet missing "${needle}"`);
+  }
+  const heldAt = lines.findIndex((l) => l.includes('(held; code twin `HELD_CONCLUSIONS`)'));
+  const emptyAt = lines.findIndex((l) => l.startsWith('- An **empty rollup**'));
+  assert.ok(heldAt !== -1 && emptyAt !== -1 && heldAt < at && at < emptyAt, 'the settle bullet sits after the held bullet and before the empty-rollup bullet');
+  // A settle-only pending never arms --auto (Task 3's driver rule): the merge-when-green row says so.
+  const mwg = lines.find((l) => l.startsWith('| `merge-when-green` |'));
+  assert.ok(mwg && mwg.includes('settle window'), 'the merge-when-green pending column names the settle window');
+  // The Forge-cooperation line keeps its trigger (a rejected merge attempt), so it never reads as a state rule that arms while settling.
+  const forge = lines.find((l) => l.startsWith('**Forge-cooperation path**'));
+  assert.ok(forge && forge.includes('A merge attempt rejected by org-owned required checks') && forge.includes('never suggest bypassing protection'), 'the Forge-cooperation line names its rejected-merge trigger');
+  // RC=124 names the settle window as a cause of the timeout park.
+  assert.ok(section.includes('still pending at the bound (an open or unreadable settle window included)'), 'the RC=124 bullet names the settle window');
+  const appendix = read('_shared', 'pr-first-merge-appendix.md');
+  const why = sectionOf(appendix, '## PR-event settle window (#3468)');
+  for (const needle of ['path filter', 'clock', 'skew']) assert.ok(why.includes(needle), `appendix settle section missing "${needle}"`);
+});
+
+test('#3468: Step 2.5\'s state read requests createdAt', () => {
+  const section = step25Of(readText(GATE_FILE));
+  const read0 = section.split('\n').find((l) => l.startsWith('gh pr view {pr-number}') && l.includes('statusCheckRollup'));
+  assert.ok(read0, 'Step 2.5 carries the Read-state-first gh pr view line');
+  const fields = read0.slice(read0.indexOf('--json ') + '--json '.length).split(/\s/)[0].split(',');
+  assert.ok(fields.includes('createdAt'), `the state read's --json list must include createdAt: ${fields.join(',')}`);
+});
+
+// Runs the 0) arm's PENDING_RUNS node -e program against a temp runs file, exactly as the fence passes its arguments.
+function pendingCount(line, runs, headCommittedAt, prCreatedAt) {
+  const start = line.indexOf('node -e "') + 'node -e "'.length;
+  const program = line.slice(start, line.indexOf('" --', start));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'settle-watch-'));
+  try {
+    const file = path.join(dir, 'runs.json');
+    fs.writeFileSync(file, JSON.stringify(runs));
+    const r = spawnSync(process.execPath, ['-e', program, '--', file, CLASSIFY_JS, headCommittedAt, prCreatedAt], { encoding: 'utf8', windowsHide: true });
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout.trim();
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test('#3468: the watch 0) arm counts an open settle window as pending', () => {
+  const zeroBranch = watchZeroArm(step25Of(readText(GATE_FILE)));
+  const line = zeroBranch.split('\n').find((l) => l.includes('PENDING_RUNS=$('));
+  assert.ok(line, 'the 0) arm carries the PENDING_RUNS line');
+  for (const needle of ['prEventSettle(', '"{head-committed-at}"', '"{pr-created-at}"']) {
+    assert.ok(line.includes(needle), `PENDING_RUNS line missing ${needle}`);
+  }
+  const now = new Date().toISOString();
+  const push = { databaseId: 1, name: 'track', workflowName: 'track', status: 'completed', conclusion: 'success', url: 'u', startedAt: now, event: 'push', createdAt: now };
+  const pr = { ...push, databaseId: 2, name: 'test', workflowName: 'test', event: 'pull_request' };
+  const secondAgo = new Date(Date.now() - 1000).toISOString();
+  assert.notEqual(pendingCount(line, [push], '', secondAgo), '0', 'a push-only head inside the window counts as pending');
+  assert.notEqual(pendingCount(line, [push], '', ''), '0', 'an unreadable PR created-at fails closed to pending');
+  assert.equal(pendingCount(line, [push, pr], '', secondAgo), '0', 'a pull_request run ends the window');
+  // Go-red control: the same line without the settle term reads the push-only head as zero pending.
+  const term = line.slice(line.indexOf('+c.prEventSettle('), line.indexOf('.settling', line.indexOf('+c.prEventSettle(')) + '.settling'.length);
+  assert.ok(term.startsWith('+c.prEventSettle(') && term.endsWith('.settling'), 'the live line carries the settle term the control removes');
+  const without = line.replace(term, '');
+  assert.notEqual(without, line);
+  assert.equal(pendingCount(without, [push], '', secondAgo), '0', 'without the settle term a push-only head reads zero pending');
+});
+
+test('#3468: the RC=0 bullet resumes the watch on an open settle window', () => {
+  const section = step25Of(readText(GATE_FILE));
+  const rc0 = section.slice(section.indexOf('`RC=0` → **green**'), section.indexOf('`RC=1` (a check failed'));
+  const held = rc0.indexOf('not yet `completed` **or held**');
+  assert.ok(held !== -1, 'RC=0 bullet keeps the held clause');
+  const resumes = rc0.indexOf('resumes the bounded watch', held);
+  assert.ok(resumes !== -1 && rc0.slice(held, resumes).includes('settle window'), 'the RC=0 bullet names the open settle window beside held runs as resuming the watch');
+});
+
+// #3468 review M11: the settle window lengthens the watch, so the RC=0 re-read routes a conflicting PR to
+// the Conflict path before any merge (driver merge.js rereadThenMerge: isConflicting before mergeCall).
+function assertRc0RoutesConflict(gateText) {
+  const section = step25Of(gateText);
+  const rc0 = section.slice(section.indexOf('`RC=0` → **green**'), section.indexOf('`RC=1` (a check failed'));
+  const reread = rc0.match(/--json ([a-zA-Z,]+)`\)/);
+  assert.ok(reread && reread[1].split(',').includes('mergeable'), 'RC=0 re-read: the --json list must include mergeable');
+  const conflict = rc0.indexOf('`DIRTY`/`CONFLICTING` → **Conflict path**');
+  assert.ok(conflict !== -1, 'RC=0 re-read: a DIRTY/CONFLICTING re-read must take the Conflict path');
+  assert.ok(conflict < rc0.indexOf('otherwise merge via Step 3'), 'RC=0 re-read: the Conflict path is taken before the merge');
+}
+
+test('#3468: the RC=0 re-read routes a conflicting PR to the Conflict path', () => {
+  const gate = readText(GATE_FILE);
+  assertRc0RoutesConflict(gate);
+  const clause = '`DIRTY`/`CONFLICTING` → **Conflict path**; ';
+  assert.ok(gate.includes(clause), 'control needs the live clause');
+  assert.throws(() => assertRc0RoutesConflict(gate.replace(clause, '')), /Conflict path/);
+});
+
+// #3468 review M12: the generic pending bullet precedes the conflict carve-outs, while every code twin
+// takes the conflict before a pending verdict, so a lead-in states conflict-first for the whole list.
+const CONFLICT_FIRST = '`DIRTY`/`CONFLICTING` takes the **Conflict path** before every **pending** rule below.';
+
+test('#3468: the classification list leads with conflict-first over pending', () => {
+  const section = step25Of(readText(GATE_FILE));
+  const lead = section.indexOf(CONFLICT_FIRST);
+  const list = section.indexOf('Classify from the three reads, in this order:');
+  const pending = section.indexOf('- Any entry with `status` not `COMPLETED`');
+  assert.ok(lead !== -1, 'Step 2.5 carries the conflict-first lead-in');
+  assert.ok(lead < list && list < pending, 'the lead-in sits before the classification list and its first pending bullet');
+});
+
+// #5153 AC7.2: every clause of the watch's ready-run edit, one message each, so a mutation control
+// can prove the clause it removed is the clause that throws.
+function assertReadyRunWatchClauses(gateText) {
+  const step25 = gateText.indexOf('## Step 2.5: Merge-verification gate');
+  const section = gateText.slice(step25, gateText.indexOf('## Step 3:'));
+  const rc0 = section.slice(section.indexOf('`RC=0` → **green**'), section.indexOf('`RC=1` (a check failed'));
+  assert.ok(rc0.includes('awaitingReadyRun') && rc0.includes('resumes the bounded watch'), 'RC=0 clause: the bullet must resume the bounded watch on awaitingReadyRun');
+  assert.ok(rc0.includes('; any other ready-run state routes per Step 2.5; otherwise merge'), 'RC=0 re-read clause: any other ready-run state (read-failed included) must route per Step 2.5 before the merge');
+  assert.equal(section.split('DEADLINE=$(( $(date +%s) + 900 ))').length - 1, 1, 'deadline clause: the 15-minute literal must appear exactly once');
+  assert.ok(/^\*\*Bounded watch \([^\n]*— 15 minutes, fixed\.\*\*$/m.test(section), 'deadline clause: the heading must end — 15 minutes, fixed.**');
+  const rc3Start = section.indexOf('- `RC=3`');
+  const rc3 = section.slice(rc3Start, section.indexOf('- `RC=124`'));
+  assert.ok(rc3Start !== -1 && rc3.includes('(ready-run `red` or `draft-skip-without-ready-trigger`)') && rc3.includes('Red path'), 'RC=3 clause: the bullet must name draft-skip-without-ready-trigger and the Red path');
+  assert.ok(section.includes('checks, head runs or an awaited ready run still pending at the bound'), 'RC=124 clause: the bullet must name an awaited ready run');
+  const printf = section.split('\n').find((l) => l.includes("printf 'Parked by merge-verification"));
+  assert.ok(printf, 'park clause: the printf line must exist');
+  assert.ok(!printf.includes('Resume once green'), 'park clause: the format string must not hard-code Resume once green');
+  assert.ok(printf.includes(". %s\\n'") && printf.includes('"$VALUE" "$REASON" "$PR" "$RESUME"'), 'park clause: the format string must end %s\\n and take $RESUME as the fourth argument');
+}
+
+test('AC7.2: the RC=0 bullet resumes the bounded watch on awaitingReadyRun and the 15-minute deadline literal is unchanged', () => {
+  const gate = readText(GATE_FILE);
+  assertReadyRunWatchClauses(gate);
+  const mutate = (from, to, message) => {
+    assert.ok(gate.includes(from), `control needs the live text: ${from}`);
+    const mutated = gate.replace(from, to);
+    assert.notEqual(mutated, gate);
+    assert.throws(() => assertReadyRunWatchClauses(mutated), { message: new RegExp(message.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) }, message);
+  };
+  mutate(', as does an `awaiting` ready-run read (`awaitingReadyRun`)', '', 'RC=0 clause: the bullet must resume the bounded watch on awaitingReadyRun');
+  mutate('; any other ready-run state routes per Step 2.5', '', 'RC=0 re-read clause: any other ready-run state (read-failed included) must route per Step 2.5 before the merge');
+  mutate('DEADLINE=$(( $(date +%s) + 900 ))', 'DEADLINE=$(( $(date +%s) + 1800 ))', 'deadline clause: the 15-minute literal must appear exactly once');
+  mutate('— 15 minutes, fixed.**', '— 30 minutes.**', 'deadline clause: the heading must end — 15 minutes, fixed.**');
+  mutate('- `RC=3` (ready-run `red` or `draft-skip-without-ready-trigger`)', '- `RC=3` (ready-run `red`)', 'RC=3 clause: the bullet must name draft-skip-without-ready-trigger and the Red path');
+  mutate('checks, head runs or an awaited ready run still pending at the bound', 'checks or head runs still running at the bound', 'RC=124 clause: the bullet must name an awaited ready run');
+  mutate('"$PR" "$RESUME" >', '"$PR" >', 'park clause: the format string must end %s\\n and take $RESUME as the fourth argument');
+  mutate('PR #%s. %s\\n\'', 'PR #%s. Resume once green.\\n\'', 'park clause: the format string must not hard-code Resume once green');
 });
 
 // #4550: `gh pr checks` on a PR whose checks have not registered yet prints "no checks reported on

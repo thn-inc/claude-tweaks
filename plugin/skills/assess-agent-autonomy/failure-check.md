@@ -42,6 +42,10 @@ logs) — already in the calling agent's context from the run that just failed.
 - **Ambiguous**: anything that doesn't clearly match either pattern. Classify `ambiguous` and
   handle it exactly like `correctness` downstream (see Output) — when genuinely unsure, err toward
   the existing conservative behavior, never toward the new permissive one.
+- **Blocker-landing stop**: `/flow`'s pre-claim blocker-landing stop (`ISSUE #{n}: failed:blocker-landing`)
+  is not a failure this mode judges — Settle skips this mode for it (`dispatch/settle-and-merge.md`'s
+  Blocker-landing special case). If one reaches this mode anyway, classify it `transient`: no build
+  or test ran, so no diff is at fault, and the stop clears once the blocker lands.
 - **`NOTIFY_NOW`**: set `true` when this is the *same* `correctness`-class failure recurring
   verbatim across two or more consecutive attempts — compare this failure's content against the
   prior `Attempt N failed: {reason}` comment bodies in `/tmp/assess-failure-comments-${N}.json`

@@ -7,7 +7,7 @@
 // call here means the uncapped-listing fix and its truncation detection live
 // in one tested place, not re-derived at each of the three prose call sites.
 //
-// Usage: list-claims.js [--repo owner/name] [--format names|json] [--help]
+// Usage: list-claims.js [--repo [host/]owner/name] [--format names|json] [--help]
 // `--format names` (default): one `claims/issue-{n}.json` filename per
 // line on stdout — the exact shape the old `gh api .../contents/claims
 // -q '.[].name'` one-liner produced, so every existing `while read -r
@@ -34,7 +34,7 @@ const {
   parseRepo, ghAvailable, remoteUrl, repoSlug, pinExplicitRepoHost, gateOriginRepo,
 } = require('./lib/repo-resolve');
 
-const USAGE = 'usage: list-claims.js [--repo owner/name] [--format names|json] [--help]\n';
+const USAGE = 'usage: list-claims.js [--repo [host/]owner/name] [--format names|json] [--help]\n';
 const FORMATS = ['names', 'json'];
 
 function parseArgs(argv) {
@@ -77,7 +77,7 @@ function run(argv, deps) {
     if (gated.refusal) { deps.stderr(`list-claims.js: ${gated.refusal}\n`); return 2; }
     repoSpec = gated.spec;
   }
-  if (!repoSpec) { deps.stderr('list-claims.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
+  if (!repoSpec) { deps.stderr('list-claims.js: could not resolve owner/repo — pass --repo [host/]owner/name\n'); return 2; }
   if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
 
   const slug = deps.repoSlug(repoSpec);

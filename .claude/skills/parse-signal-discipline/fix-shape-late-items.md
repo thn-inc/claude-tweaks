@@ -1,4 +1,4 @@
-# Parse-Signal Discipline — fix shape, items 17-26
+# Parse-Signal Discipline — fix shape, items 17-30
 
 Lazy-loaded from `SKILL.md`'s "The fix shape" section; the numbering continues that list.
 
@@ -244,3 +244,103 @@ Lazy-loaded from `SKILL.md`'s "The fix shape" section; the numbering continues t
     that ends the comment, and the parser rejects a raw `<` or `>`. Pin each hiding place with its
     own case (`tests/bin-lib/issues/accept-verdict.test.js`: a block that does not own its line,
     fence text before the block, and a note holding `-->`).
+27. **A parse problem that hides content owes its own report, found by a second read under the
+    relaxed reading and credited only to a cause the author can edit.** A fence that never closes
+    swallows every heading after it. Before #4350, `plugin/bin/lib/issues/materialize-format.js`'s
+    `shapeGate` named those swallowed sections missing, so the author looked for sections that
+    were there. `plugin/bin/lib/markdown-blocks.js`'s `hiddenByUnclosedFence` now reads the body
+    twice through the same `findSection`: a heading absent as read but found with
+    `unclosedAsText: true` is hidden, and the probe returns the opener's 1-based line, so the gate
+    reports `unclosed-fence at line N` (`UNCLOSED_FENCE_PREFIX`) in place of the section's name.
+    A heading found under the strict reading (even empty), or absent under both, returns `null`
+    and keeps its own answer (item 3). The report never changes the verdict (item 2). The first
+    cut also fired on a fence inside the verbatim `## Original request`, text no author may edit,
+    so the report pointed at a fence nobody could close. The final review caught it, and
+    `7e4820dc5` credits the fence only when its opener lies in the authored lines before that
+    heading; otherwise the section stays missing by name. Take the second read through the same
+    reader with one option flipped, never through a second model of the format (item 26), and
+    credit the report only to a cause inside the region the author can edit. Pin a hidden
+    section, a section absent under both reads, an opener in the uneditable region, and an opener
+    on the editable region's last line (`tests/bin-lib/markdown-blocks.test.js`'s
+    `hiddenByUnclosedFence` cases, `tests/bin-lib/issues/materialize-format.test.js`'s two #4350
+    Original request cases).
+
+28. **A parser that fails closed owes a cheap precondition that proves the signal absent, so its
+    gaps cost only on inputs that could hold the signal.** Failing closed is right when the
+    parser cannot read a shape, but each gap then costs whatever "closed" costs, on every input
+    that has that shape. #5153's workflow reader (`plugin/bin/lib/merge-verification.js`'s
+    `readPullRequestWorkflow`) reads any `on:` shape it cannot follow as an unparsed PR trigger,
+    and the merge gate then waits for a ready run that never comes: every pr-first merge in the
+    repo parks. Five reader fix rounds and a high review finding (an indentless `schedule:` list
+    in a workflow with no PR trigger at all) were that one class. `05aeb2ed6` bounds it: a file
+    whose text never contains `pull_request` cannot name a PR trigger, so the reader returns
+    "no PR trigger" before the `on:` walk. The precondition must prove absence, not guess it. A
+    YAML double-quoted escape can spell the name without the literal, so a backslash inside
+    double quotes keeps the full fail-closed read. Pin both halves, each going red alone: a file
+    with no literal and an unreadable shape reads as no trigger, and an escaped spelling stays
+    unparsed (`tests/merge-verification.test.js`'s "never spells pull_request" test). When a
+    later fixture depended on the old behavior, give it the literal rather than weaken the
+    guard (`tests/bin-lib/pr-checks/ready-run.test.js`'s `UNPARSED`).
+
+29. **A producer handing a file to another tool owes its parse verdict across that boundary, because the consumer reads the file, not the producer's envelope.** A
+    producer whose output file another tool reads can carry a could-not-parse state in its own
+    stdout envelope and still lose it: the consumer never sees that envelope, so an empty list
+    written beside the failure reads as a clean, empty result. #4618's `risk-flags.js facts`
+    reported `planParse: could-not-parse` on stdout but still wrote `[]` to `--proofs-out`, and
+    the acceptance packet gather read that as "no proof written", so a kept flag whose plan was
+    never read showed `no proof shown`. Review caught it (`cfcaa3bbb`). Carry the verdict in the
+    channel the consumer reads: leave the output unwritten (removing an earlier one) when the
+    input was not read, so the consumer's own "input not read" path fires — the gather now
+    states `--proofs input not read` and Risk proofs says `proofs not read`. Pin it end to end,
+    producer to rendered line, for both the absent and the unparseable input
+    (`tests/risk-flags-packet-e2e.test.js`), not only at each side's unit seam.
+
+30. **A reader that feeds several independent checks owes each could-not-read reason the field it concerns, so a consumer suppresses only the checks that read that field.** A
+    flat list of reason strings makes every consumer guess which check a reason blocks, and a
+    guess by text match fails open in the costly direction: a reason that concerns one check
+    suppresses every check. #5162's `readWorkflowShape` (`plugin/bin/lib/merge-verification.js`)
+    returns one list, and `reviewWorkflows` (`plugin/bin/lib/init/ci-workflow-review.js`) keeps a
+    `CONCURRENCY_ONLY` set of reason texts that block check 4 alone, every other reason blocking
+    every check. Getting that set right took three passes: the SDD final review's I2, the review
+    fix wave, and `28b20f6f4` for the `concurrency:` region's own tab and anchor reasons. Each time,
+    a concurrency-only reason had been suppressing checks 1, 2, 3 and 5. Name the field or region
+    in each reason, let a consumer suppress only the checks that read it, and reserve a whole-input
+    "unparsed" for reasons no check can work around (no `on:`, no `jobs:`). Pin one reason per
+    region against a check that does not read that region: it must still report. Matching reason
+    text is the stopgap; region-tagged reasons from one reader are the structural fix (#5444).
+
+31. **A signal line read from an append-only log is also quoted or carried forward by later writers, so a counting reader keys on a measured writer-label allow-list, not on any label before the token.** A
+    decisions log is appended by many writers, and a later writer (a wrap-up carry-forward, a
+    routing note) quotes an earlier signal line inside its own text. A reader that counts a line as
+    a signal wherever its token follows any label counts the quotation too. #5556's pair-line
+    reader (`plugin/bin/lib/timing/pair-lines.js`) first accepted any head, then restricted both
+    the strict and loose heads to `WRITER_LABEL`, the labels the archive's real writers use
+    (measured over the archived runs, not recalled). Build the allow-list from the archive, pin a
+    quoted copy of a signal line as not counted, and expect a legacy form (no-seconds clock, hyphen
+    separator, bare date) to need its own measured widening rather than a looser head.
+
+32. **A map keyed by text parsed from a log line or event owes own-property reads and writes, because the parsed key can be `__proto__` or `constructor`.** On a plain
+    object, `__proto__` as a key vanishes (the assignment sets the prototype) and `constructor`
+    reads an inherited function, so a count for either is dropped or corrupted. #5556's
+    `step-yield.js` hit it on lens and event-type keys, review found it, and a second site of the
+    same class (`countGuardEvents` reading `GUARD_TYPES[e.type]`) turned up in the follow-up. Read
+    with `Object.hasOwn`, write with `Object.defineProperty` (`ownGet`/`ownSet`), and keep the
+    ordinary `{}` so `deepStrictEqual` against expected objects still holds. Grep every lookup
+    keyed by parsed text when fixing one, and pin `__proto__` and `constructor` keys through each.
+
+33. **A reader that sorts items into in-sample, excluded and out-of-population owes the membership decision before any exclusion check, so an item that was never in the population cannot read as lost.** An
+    exclusion reason says "this item belonged in the sample and the tool could not use it". When
+    an input check runs before the population filter, an out-of-population item that also fails
+    the check gets that reason, and the exclusion count overstates what the tool lost. #5992's
+    task-vs-branch role (`tools/review-replay/reviews-branch.js`'s `archivedReply`) takes only task
+    reviews that asked for fixes with a Critical or Important item, but its plan ordered the tier,
+    prompt and pointer checks before the verdict. Over the real archive it reported 223
+    `prompt-file-gone` exclusions, 179 of them Approved reviews that never qualified. Every task
+    passed on fixtures, and the whole-branch review caught it by running the archive. `2817fce998`
+    reads the raw reply first through a `qualifies` predicate: a parsed reply that does not qualify
+    counts as `notQualifying` whatever its tier or prompt, and only qualifying reviews go on to the
+    exclusion checks. A reply the membership read cannot parse still goes on to them, so a
+    could-not-read stays an exclusion. Decide membership from the rawest input that settles it,
+    and pin an out-of-population item that also fails an input check: it must count as out of the
+    population with no exclusion row (`tests/review-replay/reviews-extract.test.js`'s
+    "qualification is read before the prompt and tier").

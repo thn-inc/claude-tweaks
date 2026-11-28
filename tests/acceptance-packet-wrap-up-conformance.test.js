@@ -37,7 +37,7 @@ test('parent gate holds the legacy brief template', () => {
   assert.ok(fence, 'the section must hold a fenced markdown block');
   const body = fence[1];
   assert.ok(body.startsWith('## Verification Brief\n\n### The ask'), 'the fence opens on the brief heading');
-  for (const literal of ['### Confirmed', '### Observation plan', '_Posted by {poster}. Resolve with `/claude-tweaks:demo`._']) {
+  for (const literal of ['### Confirmed', '### Observation plan', '_Posted by {poster}. Resolve with `/claude-tweaks:accept`._']) {
     assert.ok(body.includes(literal), `the fence holds ${literal}`);
   }
   assert.ok(!compose.includes('Render the same'), 'the section no longer points at a template elsewhere');
@@ -123,9 +123,10 @@ const exit2 = () => between(step4(), '- **Exit 2**', '- **Exit 4**');
 const exit4 = () => between(step4(), '- **Exit 4**', '`work-backend: local-files`');
 const belowFloor = () => between(brief(), '**`exceeds: false`**', '**`exceeds: true`**');
 
-test('Step 4 names gather, render and post in that order and cites the contract', () => {
+// #4613: the post itself moved to accept/automatic-entry.md, which Step 4 hands the rendered packet.
+test('Step 4 names gather, render and the automatic entry\'s post in that order and cites the contract', () => {
   const body = step4();
-  const at = ['acceptance-packet.js" gather', 'acceptance-packet.js" render', 'acceptance-packet.js" post'].map((literal) => body.indexOf(literal));
+  const at = ['acceptance-packet.js" gather', 'acceptance-packet.js" render', '`accept/automatic-entry.md`'].map((literal) => body.indexOf(literal));
   assert.ok(at.every((index) => index !== -1), `each subcommand is named: ${at}`);
   assert.deepStrictEqual([...at].sort((a, b) => a - b), at, 'gather, then render, then post');
   assert.ok(body.includes('`_shared/acceptance-packet.md`'), 'Step 4 cites the contract');
@@ -146,7 +147,7 @@ test('gather call names every flag', () => {
   const body = step4();
   for (const flag of [
     '--record', '--out', '--run', '--spec', '--report', '--stories-dir', '--story-results', '--ac-results',
-    '--base', '--head', '--links', '--surface', '--local-base-url', '--recordings',
+    '--base', '--head', '--links', '--surface', '--local-base-url',
   ]) {
     assert.ok(between(body, 'acceptance-packet.js" gather', 'Gather non-zero').includes(flag), `names ${flag}`);
   }
@@ -166,7 +167,6 @@ test('gather passes --stories-dir always, and render stops on any non-zero exit'
 });
 
 test('gather inputs resolve after cleanup', () => {
-  // The gather's own list: the screenshot routing above it names the archive path too.
   const inputs = between(step4(), 'acceptance-packet.js" gather', 'Gather non-zero');
   for (const literal of ['archive/{run-id}', 'packet-inputs', 'headRefOid', 'issue_read']) {
     assert.ok(inputs.includes(literal), `names ${literal}`);
@@ -184,6 +184,35 @@ test('wrap-up Phase 1 runs the snapshot', () => {
   }
 });
 
+// #4612: new prose, so each claim is proven red on a copy with only that claim stripped, the
+// throw matched to the claim's own message (skill-prose-conformance-tests).
+function assertClaim(text, pattern, label) {
+  assert.ok(pattern.test(text), label);
+}
+
+function assertClaimGoesRed(text, pattern, label) {
+  assertClaim(text, pattern, label);
+  const mutated = text.replace(pattern, '');
+  assert.notStrictEqual(mutated, text, `${label}: the control stripped nothing`);
+  assert.throws(() => assertClaim(mutated, pattern, label), { message: label });
+}
+
+test('snapshot encodes the recording', () => {
+  const phase1 = section(read('wrap-up/SKILL.md'), '## Phase 1: ESTABLISH — what happened here?', '## Phase 2: ROUTE — where does each learning belong?');
+  const snapshot = flat(between(phase1, '**Snapshot the packet inputs', '\n\n'));
+  assertClaimGoesRed(snapshot, /it also encodes the recording while the QA screenshots are on disk/, 'the snapshot paragraph names the recording');
+});
+
+test('gather reads the recording from the snapshot', () => {
+  const bullet = flat(between(step4(), '- `--run` —', '- `--spec` —'));
+  assertClaimGoesRed(bullet, /The automatic recording arrives through the snapshot, with no flag/, 'the --run bullet says the recording needs no flag');
+});
+
+test('the walk branch keeps its screenshots out of the packet', () => {
+  const walk = flat(between(step3(), '**`app-route`/`rendered-page` plans whose', '**Every other plan**'));
+  assertClaimGoesRed(walk, /2\. The walk's screenshots stay in the run's local artifacts and are never committed or linked/, 'Step 3 item 2 never commits or links a screenshot');
+});
+
 test('ac-results shape is stated, with one example of each id kind', () => {
   const body = flat(step3());
   assert.ok(body.includes('{ "1": "met", "2a": "not met", "AC1": "partially met" }'), 'a numbered id and a positional id');
@@ -194,7 +223,7 @@ test('ac-results shape is stated, with one example of each id kind', () => {
 
 test('Step 3 feeds gather from the same evidence sources', () => {
   const body = flat(step3());
-  for (const literal of ['`--recordings`', '`--run`', '`--report`', '`link` input', '`cli`/`flow`']) {
+  for (const literal of ['`--run`', '`--report`', '`link` input', '`cli`/`flow`']) {
     assert.ok(body.includes(literal), `names ${literal}`);
   }
 });
@@ -230,36 +259,61 @@ test('exit 2 is report-and-post-nothing, exit 4 is the MCP path', () => {
   assert.ok(exit4().includes('gh` is absent'), 'exit 4 is the absent-gh signal');
 });
 
-test('exit-4 MCP path: existing packet is reported, posts nothing, applies no label (Decision Q4)', () => {
+// #4613: Step 4's Exit 4 is a pointer; the MCP-path writes live in the automatic entry's `gh`
+// absent section, the one owner of that transport for the post Step 4 hands it.
+function autoMcp() {
+  const auto = read('accept/automatic-entry.md');
+  const at = auto.indexOf('**`gh` absent**');
+  assert.notStrictEqual(at, -1, 'automatic-entry.md keeps its gh absent section');
+  return flat(auto.slice(at));
+}
+
+test('exit 4 points at the automatic entry\'s gh absent transport and restates none of it', () => {
   const branch = flat(exit4());
-  const existing = branch.indexOf('An existing packet: report the failed edit naming that packet\'s url, post nothing, apply no label, and clear the pending label');
-  assert.notStrictEqual(existing, -1, branch);
-  const post = branch.indexOf('`add_issue_comment`');
-  assert.ok(post > existing, 'only no packet posts');
-  assert.ok(branch.indexOf('`update_pull_request`') > post, 'the PR line follows the post');
-  assert.ok(branch.includes('`Acceptance packet: {comment url}`'));
-  assert.ok(!branch.includes('unless the line is already present'), 'an existing line is replaced, not left alone');
-  assert.ok(branch.includes("matching `publishPacket`'s `replacePacketLine`: replace this record's existing `Acceptance packet:` line"), branch);
-  assert.ok(branch.includes('append that line after a blank line when the body has none, and write nothing when the body already reads that way'), branch);
-  assert.ok(branch.includes('A failed read or an `unreadable` packet: report it, write nothing'), 'the two read outcomes make no write');
+  assert.ok(branch.includes('reached only when'), branch);
+  assert.ok(branch.includes('`accept/automatic-entry.md`'), branch);
+  for (const moved of ['add_issue_comment', 'update_pull_request', 'mergeLabelNames', 'get_comments']) {
+    assert.ok(!branch.includes(moved), `Exit 4 restates ${moved}`);
+  }
 });
 
-test('exit-4 clearing reads first and writes the complete array', () => {
-  const branch = flat(exit4());
-  const existing = branch.indexOf('An existing packet:');
-  const read = branch.indexOf('`get_labels`');
-  assert.ok(read > existing, 'the clearing comes after the existing-packet sentence');
-  assert.ok(branch.indexOf('`mergeLabelNames`') > read);
+test('MCP path: an existing packet is never re-sent, only a missing one posts, then the PR line (Decision Q4)', () => {
+  const branch = autoMcp();
+  assert.ok(branch.includes('an existing or unreadable one is never sent again'), branch);
+  assert.ok(branch.includes('a failed read is the failed `read` branch'), 'a failed read makes no write');
+  const post = branch.indexOf('`add_issue_comment`');
+  assert.notStrictEqual(post, -1, 'the missing packet is sent with add_issue_comment');
+  const pr = branch.indexOf('`update_pull_request`');
+  assert.notStrictEqual(pr, -1, 'the PR line is written');
+  assert.ok(pr > post, 'the PR line follows the post');
+  assert.ok(branch.includes('`Acceptance packet: {comment url}`'));
+  assert.ok(branch.includes("matching `publishPacket`'s `replacePacketLine`: replace this record's existing `Acceptance packet:` line"), branch);
+  assert.ok(branch.includes('append that line after a blank line when the body has none, and write nothing when the body already reads that way'), branch);
+});
+
+test('MCP path: a failed post clears the pending label, reading first and writing the complete array', () => {
+  const branch = autoMcp();
+  const failed = branch.indexOf('A failed `add_issue_comment` is the failed `post` branch');
+  assert.notStrictEqual(failed, -1, branch);
+  const labels = branch.indexOf('`get_labels`', failed);
+  assert.ok(labels > failed, 'the clearing reads the labels first');
+  assert.ok(branch.indexOf('`mergeLabelNames`', labels) > labels, 'then writes the merged array');
   assert.ok(branch.includes('only when `demo:pending` or `accept:pending` is present'));
   assert.ok(branch.includes('no write when neither is present'));
   assert.ok(branch.includes('Full-replace hazard'));
-  assert.ok(branch.includes('A failed clearing gets the same needs-human line'));
+  assert.ok(branch.includes('A failed clearing adds a needs-human line'));
 });
 
+const LOCAL_BRANCH = '`work-backend: local-files` — the automatic entry runs `local`';
+
 test('the local-files branch runs the local subcommand, --pending above the floor only', () => {
-  const branch = flat(step4().slice(step4().indexOf('`work-backend: local-files` — run')));
-  assert.ok(branch.includes('acceptance-packet.js" local --record-file "{record-file}" --body-file "{PACKET}" --pending'), branch);
+  const branch = flat(step4().slice(step4().indexOf(LOCAL_BRANCH)));
+  assert.ok(branch.includes(LOCAL_BRANCH), branch);
   assert.ok(branch.includes('`--pending` omitted below the floor'), branch);
+  // #4613: the fenced call lives in the automatic entry, with --pending appended only when owed.
+  const auto = read('accept/automatic-entry.md');
+  assert.ok(auto.includes('acceptance-packet.js" local --record-file "{record-file}" --body-file "{PACKET}"'), 'the automatic entry runs local');
+  assert.ok(flat(auto).includes('appending `--pending` only when the label is owed'), 'and appends --pending only when owed');
 });
 
 // ---- fix round 1: what the prose feeds the real CLI ----
@@ -286,8 +340,27 @@ test('{LINKS} falls back to a command when no base URL resolves or the host woul
   assert.ok(bullet.includes('an `infra` or `backend` surface'), 'a commands-only surface refuses every url');
 });
 
+test('{LINKS} writes a credential-shaped path segment as a command holding {id}, since gather refuses the raw value in either form', () => {
+  assertClaimGoesRed(
+    linksBullet(),
+    /An Entry point with a credential-shaped path segment \(the bearer-segment rule, `_shared\/acceptance-packet\.md`'s `## Links and credentials`\) is a `"command"` too, holding the route with that segment replaced by the placeholder `\{id\}`/,
+    'the {LINKS} fallback replaces a credential-shaped path segment with {id}',
+  );
+  assertClaimGoesRed(linksBullet(), /The bearer-shaped value itself is never written/, 'the {LINKS} bullet never writes the value');
+  // The sentence this one replaced told the writer to hold the Entry point as stated, value included.
+  assert.ok(!linksBullet().includes('or the Entry point has a credential-shaped path segment'));
+});
+
+test('an Entry point with a credential-shaped path segment holds {id} in the plan, in the schema and in the Step that authors it', () => {
+  const sentence = /An Entry point with a credential-shaped path segment \(the bearer-segment rule, `_shared\/acceptance-packet\.md`'s `## Links and credentials`\) holds the route with that segment replaced by the placeholder `\{id\}`, since render screens the raw value out of the plan\. The bearer-shaped value itself is never written/;
+  const schema = flat(section(read('_shared/observation-plan.md'), '## Grammar rules', '## Per-kind semantics'));
+  assertClaimGoesRed(schema, sentence, 'the plan schema replaces a credential-shaped path segment with {id}');
+  const step2 = flat(between(brief(), '## Step 2: Author the observation plan', '## Step 2.5:'));
+  assertClaimGoesRed(step2, sentence, 'Step 2 replaces a credential-shaped path segment with {id}');
+});
+
 test('--local-base-url is keyed to the plan kind as well as the surface', () => {
-  const bullet = between(gatherList(), '- `--local-base-url` —', '- `--recordings`');
+  const bullet = between(gatherList(), '- `--local-base-url` —', 'Pass no `--scope`');
   assert.ok(bullet.includes('`app-route`/`rendered-page` plans'), bullet);
   assert.ok(bullet.includes('omitted when none resolves'), bullet);
 });
@@ -311,14 +384,15 @@ test('the whole render call is pinned', () => {
   assert.ok(step4().includes('bin/acceptance-packet.js" render --facts "{FACTS}" --narrative "{NARRATIVE}" --out "{PACKET}" --dropped-out "{DROPPED}" --observation-plan "{PLAN}" --poster "{poster}"\n```'));
 });
 
-test('--recordings follows the route, not the commit', () => {
-  const bullet = gatherList().slice(gatherList().indexOf('- `--recordings` —'));
-  assert.ok(bullet.includes('only when the embeds survive the route above'), bullet);
-  assert.ok(!bullet.includes('only when screenshots were committed'), bullet);
+test('Decision 1: the procedure commits no evidence and passes no recording link', () => {
+  const doc = brief();
+  for (const gone of ['docs/demo-evidence', 'evidence-route.js', 'evidence-pr', '--recordings', '{RECORDINGS}', 'raw.githubusercontent.com']) {
+    assert.ok(!doc.includes(gone), `still names ${gone}`);
+  }
 });
 
 test('the MCP branch states the outcome of a failed label write and a failed PR-line write', () => {
-  const branch = flat(exit4());
+  const branch = autoMcp();
   assert.ok(branch.includes("A failed label write leaves the packet in place and skips the PR line, reported as the `gh` path's `labelApplied: false` is"), branch);
   assert.ok(branch.includes("A failed PR-line write does not fail the publish, reported as the `gh` path's `prLink` with `ok: false` is"), branch);
 });
@@ -331,7 +405,7 @@ test('the failed-removal line names the stale packet only when there is one', ()
 test('on local-files the record file itself is --spec and {record-file}', () => {
   const spec = between(gatherList(), '- `--spec` —', '- `--report`');
   assert.ok(spec.includes('under `work-backend: local-files` the record file itself'), spec);
-  const local = flat(step4().slice(step4().indexOf('`work-backend: local-files` — run')));
+  const local = flat(step4().slice(step4().indexOf(LOCAL_BRANCH)));
   assert.ok(local.includes('`{record-file}` is the record file itself'), local);
 });
 
@@ -347,11 +421,10 @@ test('a claim citing the Entry point link names its group', () => {
   const doc = flat(brief());
   assert.ok(!doc.includes('citing the Entry point link'), 'ambiguous with entry-point-{n}');
   assert.ok(flat(step3()).includes("citing the first group's `link:entry-point-1`"), 'the browser-unavailable note');
-  assert.ok(flat(step4()).includes("citing the first group's `link:entry-point-1`, the URL in its text"), 'the evidence PR note');
 });
 
 test('{record-file} comes from a listing that holds closed records too', () => {
-  const local = flat(step4().slice(step4().indexOf('`work-backend: local-files` — run')));
+  const local = flat(step4().slice(step4().indexOf(LOCAL_BRANCH)));
   assert.ok(local.includes("combined open+closed `queryRecords('specs', {})` / `queryRecords('specs', { closed: true })` listing"), local);
 });
 
@@ -360,14 +433,6 @@ test('--surface falls back to the record body, so a no-header record keeps the c
   assert.ok(bullet.includes("the materialized header's `surface:`, else the record body's `Surface:` line"), bullet);
   assert.ok(bullet.includes('omitted with neither'), bullet);
   assert.ok(!bullet.includes('omitted with no header'), bullet);
-});
-
-test('evidence screenshots are links, with no image fence left to match', () => {
-  const body = step4();
-  assert.ok(!body.includes('![{description}]'), 'the fence is the plain url');
-  assert.ok(body.includes('\nhttps://raw.githubusercontent.com/{owner}/{repo}/{commit-sha}/docs/demo-evidence/{record}/{NN}-{description}.png\n'), 'the plain url');
-  assert.ok(flat(body).includes('The packet renders it as a plain link, not an embedded image'), 'states it');
-  assert.ok(!flat(body).includes('the embedded image'), 'no embedded image left to fail');
 });
 
 test('the snapshot paragraph cites where {integration-branch} comes from', () => {
@@ -379,10 +444,11 @@ test('the snapshot paragraph cites where {integration-branch} comes from', () =>
 test('the call sites describe the packet, the below-floor case included', () => {
   const settle = flat(read('dispatch/settle-and-merge.md'));
   const short = flat(read('wrap-up/auto-merge-short-circuit.md'));
-  const STEPS = 'gathering, posting the acceptance packet, then `demo:pending`; below the oversight floor it skips the bootstrap and the safety-net gate and posts the packet with no label';
+  const STEPS = "gathering, then handing the packet to `/accept`'s automatic entry, which posts it and applies `accept:pending`; below the oversight floor it skips the bootstrap and the safety-net gate and posts the packet with no label";
   for (const [name, doc] of [['settle-and-merge', settle], ['auto-merge-short-circuit', short]]) {
     assert.ok(doc.includes(STEPS), `${name} states the steps`);
     assert.ok(!doc.includes('sourcing, posting, then `demo:pending`'), `${name} stale steps gone`);
+    assert.ok(!doc.includes('posting the acceptance packet, then `demo:pending`'), `${name} no-parent demo:pending gone (#4613)`);
   }
   assert.ok(settle.includes('One packet per record with no resolvable parent, and one label above the floor'));
   assert.ok(!settle.includes('One brief and one label per record'));
@@ -404,11 +470,11 @@ test('verification-brief.md holds exactly one template, the packet', () => {
   assert.ok(!step4().includes('gh issue comment'), 'the brief posting block is gone');
 });
 
-test('post is named before anything applies demo:pending', () => {
+test('the automatic entry is named before anything applies accept:pending', () => {
   const body = step4();
-  const post = body.indexOf('acceptance-packet.js" post');
+  const post = body.indexOf('`accept/automatic-entry.md`');
   assert.notStrictEqual(post, -1);
-  assert.ok(post < body.indexOf('demo:pending'), 'no earlier sentence applies the label');
+  assert.ok(post < body.indexOf('accept:pending'), 'no earlier sentence applies the label');
   assert.ok(flat(body).includes('`post` posts or edits the packet before it adds the label'));
 });
 
@@ -420,11 +486,11 @@ test('--pr and --label are conditional on the stated rules', () => {
 
 test('below the floor posts the packet without --label (Decision Q5)', () => {
   const bullet = flat(belowFloor());
-  assert.ok(bullet.includes('Step 4 posts the packet without `--label`'), bullet);
-  assert.ok(bullet.includes('no `demo:pending` bootstrap'), bullet);
+  assert.ok(bullet.includes("Step 4's automatic entry posts the packet without `--label`"), bullet);
+  assert.ok(bullet.includes('no acceptance-label bootstrap'), bullet);
   assert.ok(bullet.includes('Step 2.5'), 'skips the safety net');
   assert.ok(bullet.includes('Record the exemption (#2383)'), bullet);
-  assert.ok(bullet.includes('`/claude-tweaks:demo #N`'), bullet);
+  assert.ok(bullet.includes('`/claude-tweaks:accept #N`'), bullet);
   assert.ok(!bullet.includes('Skip Step 1 through'), bullet);
 });
 
@@ -442,7 +508,7 @@ test('no stale pre-Q5 wording in the Try it and no-parent prose', () => {
     assert.ok(!doc.includes(stale), `gone: ${stale}`);
   }
   const noParent = flat(paragraphAt(brief(), '**No parent resolvable**'));
-  assert.ok(noParent.includes('gets a packet, with `demo:pending` only above the floor'), noParent);
+  assert.ok(noParent.includes('gets a packet, with `accept:pending` only above the floor'), noParent);
 });
 
 test('the Branch paragraph describes a packet on the record', () => {
@@ -466,9 +532,10 @@ test('every Routing call site remains in ## Routing (AC6)', () => {
   // Each row is not enough: the routing must still end in the pending label above the floor.
   const rule = flat(routing);
   assert.ok(rule.includes('run the Parent-Gate Procedure below in place of — not alongside — Steps 1-4'), 'a parent-resolvable record');
-  assert.ok(rule.includes('run the **Oversight-floor gate** below, then Steps 1-4, applying `demo:pending` to the record itself only when the gate says the record clears the floor'), 'any other record');
-  const post = between(step4(), 'acceptance-packet.js" post', '\n```');
-  assert.ok(post.includes('--label demo:pending'), `the post fence applies the pending label: ${post}`);
+  assert.ok(rule.includes("run the **Oversight-floor gate** below, then Steps 1-4, applying `accept:pending` to the record itself (through `/accept`'s automatic entry, Step 4) only when the gate says the record clears the floor"), 'any other record');
+  // #4613: the post fence moved to the automatic entry Step 4 reads, which applies accept:pending.
+  assert.ok(step4().includes('`accept/automatic-entry.md`'), 'Step 4 hands the packet to the automatic entry');
+  assert.ok(flat(read('accept/automatic-entry.md')).includes('Append `--label accept:pending` only when the label is owed'), 'the automatic entry applies the pending label');
   assert.ok(flat(step4()).includes('`--label` omitted below the floor (Decision Q5)'), 'and drops it below the floor');
 });
 
@@ -506,15 +573,15 @@ test('try-it.md names the packet\'s Test guide', () => {
 
 test('the execution prose describes the packet', () => {
   const doc = flat(read('wrap-up/execution-and-verification.md'));
-  assert.ok(doc.includes('posting the acceptance packet'), 'the Acceptance labeling bullet');
+  assert.ok(doc.includes("handing the rendered acceptance packet to `/claude-tweaks:accept`'s automatic entry"), 'the Acceptance labeling bullet');
   assert.ok(!doc.includes('posting the Verification Brief'));
 });
 
 // ---- Task 11: readers find the packet ----
 
 const MARKER = '<!-- acceptance-packet: v1 -->';
-const ENTRY = 'demo/entry-paths.md';
-const DEMO = 'demo/SKILL.md';
+const ENTRY = 'accept/entry-paths.md';
+const DEMO = 'accept/SKILL.md';
 const LANDED = '_shared/acceptance-labeling-landed.md';
 const recordLookup = () => between(read(ENTRY), '## `#N` given: single-record lookup', '### PR run-comment lookup');
 const packetRead = () => flat(paragraphAt(recordLookup(), '**Read the acceptance packet first**'));
@@ -559,7 +626,7 @@ test('the Skip text tells a below-floor record the truth: no scan resurfaces it'
   assert.ok(above.includes("acceptance-gap scan will surface it again"), above);
   const below = option.slice(option.indexOf('Below the floor'));
   assert.ok(below.includes('below the oversight floor no disposition is owed'), below);
-  assert.ok(below.includes('/claude-tweaks:demo #N still reads the packet'), below);
+  assert.ok(below.includes('/claude-tweaks:accept #N still reads the packet'), below);
   assert.ok(!below.includes('acceptance-gap scan will surface'), below);
   const scan = flat(read('_shared/github-pr-scan-acceptance.md'));
   assert.ok(scan.includes('a record that closed below the floor never needed a disposition in the first place'), 'the premise stays true');
@@ -583,7 +650,7 @@ test('the packet read does not depend on a pending label, so a below-floor packe
   assert.ok(lookup.indexOf('**Read the acceptance packet first**') < lookup.indexOf('If the labels just fetched'), 'ahead of the label branch');
   assert.ok(lookup.indexOf('**Read the acceptance packet first**') < lookup.indexOf('recover that **closing'), 'ahead of the closing-commit recovery');
   const wrapUp = flat(belowFloor());
-  assert.ok(wrapUp.includes('`/claude-tweaks:demo #N` reads its packet, whatever its labels'), wrapUp);
+  assert.ok(wrapUp.includes('`/claude-tweaks:accept #N` reads its packet, whatever its labels'), wrapUp);
   assert.ok(!wrapUp.includes('closing-commit-reconstruction fallback'), wrapUp);
 });
 
@@ -633,7 +700,8 @@ test('demo Step 2 renders a packet, never a fresh Try it block', () => {
 test('a packet on a record with no pending label takes the nothing-to-leave Skip wording and the no-variant Step 3 rule', () => {
   const doc = flat(read(DEMO));
   assert.ok(doc.includes('For a closing-commit reconstruction, or a packet on a record with no pending label (never pending'), 'Option 3');
-  assert.ok(doc.includes('A closing-commit reconstruction, or a packet on a record with no pending label, needs no variant'), 'Step 3');
+  // #4613 moved Step 3 into verdict-interim.md.
+  assert.ok(flat(read('accept/verdict-interim.md')).includes('A closing-commit reconstruction, or a packet on a record with no pending label, needs no variant'), 'Step 3');
 });
 
 test('the landed check drops the stale premise and keeps the label check', () => {
@@ -671,13 +739,15 @@ test('the stale template citations are gone from the demo readers', () => {
 
 test('the stale brief wording is gone from the docs a reader meets first', () => {
   const readme = flat(readText(path.join(__dirname, '..', 'README.md')));
-  assert.ok(readme.includes('posts an acceptance packet on the record, with demo:pending above the oversight floor'), 'README');
+  assert.ok(readme.includes('posts an acceptance packet on the record, with accept:pending above the oversight floor'), 'README');
   assert.ok(!readme.includes('applies demo:pending + posts a Verification Brief on the record'), 'README');
   const card = read('help/reference-card.md');
   assert.ok(card.includes('| `/claude-tweaks:wrap-up` | Learnings (CLAUDE.md), acceptance packet (a parent\'s gate: Verification Brief) |'), 'the /help card');
   const ledger = flat(read('_shared/work-record.md'));
   assert.ok(!ledger.includes('applies `demo:pending` + posts the Verification Brief |'), 'the ledger row');
-  assert.ok(ledger.includes('posts the acceptance packet, with `demo:pending` above the oversight floor'), 'the ledger row');
+  assert.ok(ledger.includes("posts the acceptance packet through `/accept`'s automatic entry, which applies `accept:pending` above the oversight floor"), 'the ledger row: the no-parent path writes accept:pending');
+  assert.ok(ledger.includes("a decomposition parent's gate, through the Parent-Gate Procedure: `demo:pending` + the Verification Brief"), 'the ledger row: the parent path keeps demo:pending');
+  assert.ok(!ledger.includes('posts the acceptance packet, with `demo:pending` above the oversight floor'), 'the ledger row: the stale no-parent demo:pending wording');
   assert.ok(ledger.includes('and posts an acceptance packet (`_shared/acceptance-packet.md`'), 'the axis bullet');
   assert.ok(!ledger.includes('and posts a Verification Brief (an issue comment'), 'the axis bullet');
   const lifecycle = flat(read('_shared/pr-early-run-lifecycle.md'));
@@ -698,11 +768,199 @@ test('the parent gate and comments prose no longer describe the retired below-fl
 test('the skill graph states the packet edges and no longer describes the brief as what wrap-up posts', () => {
   const graph = readText(path.join(__dirname, '..', 'docs', 'skill-graph.md'));
   const edge = '| `_shared/acceptance-packet.md` |';
-  assert.ok(between(graph, '\n## demo\n', '\n## design-wrapper\n').includes(edge), 'the demo row');
+  assert.ok(between(graph, '\n## accept\n', '\n## activity\n').includes(edge), 'the accept row');
   const wrapUp = graph.slice(graph.indexOf('\n## wrap-up\n'), graph.indexOf('\n## Provenance'));
   assert.ok(wrapUp.includes(edge), 'the wrap-up row');
-  assert.ok(wrapUp.includes('`/wrap-up` posts the acceptance packet (`_shared/acceptance-packet.md`) and applies `demo:pending` above the oversight floor'), 'the /demo row');
+  assert.ok(wrapUp.includes("`/wrap-up` posts the acceptance packet (`_shared/acceptance-packet.md`) and applies `accept:pending` above the oversight floor through `/accept`'s automatic entry"), 'the /demo row');
   assert.ok(!wrapUp.includes('applies `demo:pending` and posts the Verification Brief'), 'the old /demo row');
   assert.ok(!wrapUp.includes('embedded in the brief for an above-floor record'), 'the old Try it placement');
   assert.ok(!graph.includes('`/wrap-up` (brief)'), 'the pr-run-comments row');
 });
+
+// ---- #4618 Task 14: the risk facts reach the packet ----
+// Each pin is an assertion function over the file's text. It runs once on the live text, and
+// once per literal on a copy with that literal removed, where it must throw (the go-red control).
+
+const SKILL = 'wrap-up/SKILL.md';
+const PHASE_1 = '## Phase 1: ESTABLISH — what happened here?';
+const PHASE_2 = '## Phase 2: ROUTE — where does each learning belong?';
+const PLAN_DIFF = 'git diff --name-only --diff-filter=AM "origin/{integration-branch}...HEAD" -- docs/superpowers/plans/';
+const FACTS_CALL = 'node "${CLAUDE_PLUGIN_ROOT}/bin/risk-flags.js" facts --spec-file "{spec}" --plan-file "{run-dir}/packet-inputs/plan.md" --flags-out "{FLAGS}" --proofs-out "{PROOFS}"';
+
+function step4Of(doc) {
+  const at = doc.indexOf(`\n${STEP_4}\n`);
+  assert.notStrictEqual(at, -1, `missing heading ${STEP_4}`);
+  return doc.slice(at);
+}
+const phase1Of = (skill) => section(skill, PHASE_1, PHASE_2);
+const planResolve = (skill) => flat(between(phase1Of(skill), `${PLAN_DIFF}\n\`\`\``, 'acceptance-packet.js" snapshot'));
+const riskFactsOf = (doc) => flat(between(step4Of(doc), '**Risk facts**', '**Gather**'));
+
+// A control is a literal to remove, or [label, mutate] for a pin a removal cannot reach (an
+// ordering, an exact line, a clause that must stay absent). A mutation must change the text.
+function goRed(check, doc, controls) {
+  for (const control of controls) {
+    if (typeof control === 'string') {
+      assert.ok(doc.includes(control), `the control literal is in the live text: ${control}`);
+      assert.throws(() => check(doc.split(control).join('')), `removing ${control} must fail the pin`);
+      continue;
+    }
+    const [label, mutate] = control;
+    const mutated = mutate(doc);
+    assert.notStrictEqual(mutated, doc, `the ${label} mutation changes the text`);
+    assert.throws(() => check(mutated), `the ${label} mutation must fail the pin`);
+  }
+}
+
+const RM_FENCE = '```bash\nrm -f "{FLAGS}" "{PROOFS}"\n```';
+const FACTS_FENCE = `\`\`\`bash\n${FACTS_CALL}\n\`\`\``;
+const FLAGS_BULLET = '- `--flags` and `--proofs` — `{FLAGS}` and `{PROOFS}` from the Risk facts call above, always.';
+
+function checkPlanSnapshot(skill) {
+  const phase1 = phase1Of(skill);
+  assert.ok(phase1.includes('snapshot --run "{run-dir}" --base "origin/{integration-branch}" --plan "{plan-file}"'), 'the snapshot passes the plan');
+  const diff = phase1.indexOf(`\`\`\`bash\n${PLAN_DIFF}\n\`\`\``);
+  assert.ok(diff !== -1, 'the plan diff is its own fenced call');
+  assert.ok(diff < phase1.indexOf('acceptance-packet.js" snapshot'), 'the plan resolves before the snapshot');
+}
+
+function checkPlanResolve(skill) {
+  const text = planResolve(skill);
+  for (const literal of [
+    'Exactly one printed path is the plan',
+    'Two or more (a multi-spec branch) narrow to the one whose text names `work/{n}-spec.md`',
+    'None, still not exactly one, a failed `rev-parse`, or a `{plan-file}` that fails the grammar: omit `--plan`',
+    '--status SKIP',
+    '--text-file "{text-file}"',
+    "`_shared/auto-decision-log.md`'s Text from git or a user paragraph",
+    '`{plan-file}`: none of `"`, backtick, `$`, `\\` or a line break',
+    '`condition: no single run plan ({reason}) → fallback: snapshot without --plan, risk proofs not read`',
+    '`{reason}` is the case that fired',
+    '`top level unreadable`',
+  ]) {
+    assert.ok(text.includes(literal), `the plan resolution states ${literal}`);
+  }
+  // `12-spec.md` is a substring of `112-spec.md`: the spec name is matched with its directory.
+  assert.ok(!/[^/]\{n\}-spec\.md/.test(text), 'every spec name the narrowing matches carries work/');
+  // Every placeholder in the SKIP line is defined in the same paragraph.
+  for (const placeholder of text.match(/\{[a-z-]+\}/g)) {
+    assert.ok(['{n}', '{plan-file}', '{run-dir}', '{integration-branch}', '{text-file}', '{reason}', '{count}'].includes(placeholder), `undefined placeholder ${placeholder}`);
+  }
+}
+
+function checkStaleClear(brief) {
+  const body = step4Of(brief);
+  const rm = body.indexOf(RM_FENCE);
+  assert.ok(rm !== -1, 'the removal is its own fenced call');
+  assert.ok(rm < body.indexOf(FACTS_FENCE), 'the removal precedes the producer');
+  assert.ok(rm > body.indexOf('**Risk facts**'), 'inside the Risk facts step');
+}
+
+function checkGatherAlwaysBoth(brief) {
+  const body = step4Of(brief);
+  const fence = between(body, 'acceptance-packet.js" gather', '\n```');
+  assert.ok(fence.includes('--flags "{FLAGS}" --proofs "{PROOFS}"'), fence);
+  assert.ok(body.split('\n').includes(FLAGS_BULLET), 'the input bullet is exactly the always line');
+  assert.ok(riskFactsOf(brief).includes('skips the producer call only, and the gather still passes both inputs, reads two missing files and states both as partial'), riskFactsOf(brief));
+}
+
+function checkNoNeitherClause(brief) {
+  const body = flat(step4Of(brief));
+  for (const stale of ['passes neither', 'only a skipped call']) {
+    assert.ok(!body.includes(stale), `gone: ${stale}`);
+  }
+}
+
+function checkFactsBeforeGather(brief) {
+  const body = step4Of(brief);
+  const facts = body.indexOf(FACTS_CALL);
+  assert.ok(facts !== -1 && facts < body.indexOf('acceptance-packet.js" gather'), 'producer before gather');
+  assert.ok(body.includes(`\`\`\`bash\n${FACTS_CALL}\n\`\`\``), 'the producer is its own fenced call');
+  const fence = between(body, 'acceptance-packet.js" gather', '\n```');
+  assert.ok(fence.includes('--flags "{FLAGS}" --proofs "{PROOFS}"'), fence);
+  assert.ok(body.includes('packet-inputs/plan.md'), 'the plan comes from the snapshot copy');
+}
+
+function checkPlanCopyGate(brief) {
+  const text = riskFactsOf(brief);
+  assert.ok(text.includes("Pass `--plan-file` only when `{run-dir}/packet-inputs/manifest.json`'s `files.plan` is `copied`"), text);
+  assert.ok(text.includes('a later snapshot without a plan copy leaves an earlier `plan.md` there'), text);
+}
+
+function checkEnvelopeOutcomes(brief) {
+  const text = riskFactsOf(brief);
+  for (const literal of [
+    '`{ status, flags, proofs, plan, planParse }`',
+    "`plan: 'absent'`: the risk proofs were not read because no plan copy exists",
+    "`planParse: 'could-not-parse'`: the risk proofs were not read because the plan copy could not be parsed",
+    'never as no proof written',
+  ]) {
+    assert.ok(text.includes(literal), `the envelope sentence states ${literal}`);
+  }
+}
+
+function checkNonZeroExit(brief) {
+  const text = riskFactsOf(brief);
+  for (const literal of [
+    'A non-zero exit removes both outputs',
+    'it never stops the packet',
+    '`--flags input not read — treated as absent`',
+  ]) {
+    assert.ok(text.includes(literal), `the exit sentence states ${literal}`);
+  }
+  const log = flat(between(step4Of(brief), '**Log a stop or a failure** when a run directory resolves', '```bash'));
+  assert.ok(log.includes('condition: packet {risk facts | gather | render} failed ({stderr line})'), log);
+  // #4613: the automatic entry logs the calls it runs, so Step 4 never logs a post or local twice.
+  assert.ok(log.includes("logged once, by the automatic entry's step 5"), log);
+}
+
+function checkGatherInputs(brief) {
+  const body = step4Of(brief);
+  assert.ok(body.includes('SPEC=packet-spec-{N}.md FLAGS=packet-flags-{N}.json PROOFS=packet-proofs-{N}.json'), 'the session-temp resolve names both files');
+  const list = flat(between(body, 'acceptance-packet.js" gather', 'Gather non-zero'));
+  assert.ok(list.includes('- `--flags` and `--proofs` — `{FLAGS}` and `{PROOFS}` from the Risk facts call above, always'), list);
+}
+
+function checkLine392(brief) {
+  const sentence = flat(between(step4Of(brief), 'Pass no `--scope`', 'Gather non-zero'));
+  assert.ok(!/`--flags`[^.]*passes none of them/.test(sentence), sentence);
+  assert.ok(sentence.includes('`--dev-base-url`, `--deploy` and `--decision-items` are filled by the dev-target and control-mode records, and none is passed here; `--flags` and `--proofs` come from the Risk facts call above.'), sentence);
+}
+
+function checkRiskNarration(brief) {
+  const narrate = flat(between(step4Of(brief), '**Narrate.**', '**Render**'));
+  assert.ok(narrate.includes('write one `risk-proofs` claim per flag that has a `proof` fact, citing both'), narrate);
+  assert.ok(narrate.includes('a flag no claim cites renders as `no proof shown`'), narrate);
+}
+
+const PINS = [
+  ['Phase 1 snapshots the run plan for the risk proofs', SKILL, checkPlanSnapshot, ['--plan "{plan-file}"', '--diff-filter=AM']],
+  ['Phase 1 resolves exactly one plan, else logs one SKIP', SKILL, checkPlanResolve, [
+    'Two or more (a multi-spec branch)', '--status SKIP', 'line break', 'a failed `rev-parse`', '`top level unreadable`',
+    ['bare spec name', (doc) => doc.replace('names `work/{n}-spec.md`', 'names `{n}-spec.md`')],
+    ['undefined {k}', (doc) => doc.replace('no single run plan ({reason})', 'no single run plan ({k} changed)')],
+  ]],
+  ['Step 4 removes both risk outputs before the producer runs', BRIEF, checkStaleClear, [
+    'rm -f "{FLAGS}" "{PROOFS}"',
+    ['removal after the producer', (doc) => doc.replace(`${RM_FENCE}\n`, '').replace(`${FACTS_FENCE}\n`, `${FACTS_FENCE}\n\n${RM_FENCE}\n`)],
+  ]],
+  ['the gather always passes both risk inputs, a skipped producer included', BRIEF, checkGatherAlwaysBoth, [
+    '--flags "{FLAGS}" --proofs "{PROOFS}"', 'the gather still passes both inputs',
+    ['bullet with a condition', (doc) => doc.replace(FLAGS_BULLET, FLAGS_BULLET.replace('always.', 'always, when the producer ran.'))],
+  ]],
+  ['no clause lets a skipped producer drop the risk inputs', BRIEF, checkNoNeitherClause, [
+    ['the neither clause restored', (doc) => doc.replace(FLAGS_BULLET, FLAGS_BULLET.replace('always.', 'always, whatever its exit; only a skipped call passes neither.'))],
+  ]],
+  ['Step 4 runs the risk facts producer before the gather and passes both files', BRIEF, checkFactsBeforeGather, ['risk-flags.js" facts', '--flags "{FLAGS}" --proofs "{PROOFS}"']],
+  ['the plan copy is read only when the manifest says copied', BRIEF, checkPlanCopyGate, ["`files.plan` is `copied`", 'leaves an earlier `plan.md` there']],
+  ['an absent or unparseable plan copy is never read as no proof written', BRIEF, checkEnvelopeOutcomes, ['because no plan copy exists', 'because the plan copy could not be parsed', 'never as no proof written']],
+  ['a non-zero facts exit is reported and logged and never stops the packet', BRIEF, checkNonZeroExit, ['it never stops the packet', 'removes both outputs', '{risk facts | gather']],
+  ['the gather inputs name the risk facts files', BRIEF, checkGatherInputs, ['FLAGS=packet-flags-{N}.json', 'from the Risk facts call above, always']],
+  ['line 392 no longer says the risk-flag inputs go unpassed', BRIEF, checkLine392, ['and none is passed here']],
+  ['the narration cites each planned proof', BRIEF, checkRiskNarration, ['citing both', 'renders as `no proof shown`']],
+];
+
+for (const [name, file, check, literals] of PINS) {
+  test(name, () => check(read(file)));
+  test(`${name} (go-red)`, () => goRed(check, read(file), literals));
+}

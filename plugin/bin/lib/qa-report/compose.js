@@ -146,6 +146,7 @@ function composeQaReport(input, opts) {
       run_dir: runDir,
       timestamp: typeof input.timestamp === 'string' && input.timestamp !== '' ? input.timestamp : now(),
       stories_dir: orNull(input.stories_dir),
+      base_url: orNull(input.base_url),
       filters: {
         tag: orNull(filters.tag),
         priority: orNull(filters.priority),

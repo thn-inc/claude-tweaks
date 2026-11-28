@@ -12,7 +12,7 @@ files:
 **Persona:** A claude-tweaks plugin maintainer. They add or edit a file under `plugin/bin/` that calls `fs.existsSync` or `fs.realpathSync`, or passes either function around as a reference, and `npm test` goes red on `tests/path-guard-conformance.test.js`.
 **Goal:** See which file's count changed, decide whether the new check needs a type or containment answer or only an existence answer, and make the lint pass without hiding the check.
 **Entry point:** `npm test` (or `node --test tests/path-guard-conformance.test.js`) reports `not ok … AC3.1: passes on the current tree`. One offender line is listed per mismatch.
-**Success state:** Either the new check routes through `plugin/bin/lib/path-guard` (`lstatType` / `resolveLeaf` / `canonicalRealpath` / `resolveWithin`) and the file's token count is back to its allowlisted value, or the file's `ALLOWLIST` entry is updated with a reason specific to that file. The lint passes.
+**Success state:** Either the new check routes through `plugin/bin/lib/path-guard` (`lstatType` / `resolveLeaf` / `resolveTarget` / `canonicalRealpath` / `resolveWithin`) and the file's token count is back to its allowlisted value, or the file's `ALLOWLIST` entry is updated with a reason specific to that file. The lint passes.
 
 ## Steps
 
@@ -39,6 +39,7 @@ files:
 - **Should feel:** Like a settled rule. A type question goes through `lstatType`, and a containment question goes through `resolveWithin` (on an existing target, or a write's existing parent).
 - **Should understand:**
   - `lstatType` returns `missing` only for ENOENT/ENOTDIR. Any other lstat error is `unreadable`, carrying its code, and a fail-closed caller must not treat it as absent.
+  - A path that may not exist yet (a directory a write is about to create) has no realpath of its own. `resolveTarget` gives its canonical form: the nearest existing ancestor resolved through `resolveLeaf`, the missing parts re-appended. Any state other than `resolved` (`dangling`, `unreadable`, or `missing` when no ancestor exists) is a refusal for a fail-closed caller (#5217).
   - `canonicalRealpath` and `resolveLeaf` default to `fs.realpathSync.native`. Passing the JS `fs.realpathSync` is right only when the other side of a comparison is JS-resolved too, as `plugin/bin/lib/timing/transcript.js` does for its projects root and transcript leaves (`realTarget()` did for `isPolicyFile` until #3495).
 - **Red flags:**
   - Comparing a JS `fs.realpathSync` result with a `.native`, git-reported or un-resolved path. That mismatch is what #3380 hit on a case-insensitive volume.
@@ -60,4 +61,5 @@ files:
 - Updated during build of #3573. A file whose stripped text stops compiling now fails the lint with its own offender line (via `stripperVerdict`), instead of silently counting as zero tokens. Step 1 lists the two new offender forms and says what to do about a mis-parse.
 - Updated during build of #3585. The shared stripper now models regex literals, so a quote or backtick inside a regex no longer hides the comments after it: in 23 `plugin/bin` files the lint stopped counting tokens named only in comment text. The Step 1 mis-parse red flag now names the one shape left (a regex right after `)` or `}`) and its rewrite.
 - Updated during build of #3493. `lib/plan-audit/checks.js` was the last `UNSAFE —` allowlist entry. It now routes Check A's parent-directory checks through path-guard, and its entry records the four remaining `existsSync` calls as plain presence checks. The Step 2 red flag now describes the fix and warns that a fallback rule can let a regular file back in.
+- Updated during build of #5217. path-guard gained `resolveTarget`, the canonical form of a path that may not exist yet, for the driver worker's settings-directory check. The success state lists it, and Step 2 says when to use it.
 - Related: `act-on-a-red-skill-size-guard-3311.md` (the same shape for the skill-size guard), and `notice-a-stale-superpowers-install-3380.md` (the case-canonical realpath incident).

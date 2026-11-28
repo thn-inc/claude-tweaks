@@ -6,7 +6,7 @@
 // feeds the pure evaluator (evaluateResolvedRefusal); the CLI only wires the
 // owner/repo resolution and the exit-code contract around them.
 //
-// Usage: resolved-refusal.js <n> [--repo owner/name] [--help]
+// Usage: resolved-refusal.js <n> [--repo [host/]owner/name] [--help]
 // Output: one JSON line on stdout — {number, ...evaluateResolvedRefusal result}.
 // Exit 0 on any verdict (suppress true or false, any `reason`). Exit 1: the
 // `gh api graphql` call failed, returned GraphQL errors, or the issue is missing
@@ -21,7 +21,7 @@ const {
   parseRepo, ghAvailable, remoteUrl, pinExplicitRepoHost, gateOriginRepo,
 } = require('./lib/repo-resolve');
 
-const USAGE = 'usage: resolved-refusal.js <n> [--repo owner/name] [--help]\n';
+const USAGE = 'usage: resolved-refusal.js <n> [--repo [host/]owner/name] [--help]\n';
 
 function parseArgs(argv) {
   const opts = { number: null, repo: null, help: false };
@@ -75,7 +75,7 @@ function run(argv, deps = realDeps) {
     if (gated.refusal) { deps.stderr(`resolved-refusal.js: ${gated.refusal}\n`); return 2; }
     repoSpec = gated.spec;
   }
-  if (!repoSpec) { deps.stderr('resolved-refusal.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
+  if (!repoSpec) { deps.stderr('resolved-refusal.js: could not resolve owner/repo — pass --repo [host/]owner/name\n'); return 2; }
   if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
   const { owner, repo, host } = repoSpec;
 

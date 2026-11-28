@@ -1,6 +1,6 @@
 ---
 name: claim-targets-stop-addition
-description: Use when adding an exit code or a new stop to `plugin/bin/claim-targets.js`, or re-routing an existing claim failure to a different exit — every site the stop must land in across the CLI, `/flow`, `/dispatch` and wrap-up teardown, plus the decisions it owes (run-level or per-target, whether "never claimed" holds, whether the firing continues, how forge text travels). Keywords - claim-targets, exit code, stop, card, Settle, settle-and-merge, firing stop, two-call-gate, cleanup-only, Section E, release-claim, false release comment, keep-going, claims-registry.
+description: Use when adding an exit code or a new stop to `plugin/bin/claim-targets.js`, or re-routing an existing claim failure to a different exit, or adding a `/flow` pre-claim stop that `/dispatch`'s Settle must settle (such as the blocker-landing stop), or adding any stop that ends the whole `/dispatch` firing whatever its source (such as #5255's `dispatch-prompt.js` render failure) — every site the stop must land in across the CLI, `/flow`, `/dispatch` and wrap-up teardown, plus the decisions it owes (run-level or per-target, whether "never claimed" holds, whether the firing continues, how forge text travels). Keywords - claim-targets, exit code, stop, card, Settle, pre-claim stop, blocker-landing, non-failing stop, settle-and-merge, firing stop, two-call-gate, cleanup-only, Section E, release-claim, false release comment, keep-going, claims-registry, render-failure stop, firing-ending stop, dispatch-prompt.js.
 ---
 
 # claim-targets.js stop addition
@@ -13,7 +13,7 @@ description: Use when adding an exit code or a new stop to `plugin/bin/claim-tar
 
 ### The registration set
 
-Answer the decisions below first, because they choose the rows. Rows 1-10 apply to every stop, row 3 only for the field it names; rows 11-13 say when they apply.
+Answer the decisions below first, because they choose the rows. Rows 1-10, 14 and 15 apply to every `claim-targets.js` exit, row 3 only for the field it names; rows 11-13 say when they apply.
 
 | # | Site | What it owes |
 |---|---|---|
@@ -26,10 +26,12 @@ Answer the decisions below first, because they choose the rows. Rows 1-10 apply 
 | 7 | `docs/plugin-structure.md`, `docs/journeys/act-on-a-contested-claim.md`, `.claude/skills/gh-api-module-pattern/` | The command line's exit list; the journey's Success state, a new step and its changelog line; any exit claim the project skills restate (grep them, see Common Operations) |
 | 8 | `plugin/skills/dispatch/settle-and-merge.md` Claim-contest special case | Which Settle steps run, the `flow-step-2.8-…` failing-check-name, and the "{N} different stop shapes" count. `tests/flow-claim-preflight.test.js` slices this section up to `**Open-linked-PR enrichment` |
 | 9 | `plugin/skills/dispatch/task-prompt.md`, `express-prompt.md`, `plugin/skills/_shared/express-lane.md` | The exact `ISSUE #{n}: failed:{gate}` value a dispatched agent reports, and the express lane's step 1 and `blocked` outcome |
-| 10 | `plugin/skills/dispatch/firing-exclusion.md`, `next-ranking.md` | Name the stop in their pre-flight stop lists |
+| 10 | `plugin/skills/dispatch/firing-exclusion.md` | Name the stop in its pre-flight stop list. Not the retained `next-ranking.md`: since #5230 the ranking is `queue-pull.js --rank`, which only picks a group, and `tests/flow-claim-preflight.test.js` no longer pins that file's copy of the stop list |
 | 11 | `plugin/skills/dispatch/two-call-gate.md` section 5, `plugin/skills/wrap-up/cleanup-procedures-execution.md` Section E, `plugin/skills/wrap-up/flags.md` | Only when teardown must not release: the phrase the `cleanup-only` call appends, Section E's skip with its log line, and the `cleanup-only` flag entry that strips the phrase before input classification |
 | 12 | `plugin/skills/dispatch/reporting.md` | Only when a person must act: the relay block, since the first call's reply carries only status lines |
 | 13 | `plugin/skills/dispatch/SKILL.md`, `sequential-execution.md`, `two-call-gate.md` sections 5 and 7 | Only for a firing stop: the stop paragraph, the Every-exit close-out list, the Loop's terminators (two sentences), and every "next group" move-on site |
+| 14 | `plugin/bin/lib/driver/claim-exit.js` (`KIND_BY_EXIT`, `CLAIM_KIND`), then its readers: `plugin/bin/lib/driver/budget.js` (`classifyFacts` and the loop's end checks) and `plugin/bin/lib/driver/settle.js` (the row, the comment's exit code, the TTL note); `docs/driver.md`'s "Picking records: `--budget`" | The driver reads the claim step's exit in one table: `readClaimExit(code)` gives its kind. `drive.js --budget` decides the counter and whether its loop ends from that kind (`ctx.claimExit`), and settle decides its row and note from the stop reason read back (`readClaimReason`). A code with no row is `failed`: it falls through to `claimFailed`, the loop goes on and settle uses the plain `claim` row, with no test failing. A new kind needs a branch in each reader that should act on it. Decision 5 applies here on its own terms: exit 6 continues a `/dispatch` firing but ends the budget loop (`claim-stop`). Tests: the exit table in `tests/bin-lib/driver/claim-exit.test.js`, `classifyFacts`' table in `tests/bin-lib/driver/budget.test.js` and the claim-exit table in `tests/bin-lib/driver/run.test.js` |
+| 15 | `plugin/skills/dispatch/two-call-gate.md` §5's Driver run with no claim paragraph, `plugin/skills/dispatch/driver-route.md`'s Blocked stops list | A dispatch caller of `drive.js --run` reads the claim stop as `stop.reason` `claim-exit-{N}`. Decision 3 picks the release: when the exit writes no claim of this run's, its reason joins §5's claim-exit set, which makes the cleanup-only call append `(driver-no-claim: skip the claim release)`; with no parseable final line the skip keys on the run's `decisions.md` having no `Step 2.8: claimed #{n}` line (an absent file has none, an unreadable one counts as claimed). The set is stated in §5 alone; `driver-route.md`'s blocked row and catch-all point there and never list members. Its Blocked stops list is a separate rule that picks the Settle case: the Claim-contest special case only for the exits that case names. Tests: `NO_CLAIM_REASONS`, `CONTEST_REASONS` and `UNVERIFIED_REASONS` in `tests/dispatch-express-routing-prose.test.js` |
 
 Tests: `tests/bin-lib/claim-targets/claim-targets.test.js` (the exit and its envelope), `tests/bin-lib/issues/claim-store.test.js` (a new store field), `tests/flow-claim-preflight.test.js` (one pin per prose row above), `tests/dispatch-resume-prose.test.js` (row 5).
 
@@ -42,14 +44,47 @@ Tests: `tests/bin-lib/claim-targets/claim-targets.test.js` (the exit and its env
 5. **Does the firing continue?** A cause specific to the record excludes it and moves on (`firing-exclusion.md`). A cause shared by every group, such as a token, ends the firing in every selection form, which brings in row 13.
 6. **Does the stop carry forge text?** Build the reason with `claim-store.js`'s `refusalText`, then `oneLineReason`: a real `gh` error opens with a `Command failed:` line holding the claim payload. Text from GitHub can keep backticks, `$(` and `"`, so a headless self-report writes the body with the Write tool and passes `--body-file`, never the template's `--body` (`settle-and-merge.md`'s Claim permission denied paragraph).
 
+### A `/flow` pre-claim stop that is not a `claim-targets.js` exit
+
+#4792's blocker-landing stop (`/flow` Step 2.7b, gate `blocker-landing`, reported as `ISSUE #{n}: failed:blocker-landing`) exits no `claim-targets.js` code, yet it needed rows 8 and 11 above and four more sites. Its spec named 3 Key Files; the build touched 13 skill files. Take rows 8 and 11 (its own Settle special case, not the Claim-contest one), then:
+
+| Site | What it owes |
+|---|---|
+| `plugin/skills/flow/failure-cards.md` | A row naming the gate and each call's `OUTCOME`: the first call's `build-test-blocked`, and `blocked` from a second call's handoff continuation whose step list includes `test` |
+| `plugin/skills/assess-agent-autonomy/failure-check.md` | The class the stop gets if it reaches that mode anyway, though Settle skips the mode (`transient` for blocker-landing: no build ran, so no diff is at fault) |
+| `plugin/skills/dispatch/two-call-gate.md` section 6 | The skip phrase section 5 appends, for the second call's handoff continuation, which re-runs `/flow`'s pre-claim checks |
+| `plugin/bin/lib/dispatch/queue-pull.js` (the exclusion's `PASSES` row and its `RUNNERS` entry; mirrored in the retained `plugin/skills/dispatch/queue-pull-script.md` until the removal unit lands, so #5227's parity test stays green) | When Settle counts no retry and keeps the grants, a selection-time exclusion for the same cause, or the drain re-dispatches the record on every pull until it clears (#4792's Q1) |
+
+Two decisions it owes beyond the six above:
+
+- **"Pre-claim" does not mean "never claimed".** A handoff continuation re-runs the pre-claim checks after the first call claimed. Settle tells the cases apart by a `Step 2.8: claimed #{n}` line in this run's `decisions.md`, and an unreadable `decisions.md` counts as claimed so step 1's ownership check decides the release (a review fix, `714ae3285`).
+- **In the claimed case a draft PR exists.** Close it with step 5's tombstone, or the `open-pr` exclusion strands the record. Skip the tombstone when step 2's ownership read exits 4: the PR may be the successor's.
+
+### A firing-ending stop from another source
+
+#5255's Render-failure stop (`dispatch-prompt.js` exiting non-zero for any call) ends the firing like the Claim permission stop, but it comes from neither `claim-targets.js` nor `/flow`, so it needs no CLI exit, card or Settle special case. It lands at every dispatch site that names the Claim permission stop as firing-ending:
+
+| Site | What it owes |
+|---|---|
+| `plugin/skills/dispatch/two-call-gate.md` sections 2, 5 and 6 | The stop's trigger and scope (which calls), the cleanup call it follows, and every `(none after a Claim permission stop …)` clause naming the new stop too |
+| `plugin/skills/dispatch/SKILL.md` | The stop's own paragraph beside "Claim permission stop (#4899)", plus the close-out exit list, the bare-drain Loop line, the loop-termination paragraph and Step 6's none-after clause |
+| `firing-exclusion.md`, `sequential-execution.md` | One sentence each beside the claim-permission one (not the retained `next-ranking.md`, row 10) |
+| `plugin/skills/dispatch/reporting.md` | A relay paragraph shaped like the claim-permission relay, and the `PushNotification` sentence naming a headless case when every later firing would stop at the same point |
+| Journeys 2775, 3026, 3278, 4219 | The new termination where each names the Claim permission stop |
+| `tests/flow-claim-preflight.test.js` | Its #4899 exact-text regexes, widened to the new list wording |
+
+When a sibling path must **not** end the firing (a denied-twice call), pin that with a whole-file clause sweep, not a presence pin (`skill-prose-conformance-tests`' advanced-proof-patterns.md, "Pinning a negative claim").
+
 ## Decision Framework
 
 | The stop is | Rows it takes |
 |---|---|
-| Per-target, record at fault, firing continues | 1-10 |
-| Run-level, record not at fault, firing continues (exit 6) | 1-10 |
-| Run-level, shared cause, teardown must not release, firing ends (exit 7) | All 13 |
+| Per-target, record at fault, firing continues | 1-10, 14, 15 |
+| Run-level, record not at fault, firing continues (exit 6) | 1-10, 14, 15 |
+| Run-level, shared cause, teardown must not release, firing ends (exit 7) | All 15 |
 | An existing failure re-routed to another code | Every row that names the old code, plus row 7's restatements of it |
+| A new cause folded into an existing code (#4794's `unknown-host` origin refusal on exit 2) | Rows 1, 2 and 4, row 7's command line, and every sentence that characterizes the code's old meaning, reworded so it does not misdescribe the new cause. Exit 2's bullet called every exit 2 "a bug in this call" until review reworded it as an environment stop with its remedy (`f1d8d79f6`). The shared code answers none of the six decisions above; answer them for the new cause |
+| A `/flow` pre-claim stop that is not a `claim-targets.js` exit (blocker-landing) | 8, 11, and the four sites in the section above |
 
 ## Project Conventions
 

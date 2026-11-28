@@ -1,0 +1,4 @@
+[
+  { "id": "bbbbbbbbbbb1", "lens": "3a", "path": "lib/one.js", "line": 7, "claim": "one claim", "reporterSeverity": "high", "kind": "unconfirmed" },
+  { "id": "bbbbbbbbbbb2", "lens": "3b", "path": "lib/two.js", "line": 8, "claim": "two claim", "reporterSeverity": null, "kind": "unconfirmed" }
+]

@@ -25,6 +25,11 @@
 // and `/backlog` grants route it to an autonomous build. No `by:reconcile`
 // origin value, no scoring heuristic — closed #1216 is the recorded
 // decision.
+//
+// #4794: the `repo` every function below takes is a *residue repo* — a `--repo`
+// string, `null` (no origin), or `{ refusal: string }` (an origin the gh host
+// gate refused). A refused origin reports `unknown-host` with the refusal text
+// as `detail` and never reaches a runner call; `null` keeps `no-repo-slug`.
 'use strict';
 const { fingerprintFromBasis, normalizeText } = require('../health-core/fingerprint');
 // #644 review fix — defaultRunner/errorText were a byte-for-byte duplicate
@@ -43,6 +48,33 @@ const { defaultRunner, errorText } = require('../feedback/file-feedback');
 // rather than widening the shared function's JSON fields for every other
 // caller.
 const { findByMarker } = require('../issues/dedup-lookup');
+
+// #5393: the failure text a residue escalate/resolve records. errorText leads with
+// execFileSync's `Command failed: <full argv>` line, which buries gh's stderr and
+// carries a `--body` value. Here stderr leads, the command is cut to its first four
+// words before any flag, and an exec failure with no stderr keeps that short command.
+// Not capped here — boundedError (cache.js) does that.
+function residueErrorText(err) {
+  if (typeof err !== 'object' || err === null) return errorText(err);
+  const stderr = String(err.stderr ?? '').trim();
+  const firstLine = String(err.message ?? '').split('\n')[0];
+  const words = [];
+  if (firstLine.startsWith('Command failed: ')) {
+    for (const tok of firstLine.slice('Command failed: '.length).split(/\s+/).filter(Boolean)) {
+      if (tok.startsWith('-') || words.length === 4) break;
+      words.push(tok);
+    }
+  }
+  const short = words.length ? words.join(' ') : null;
+  if (stderr) {
+    if (short) return `${stderr} (${short})`;
+    // A spawn-level failure (ETIMEDOUT, ENOBUFS) carries a string `code`; its message is the cause.
+    // A thrown object with no message (an injected runner) has no cause to append.
+    return typeof err.code === 'string' && firstLine.trim() ? `${stderr} (${firstLine.trim()})` : stderr;
+  }
+  if (short) return `Command failed: ${short}`;
+  return errorText(err);
+}
 
 // #1811 Deliverable 4: `structurally-stuck` escalates as ONE shared record
 // per sweep pass covering every stuck path, not one per directory — the
@@ -120,13 +152,17 @@ function structurallyStuckBody(paths) {
   return [
     'Reconcile has one or more run directories stuck at `structurally-stuck` past the escalation threshold. The skip reasons that feed this record are `no-worktree`, `no-branch`, `no-pr`, `console-never-rendered-pr-closed`, `console-never-rendered-staged-pending`, `pr-not-found`, `merged-partial`, `tiebreak-coverage-missing`, `tiebreak-artifact-invalid`, and `cant-tell-unfiled`.',
     '',
+    "For a `console-never-rendered-pr-closed` directory, the run's PR was closed without merging, so nothing will drive it to wrap-up: close the run (`hooks.js close-run --run {run-dir}`) and archive it (`hooks.js archive-run --run {run-dir}`), or retry the record with `/claude-tweaks:flow #{n}` if the work is still wanted.",
+    '',
+    'For a `no-worktree` directory, the run has no worktree left: close and archive the run. For a `no-branch` directory, the run has no branch: close and archive the run. For a `no-pr` directory, the run never opened a PR: close and archive the run, or retry the record with `/claude-tweaks:flow #{n}`.',
+    '',
     "For a `console-never-rendered-staged-pending` directory, a merged run's `staged/` holds pending (or unreadable) items and no console was ever rendered — apply or delete the files under `staged/` (and any `spec-*/staged/`), or write a resolved `console.json`; the next reconcile then archives the dir and drops it from this record.",
     '',
     "For a `merged-partial` directory, the records the run's merged PR was meant to close (the closing-keyword links on that PR) are still open: ship them in a later PR, or close/release them if they were abandoned; the next reconcile then archives the dir and drops it from this record.",
     '',
     "For a `tiebreak-coverage-missing` or `tiebreak-artifact-invalid` directory, the run's review-findings.json lists a finding with no tiebreak verdict line in decisions.md, or is malformed: re-run the review step's findings writer and tiebreak for that run, or delete review-findings.json if the run predates the tiebreak; the next reconcile then archives the dir and drops it from this record.",
     '',
-    "For a `cant-tell-unfiled` directory, the run merged through an auto-merge path (the wrap-up short-circuit or the dispatch bundle Auto-merge gate) with no Review Console and holds a can't-tell finding no record was filed for: file it through `wrap-up/review-console.md`'s Can't-tell filings step (`console-filings.js --run {run-dir}`; a `spec-N/`-prefixed id is filed and logged with `--run {run-dir}/spec-N`, its own `decisions.md`), logging `{item} filed as #{n} (work-fingerprint {fp})` for each, or write a resolved `console.json`; the next reconcile then archives the dir and drops it from this record.",
+    "For a `cant-tell-unfiled` directory, the run merged through an auto-merge path (the wrap-up short-circuit or the dispatch bundle Auto-merge gate) with no Review Console and holds a can't-tell finding no record was filed for: file it through `wrap-up/review-console.md`'s Can't-tell filings step (`console-filings.js --run {run-dir}`; a `spec-N/`-prefixed id is filed and logged with `--run {run-dir}/spec-N`, its own `decisions.md`), logging `{item} filed as #{n} (work-fingerprint {fp})` for each (a drop-recommended item is digested instead, logged `{item} digested (work-fingerprint {fp})`), or write a resolved `console.json`; the next reconcile then archives the dir and drops it from this record.",
     '',
     "Each directory's exact reason is the `lastError` (`stuck at <reason>`) on its `structurally-stuck` entry under `residueFailures` in the main checkout's `.claude-tweaks/reconcile-cache.json`.",
     '',
@@ -228,6 +264,19 @@ function residueBody({
   return { body: lines.filter((l) => l !== null).join('\n'), marker };
 }
 
+// #4794: the refusal text of a `{ refusal }` residue repo, else null.
+function refusalOf(repo) {
+  return repo && typeof repo === 'object' && typeof repo.refusal === 'string' ? repo.refusal : null;
+}
+
+// #4794: the residue repo `repoTargetOf`'s result stands for in the escalate/resolve calls: null when
+// origin did not resolve, `{ refusal }` for a refused origin (files nothing, calls no gh), else the
+// `--repo` value for the origin's one host (bare on gh's default host).
+function residueRepoOf(target) {
+  if (!target) return null;
+  return target.refusal ? { refusal: target.refusal } : target.ghRepo;
+}
+
 // Shared find-hit skeleton for the two escalate* functions below: resolve
 // the no-repo guard and the findResidueDuplicate try/catch once, then either
 // create a fresh issue (no hit) or hand the found hit to the caller's onHit
@@ -242,12 +291,14 @@ function residueBody({
 function findOrCreateIssue({
   repo, marker, runner, createArgs, onHit,
 }) {
+  const refusal = refusalOf(repo);
+  if (refusal !== null) return { status: 'escalation-failed', reason: 'unknown-host', detail: refusal };
   if (!repo) return { status: 'escalation-failed', reason: 'no-repo-slug' };
   let hit;
   try {
     hit = findResidueDuplicate({ repo, marker, runner });
   } catch (err) {
-    return { status: 'escalation-failed', reason: errorText(err) };
+    return { status: 'escalation-failed', reason: residueErrorText(err) };
   }
   if (!hit) {
     try {
@@ -255,7 +306,7 @@ function findOrCreateIssue({
       const m = /\/issues\/(\d+)/.exec(String(out));
       return { status: 'filed', number: m ? Number(m[1]) : null };
     } catch (err) {
-      return { status: 'escalation-failed', reason: errorText(err) };
+      return { status: 'escalation-failed', reason: residueErrorText(err) };
     }
   }
   return onHit(hit);
@@ -268,19 +319,21 @@ function findOrCreateIssue({
 function findHitForResolve({
   repo, marker, runner, onHit,
 }) {
+  const refusal = refusalOf(repo);
+  if (refusal !== null) return { status: 'resolution-failed', reason: 'unknown-host', detail: refusal };
   if (!repo) return { status: 'resolution-failed', reason: 'no-repo-slug' };
   let hit;
   try {
     hit = findResidueDuplicate({ repo, marker, runner });
   } catch (err) {
-    return { status: 'resolution-failed', reason: errorText(err) };
+    return { status: 'resolution-failed', reason: residueErrorText(err) };
   }
   if (!hit) return { status: 'not-found' };
   return onHit(hit);
 }
 
 // { repo, reason, targetPath, count, firstFailedAt, lastError, runner } ->
-// { status: 'filed'|'dedup-hit'|'reopened', number } | { status: 'escalation-failed', reason }
+// { status: 'filed'|'dedup-hit'|'reopened', number } | { status: 'escalation-failed', reason, detail? }
 // Never throws — every branch below is try/caught, mirroring every other
 // best-effort write in this module family (logReapEvent in reap-merged.js,
 // writeCache here).
@@ -305,7 +358,7 @@ function findHitForResolve({
 // #4202: `pathExists` is opt-in — when supplied, a listed path it reports gone is dropped
 // from the edited body and noted in the comment; omitted means no convergence.
 // -> { status: 'filed'|'dedup-hit'|'appended'|'reopened', number } |
-//    { status: 'escalation-failed', reason, number? }
+//    { status: 'escalation-failed', reason, detail?, number? }
 function escalateStructurallyStuck({
   repo, targetPath, runner = defaultRunner, pathExists,
 }) {
@@ -340,7 +393,7 @@ function escalateStructurallyStuck({
         }
         return { status: 'appended', number: hit.number };
       } catch (err) {
-        return { status: 'escalation-failed', reason: errorText(err), number: hit.number };
+        return { status: 'escalation-failed', reason: residueErrorText(err), number: hit.number };
       }
     },
   });
@@ -350,6 +403,8 @@ function escalateResidue({
   repo, reason, targetPath, count, firstFailedAt, lastError, dirtyFiles, runner = defaultRunner, pathExists,
 }) {
   if (reason === 'structurally-stuck') return escalateStructurallyStuck({ repo, targetPath, runner, pathExists });
+  const refusal = refusalOf(repo);
+  if (refusal !== null) return { status: 'escalation-failed', reason: 'unknown-host', detail: refusal };
   if (!repo) return { status: 'escalation-failed', reason: 'no-repo-slug' };
   const { body, marker } = residueBody({
     reason, targetPath, count, firstFailedAt, lastError, dirtyFiles,
@@ -370,7 +425,7 @@ function escalateResidue({
         runner(['issue', 'reopen', String(hit.number), '--repo', repo]);
         return { status: 'reopened', number: hit.number };
       } catch (err) {
-        return { status: 'escalation-failed', reason: errorText(err), number: hit.number };
+        return { status: 'escalation-failed', reason: residueErrorText(err), number: hit.number };
       }
     },
   });
@@ -381,9 +436,9 @@ function escalateResidue({
 // or resolved by some other means entirely) and was already escalated has an
 // open backlog record naming a path that no longer needs it. Comment (why)
 // then close — best-effort, mirrors escalateResidue's own never-throw
-// posture; cache.js drops the cache entry regardless of whether this
-// resolution succeeds (the path itself is gone either way, so it can never
-// fail or succeed again — see that call site's own comment).
+// posture; #4209: cache.js drops the cache entry once this resolution lands, or
+// after RESIDUE_RETRY_LIMIT failed retries, and keeps it for later passes in
+// between (see that call site's own comment).
 // #1811 Deliverable 4: the consolidated record names N paths, so resolving
 // ONE of them must never close the record out from under the OTHER,
 // still-genuinely-stuck paths it names. Removes just `targetPath` from the
@@ -396,7 +451,7 @@ function escalateResidue({
 // path it reports gone is dropped alongside targetPath, and the record closes only once the
 // converged list is empty.
 // -> { status: 'closed'|'path-removed'|'already-closed'|'not-found', number? } |
-//    { status: 'resolution-failed', reason, number? }
+//    { status: 'resolution-failed', reason, detail?, number? }
 function resolveStructurallyStuck({
   repo, targetPath, runner = defaultRunner, why, pathExists,
 }) {
@@ -416,7 +471,7 @@ function resolveStructurallyStuck({
           runner(['issue', 'close', String(hit.number), '--repo', repo]);
           return { status: 'closed', number: hit.number };
         } catch (err) {
-          return { status: 'resolution-failed', reason: errorText(err), number: hit.number };
+          return { status: 'resolution-failed', reason: residueErrorText(err), number: hit.number };
         }
       }
       if (hit.state === 'CLOSED') return { status: 'already-closed', number: hit.number };
@@ -438,7 +493,7 @@ function resolveStructurallyStuck({
           + `(${remaining.length} path(s) still stuck)${note}.`]);
         return { status: 'path-removed', number: hit.number };
       } catch (err) {
-        return { status: 'resolution-failed', reason: errorText(err), number: hit.number };
+        return { status: 'resolution-failed', reason: residueErrorText(err), number: hit.number };
       }
     },
   });
@@ -448,7 +503,7 @@ function resolveStructurallyStuck({
 // default "no longer exists on disk" clause in the structurally-stuck comment; every
 // other reason ignores it and its comment is unchanged.
 // -> { status: 'closed'|'already-closed'|'not-found', number? } |
-//    { status: 'resolution-failed', reason, number? }
+//    { status: 'resolution-failed', reason, detail?, number? }
 function resolveResidue({
   repo, reason, targetPath, runner = defaultRunner, why, pathExists,
 }) {
@@ -465,7 +520,7 @@ function resolveResidue({
         runner(['issue', 'close', String(hit.number), '--repo', repo]);
         return { status: 'closed', number: hit.number };
       } catch (err) {
-        return { status: 'resolution-failed', reason: errorText(err), number: hit.number };
+        return { status: 'resolution-failed', reason: residueErrorText(err), number: hit.number };
       }
     },
   });
@@ -474,5 +529,5 @@ function resolveResidue({
 module.exports = {
   escalateResidue, resolveResidue, residueFingerprint, residueBody, findResidueDuplicate, defaultRunner, errorText,
   parseStuckPaths, renderStuckPathsBlock, withStuckPaths, structurallyStuckBody, structurallyStuckMarker,
-  capDirtyFiles, DIRTY_FILES_CAP,
+  capDirtyFiles, DIRTY_FILES_CAP, residueRepoOf, residueErrorText,
 };

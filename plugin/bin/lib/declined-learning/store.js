@@ -29,7 +29,7 @@
 // read/write pair). writeStore (and therefore recordDecline/clearDecline, which read-modify-write
 // through it) lets a real write failure propagate; the caller decides how to degrade. Every fs
 // call in readStore/writeStore is an injectable default param so tests never touch real disk. The
-// checkout anchoring is the exception: anchorRoot() reads process.cwd() and, through
+// checkout anchoring is the exception: with no `cwd` given, anchorRoot() reads process.cwd() and, through
 // mainCheckoutRoot, the real .git, so a test that fakes the other fs calls first moves the process
 // to a directory outside any repository, where every path stays cwd-relative.
 //
@@ -66,11 +66,15 @@ const LOCK_REL = path.join('.claude-tweaks', 'declined-learning', '.store.lock')
 // The main checkout root the store lives under (#4360), or null. Resolved per call, not at module
 // load, so the anchor follows the process's current cwd. A null root (no repo, or a .git that
 // can't be parsed) and a deleted cwd (process.cwd() throws) both give null, and `anchored` then
-// keeps the relative path: the store degrades open on read rather than throwing.
-function anchorRoot() {
-  let cwd;
-  try { cwd = process.cwd(); } catch { return null; }
-  return mainCheckoutRoot(cwd) || null;
+// keeps the relative path: the store degrades open on read rather than throwing. A caller-given
+// `from` outside any repository anchors at `from` itself, so the path never falls back to the
+// process's own cwd.
+function anchorRoot(from) {
+  let cwd = from;
+  if (cwd === undefined) {
+    try { cwd = process.cwd(); } catch { return null; }
+  }
+  return mainCheckoutRoot(cwd) || (from !== undefined ? from : null);
 }
 
 // Joins a checkout-relative path onto `root`, or keeps it relative when there is none.
@@ -80,10 +84,12 @@ function anchored(relPath, root = anchorRoot()) {
 
 // Runs `fn` under the store lock with the store file already resolved. A read-modify-write
 // resolves the anchor once, so its lock, read and write can never target different checkouts if a
-// later resolution fails transiently.
-function locked(deps, fn) {
-  const root = anchorRoot();
-  return withLock(anchored(LOCK_REL, root), () => fn({ ...deps, storeFile: anchored(STORE_REL, root) }));
+// later resolution fails transiently. `deps.cwd` (a CLI that was handed its working directory)
+// is the one anchor for both paths; it is not passed on to the fs calls. `deps.env` is where the
+// lock's wait knob is read (default: the inherited environment); a hook event passes its context's (#5377).
+function locked({ cwd, env, ...deps }, fn) {
+  const root = anchorRoot(cwd);
+  return withLock(anchored(LOCK_REL, root), () => fn({ ...deps, storeFile: anchored(STORE_REL, root) }), env ? { env } : {});
 }
 
 // Age-based pruning default (#1399): the store has no expiry, so every decline ever recorded
@@ -119,8 +125,8 @@ function truncateSubject(subject) {
 // One on-disk location per checkout: the main checkout's, resolved from cwd (#4360, see anchored()),
 // with no per-transcript/per-consumer derivation. Outside a git repository it is the cwd-relative
 // path.
-function storePath() {
-  return anchored(STORE_REL);
+function storePath(cwd) {
+  return anchored(STORE_REL, anchorRoot(cwd));
 }
 
 // Returns the parsed store object, or {} when none exists (ENOENT), the file is present but not
@@ -141,6 +147,8 @@ function writeStore(data, { mkdirSync = fs.mkdirSync, writeFile = fs.writeFileSy
 // readStore/writeStore under the store's lock, so it inherits both their degrade-open (read) and
 // propagate (write) behavior, plus protection from a concurrent recordDecline/clearDecline
 // clobbering it mid-write. Returns the entry that was written.
+// `deps.cwd` anchors the lock and the store from that directory instead of the process's (a CLI
+// that was handed its working directory); absent, both resolve from process.cwd() as before.
 //
 // `subject` (#1033, rationale in this file's header) is the human-legible text a consumer already
 // has on hand when it declines something — the draft's `fingerprintBasis.summary` for feedback,
@@ -166,8 +174,10 @@ function recordDecline(fingerprint, {
 // degrades open. Exact-hash lookup only — a byte-identical (or near-identical, per the caller's
 // own normalization) re-fingerprint. See listDeclined below for the subject-scan alternative this
 // can't cover.
-function lookupDecline(fingerprint, deps = {}) {
-  const current = readStore(deps);
+// `deps.cwd` anchors the store from that directory instead of the process's (a CLI that was handed
+// its working directory); absent, the lookup resolves from process.cwd() as before.
+function lookupDecline(fingerprint, { cwd, ...deps } = {}) {
+  const current = readStore({ ...deps, storeFile: deps.storeFile === undefined ? storePath(cwd) : deps.storeFile });
   return Object.prototype.hasOwnProperty.call(current, fingerprint) ? current[fingerprint] : null;
 }
 

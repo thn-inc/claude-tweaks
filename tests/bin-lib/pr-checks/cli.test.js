@@ -5,8 +5,14 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { run, parseArgs } = require('../../../plugin/bin/pr-checks');
+const { HEAD_RUN_FIELDS } = require('../../../plugin/bin/lib/pr-checks/classify');
 
 const HEAD = 'c'.repeat(40);
+// #3468: the settle window reads the clock and the PR's createdAt. Ordinary fixtures model a PR created
+// long before the injected clock, so the window is closed and each keeps testing what it tested.
+const OLD_ISO = '2026-11-26T09:00:00Z';
+const NOW = Date.parse('2026-11-26T12:00:00Z');
+const isCommitterRead = (a) => a[0] === 'api' && a[2] === '--jq' && a[3] === '.commit.committer.date';
 
 const created = [];
 test.after(() => {
@@ -52,6 +58,9 @@ function makeDeps(main, over = {}) {
       if (args[0] === 'run' && args[1] === 'list') return '[]';
       throw new Error('unexpected gh ' + args.join(' '));
     },
+    // The default reads as "no ready event": no requirement, so every pre-#5153 test is unchanged.
+    readyRun: () => ({ readySince: null, workflows: [], headRuns: [] }),
+    now: () => NOW,
     stdout: (s) => out.push(s),
     stderr: (s) => err.push(s),
     ...over,
@@ -101,7 +110,7 @@ test('red at HEAD: reads pr.number from run-state.json and reports the failing c
   assert.equal(j.pr, 7);
   assert.equal(j.localHead, HEAD);
   assert.deepEqual(j.failing, [{ name: 'test', url: 'https://ci.example/test' }]);
-  assert.deepEqual(h.ghCalls[0], ['pr', 'view', '7', '--json', 'headRefOid,statusCheckRollup,baseRefName']);
+  assert.deepEqual(h.ghCalls[0], ['pr', 'view', '7', '--json', 'headRefOid,statusCheckRollup,baseRefName,createdAt']);
 });
 
 test('no pr in run-state.json is no-pr and never calls gh (local-merge / standalone fail-open)', () => {
@@ -196,7 +205,7 @@ test('a green rollup plus an in_progress head run is pending, not green (#3405)'
   const j = h.json();
   assert.equal(j.state, 'pending');
   assert.deepEqual(j.pending, ['test']);
-  assert.deepEqual(ghCalls.find((a) => a[0] === 'run'), ['run', 'list', '--commit', HEAD, '--limit', '100', '--json', 'name,workflowName,status,conclusion,url']);
+  assert.deepEqual(ghCalls.find((a) => a[0] === 'run'), ['run', 'list', '--commit', HEAD, '--limit', '100', '--json', HEAD_RUN_FIELDS]);
 });
 
 test('a failing gh run list is read-failed, never green (#3405)', () => {
@@ -285,7 +294,7 @@ function prDeps(main, over = {}) {
 function prGh(headRun, ghCalls = []) {
   return (args) => {
     ghCalls.push(args);
-    if (args[0] === 'pr') return JSON.stringify({ headRefOid: HEAD, statusCheckRollup: [{ name: 'lint', status: 'COMPLETED', conclusion: 'SUCCESS' }], baseRefName: 'main' });
+    if (args[0] === 'pr') return JSON.stringify({ headRefOid: HEAD, statusCheckRollup: [{ name: 'lint', status: 'COMPLETED', conclusion: 'SUCCESS' }], baseRefName: 'main', createdAt: OLD_ISO });
     return JSON.stringify([headRun]);
   };
 }
@@ -316,7 +325,7 @@ test('AC1.1: --pr reads a green rollup with an in-progress head run as pending',
   assert.ok(j.pending.includes('test'));
   assert.equal(j.pr, 7);
   assert.equal(j.localHead, null);
-  assert.deepEqual(ghCalls[0], ['pr', 'view', '7', '--json', 'headRefOid,statusCheckRollup,baseRefName']);
+  assert.deepEqual(ghCalls[0], ['pr', 'view', '7', '--json', 'headRefOid,statusCheckRollup,baseRefName,createdAt']);
   const runCall = ghCalls.find((a) => a[0] === 'run');
   assert.ok(runCall.includes('--commit'));
   assert.equal(runCall[runCall.indexOf('--commit') + 1], HEAD);
@@ -324,7 +333,7 @@ test('AC1.1: --pr reads a green rollup with an in-progress head run as pending',
 
 test('--pr green when rollup and head runs are complete', () => {
   const { main } = fixture(null);
-  const h = prDeps(main, { gh: prGh({ name: 'test', workflowName: 'test', status: 'completed', conclusion: 'success', url: 'u' }) });
+  const h = prDeps(main, { gh: prGh({ name: 'test', workflowName: 'test', status: 'completed', conclusion: 'success', url: 'u', event: 'pull_request' }) });
   assert.equal(run(['--pr', '7'], h.deps), 0);
   const j = h.json();
   assert.equal(j.state, 'green');
@@ -435,7 +444,7 @@ test('an unresolvable integration branch is plain red and makes no gh api call',
     assert.equal(run(['--run', runDir], h.deps), 0);
     assert.equal(h.json().state, 'red');
     assert.ok(h.json().baseReason);
-    assert.equal(f.calls.some((a) => a[0] === 'api'), false);
+    assert.equal(f.calls.some((a) => a[0] === 'api' && !isCommitterRead(a)), false);
   }
 });
 
@@ -458,10 +467,10 @@ test('green, pending and stale verdicts never read the base tip', () => {
   for (const [state, { headRefOid, rollup }] of Object.entries(rollups)) {
     const { main, runDir } = fixture({ pr: { number: 7 } });
     const calls = [];
-    const h = makeDeps(main, { integrationBranch: () => 'main', gh: (args) => { calls.push(args); return args[0] === 'pr' ? JSON.stringify({ headRefOid, statusCheckRollup: rollup }) : '[]'; } });
+    const h = makeDeps(main, { integrationBranch: () => 'main', gh: (args) => { calls.push(args); if (isCommitterRead(args)) return `${OLD_ISO}\n`; return args[0] === 'pr' ? JSON.stringify({ headRefOid, statusCheckRollup: rollup, createdAt: OLD_ISO }) : '[]'; } });
     assert.equal(run(['--run', runDir], h.deps), 0);
     assert.equal(h.json().state, state);
-    assert.equal(calls.some((a) => a[0] === 'api'), false);
+    assert.equal(calls.some((a) => a[0] === 'api' && !isCommitterRead(a)), false);
   }
 });
 
@@ -588,7 +597,10 @@ test('a workflow failing at the base tip only as a run row is inherited; a super
 // _shared/github-pr-scan.md, dispatch/settle-parked.md and the wrap-up pack parse them.
 const PASS = { __typename: 'CheckRun', name: 'test', status: 'COMPLETED', conclusion: 'SUCCESS' };
 const RUNNING = { __typename: 'CheckRun', name: 'test', status: 'IN_PROGRESS', conclusion: '' };
-const viewGh = (view, runs = '[]') => (args) => (args[0] === 'pr' ? JSON.stringify(view) : runs);
+const viewGh = (view, runs = '[]') => (args) => {
+  if (args[0] === 'pr') return JSON.stringify({ createdAt: OLD_ISO, ...view });
+  return isCommitterRead(args) ? `${OLD_ISO}\n` : runs;
+};
 const STATE_OVERRIDES = {
   green: () => ({ gh: viewGh({ headRefOid: HEAD, statusCheckRollup: [PASS] }) }),
   pending: () => ({ gh: viewGh({ headRefOid: HEAD, statusCheckRollup: [RUNNING] }) }),
@@ -601,12 +613,12 @@ const STATE_OVERRIDES = {
 };
 const RED_FAILING = [{ name: 'test', url: 'https://ci.example/test' }];
 const RUN_LINES = {
-  green: { failing: [], pending: [], headRefOid: HEAD, localHead: HEAD, pr: 7, state: 'green' },
-  pending: { failing: [], pending: ['test'], headRefOid: HEAD, localHead: HEAD, pr: 7, state: 'pending' },
+  green: { failing: [], pending: [], headRefOid: HEAD, localHead: HEAD, pr: 7, state: 'green', headRunCount: 0 },
+  pending: { failing: [], pending: ['test'], headRefOid: HEAD, localHead: HEAD, pr: 7, state: 'pending', headRunCount: 0 },
   stale: { failing: [], pending: [], headRefOid: 'd'.repeat(40), localHead: HEAD, pr: 7, state: 'stale' },
-  red: { failing: RED_FAILING, pending: [], headRefOid: HEAD, localHead: HEAD, pr: 7, state: 'red', baseSha: null, baseReason: 'integration branch unresolvable', baseBranch: null },
-  'inherited-red': { failing: [{ ...RED_FAILING[0], inherited: true }], pending: [], headRefOid: HEAD, localHead: HEAD, pr: 7, state: 'inherited-red', baseSha: BASE_SHA, baseBranch: 'main' },
-  'no-ci': { failing: [], pending: [], headRefOid: HEAD, localHead: HEAD, pr: 7, state: 'no-ci' },
+  red: { failing: RED_FAILING, pending: [], headRefOid: HEAD, localHead: HEAD, pr: 7, state: 'red', baseSha: null, baseReason: 'integration branch unresolvable', baseBranch: null, headRunCount: 0 },
+  'inherited-red': { failing: [{ ...RED_FAILING[0], inherited: true }], pending: [], headRefOid: HEAD, localHead: HEAD, pr: 7, state: 'inherited-red', baseSha: BASE_SHA, baseBranch: 'main', headRunCount: 0 },
+  'no-ci': { failing: [], pending: [], headRefOid: HEAD, localHead: HEAD, pr: 7, state: 'no-ci', headRunCount: 0 },
   'read-failed': { failing: [], pending: [], headRefOid: null, localHead: HEAD, pr: 7, state: 'read-failed', reason: 'gh pr view failed: HTTP 502' },
   'gh-absent': { failing: [], pending: [], headRefOid: null, localHead: null, pr: 7, state: 'gh-absent' },
   'no-pr': { failing: [], pending: [], headRefOid: null, localHead: null, pr: null, state: 'no-pr' },
@@ -759,4 +771,380 @@ test('append failure reports logged:false and keeps exit 0', () => {
     assert.equal(h.err.join('').trim().split('\n').length, 1, state);
     assert.match(h.err.join(''), /disk full/, state);
   }
+});
+
+// #5153: the ready-run inputs. pr-checks.js feeds readySince / readyWorkflows / the REST
+// runs to classifyRollup, so /test's gate agrees with the merge gate on every head.
+const CI_FILE = '.github/workflows/ci.yml';
+const READY_AT = '2026-11-11T10:00:00Z';
+const wfReady = { file: CI_FILE, prTrigger: true, types: ['opened', 'synchronize', 'reopened', 'ready_for_review'], draftReference: true, unparsed: false };
+const wfDraftSkip = { file: CI_FILE, prTrigger: true, types: ['opened', 'synchronize', 'reopened'], draftReference: true, unparsed: false };
+const restRun = (over = {}) => ({ id: 11, name: 'CI', path: CI_FILE, event: 'pull_request', created_at: '2026-11-11T10:05:00Z', status: 'completed', conclusion: 'success', html_url: 'https://github.example/runs/11', ...over });
+const readyStub = (ready, calls = []) => (a) => { calls.push(a); return ready; };
+const greenView = viewGh({ headRefOid: HEAD, statusCheckRollup: [PASS] });
+
+test('ready-run: a green rollup with a ready workflow and no post-ready run is pending with awaitingReadyRun', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { gh: greenView, readyRun: readyStub({ readySince: READY_AT, workflows: [wfReady], headRuns: [] }) });
+  assert.equal(run(['--run', runDir], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.state, 'pending');
+  assert.deepEqual(j.pending, []);
+  assert.deepEqual(j.awaitingReadyRun, [CI_FILE]);
+});
+
+test('ready-run: a completed successful post-ready REST run makes it green', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { gh: greenView, readyRun: readyStub({ readySince: READY_AT, workflows: [wfReady], headRuns: [restRun()] }) });
+  assert.equal(run(['--run', runDir], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.state, 'green');
+  assert.equal('awaitingReadyRun' in j, false);
+});
+
+test('ready-run: a draft-skip workflow without a ready trigger is folded into readyWorkflows and reads pending, never a new state', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { gh: greenView, readyRun: readyStub({ readySince: READY_AT, workflows: [wfDraftSkip], headRuns: [] }) });
+  assert.equal(run(['--run', runDir], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.state, 'pending');
+  assert.deepEqual(j.awaitingReadyRun, [CI_FILE]);
+});
+
+test('ready-run (Reading B): a draft-skip workflow with a completed successful post-ready synchronize run is green, the same verdict the merge gate\'s met gives', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { gh: greenView, readyRun: readyStub({ readySince: READY_AT, workflows: [wfDraftSkip], headRuns: [restRun({ event: 'pull_request' })] }) });
+  assert.equal(run(['--run', runDir], h.deps), 0);
+  assert.equal(h.json().state, 'green');
+});
+
+// readReadyRun wired to fakes: GraphQL answers `timeline`, git throws exit 128 (head not local).
+function realReady({ timeline, gitCalls, ghCalls }) {
+  const { readReadyRun } = require('../../../plugin/bin/lib/pr-checks/ready-run');
+  const rdeps = {
+    ghAvailable: () => true,
+    repoTarget: () => ({ owner: 'o', repo: 'r' }),
+    gh: (args) => {
+      ghCalls.push(args);
+      if (args[0] === 'api' && args[1] === 'graphql') return JSON.stringify({ data: { repository: { pullRequest: { timelineItems: { nodes: timeline } } } } });
+      const e = new Error('HTTP 404'); e.stdout = JSON.stringify({ status: '502', message: 'Bad Gateway' }); throw e;
+    },
+    git: (args) => { gitCalls.push(args); const e = new Error('fatal: not a tree object'); e.status = 128; throw e; },
+  };
+  return (a) => readReadyRun(rdeps, a);
+}
+
+test('ready-run: no ready event and a head absent from the local object store leave the verdict unchanged', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const base = makeDeps(main, { gh: greenView });
+  assert.equal(run(['--run', runDir], base.deps), 0);
+  const gitCalls = []; const ghCalls = [];
+  const { main: main2, runDir: runDir2 } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main2, { gh: greenView, readyRun: realReady({ timeline: [], gitCalls, ghCalls }) });
+  assert.equal(run(['--run', runDir2], h.deps), 0);
+  assert.deepEqual(h.json(), base.json());
+  assert.equal(h.json().state, 'green');
+  assert.equal(gitCalls.length, 0);
+  assert.equal(ghCalls.length, 1, 'only the timeline read');
+});
+
+test('ready-run: a ready event, a non-local head and both workflow sources unavailable is read-failed on a green rollup', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { gh: greenView, readyRun: realReady({ timeline: [{ createdAt: READY_AT }], gitCalls: [], ghCalls: [] }) });
+  assert.equal(run(['--run', runDir], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.state, 'read-failed');
+  assert.match(j.reason, /^ready-run read failed: workflows unreadable at c{40}/);
+});
+
+test('ready-run: a readyRun reason on a non-red verdict is read-failed with reason prefix "ready-run read failed:"; on a red verdict it stays red', () => {
+  for (const ready of [() => ({ reason: 'gh absent' }), () => { throw new Error('boom'); }]) {
+    const { main, runDir } = fixture({ pr: { number: 7 } });
+    const h = makeDeps(main, { gh: greenView, readyRun: ready });
+    assert.equal(run(['--run', runDir], h.deps), 0);
+    assert.equal(h.json().state, 'read-failed');
+    assert.match(h.json().reason, /^ready-run read failed: (gh absent|boom)/);
+  }
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { integrationBranch: () => null, readyRun: () => ({ reason: 'gh absent' }) });
+  assert.equal(run(['--run', runDir], h.deps), 0);
+  assert.equal(h.json().state, 'red');
+});
+
+test('ready-run: a readyRun reason plus a base comparison that concludes inherited-red is read-failed (partial read)', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const f = redWithBase(['test'], ['test'], { readyRun: () => ({ reason: 'x' }) });
+  const h = makeDeps(main, f.over);
+  assert.equal(run(['--run', runDir], h.deps), 0);
+  assert.equal(h.json().state, 'read-failed');
+  assert.equal(h.json().reason, 'ready-run read failed: x');
+});
+
+test('ready-run: a null readyRun result is read-failed "no result", never "no requirement"', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { gh: greenView, readyRun: () => null });
+  assert.equal(run(['--run', runDir], h.deps), 0);
+  assert.equal(h.json().state, 'read-failed');
+  assert.equal(h.json().reason, 'ready-run read failed: no result');
+});
+
+test('ready-run: the pending gate line names pending checks first when they sit beside awaitingReadyRun', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { gh: viewGh({ headRefOid: HEAD, statusCheckRollup: [RUNNING] }), readyRun: readyStub({ readySince: READY_AT, workflows: [wfReady], headRuns: [] }) });
+  assert.equal(run(['--run', runDir, '--section', '/test'], h.deps), 0);
+  const j = h.json();
+  assert.deepEqual(j.pending, ['test']);
+  assert.deepEqual(j.awaitingReadyRun, [CI_FILE]);
+  assert.equal(afterStamp(entriesOf(runDir)[0]), '— PR-check gate: PR #7 checks pending at ccccccc (test) — passed with caveat. Reversibility: high.');
+});
+
+test('ready-run: a stale head never calls readyRun', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const calls = [];
+  const h = makeDeps(main, { ...STATE_OVERRIDES.stale(), readyRun: readyStub({ reason: 'x' }, calls) });
+  assert.equal(run(['--run', runDir], h.deps), 0);
+  assert.equal(h.json().state, 'stale');
+  assert.equal(calls.length, 0);
+});
+
+test('ready-run: --pr mode passes the PR head sha and the git toplevel as root', () => {
+  const { main } = fixture(null);
+  const calls = [];
+  // cwd differs from the git toplevel, so passing cwd as root would be caught
+  const h = prDeps(main, { cwd: () => path.join(main, 'sub'), gh: greenView, readyRun: readyStub({ readySince: null, workflows: [], headRuns: [] }, calls) });
+  assert.equal(run(['--pr', '7'], h.deps), 0);
+  assert.deepEqual(calls, [{ pr: 7, sha: HEAD, root: main }]);
+});
+
+test('ready-run: the pending gate line names "no run since ready: {files}" when only awaitingReadyRun holds it', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { gh: greenView, readyRun: readyStub({ readySince: READY_AT, workflows: [wfReady], headRuns: [] }) });
+  assert.equal(run(['--run', runDir, '--section', '/test'], h.deps), 0);
+  assert.equal(h.json().logged, true);
+  assert.equal(afterStamp(entriesOf(runDir)[0]), `— PR-check gate: PR #7 checks pending at ccccccc (no run since ready: ${CI_FILE}) — passed with caveat. Reversibility: high.`);
+});
+
+test('ready-run: a run present as a gh row and as a REST row counts once; no verdict changes (watch item)', () => {
+  const ghRow = (over = {}) => ({ name: 'CI', workflowName: 'CI', status: 'completed', conclusion: 'failure', url: 'https://github.example/gh-row', ...over });
+  const ready = (rows) => readyStub({ readySince: READY_AT, workflows: [wfReady], headRuns: rows });
+  const view = (ghRows) => (args) => (args[0] === 'pr' ? JSON.stringify({ headRefOid: HEAD, statusCheckRollup: [PASS] }) : JSON.stringify(ghRows));
+  const go = (over) => { const { main, runDir } = fixture({ pr: { number: 7 } }); const h = makeDeps(main, { integrationBranch: () => null, ...over }); run(['--run', runDir], h.deps); return h.json(); };
+  // failing in both shapes: one entry, the gh row's url (first seen)
+  const red = go({ gh: view([ghRow()]), readyRun: ready([restRun({ conclusion: 'failure', html_url: 'https://github.example/rest-row' })]) });
+  assert.equal(red.state, 'red');
+  assert.deepEqual(red.failing, [{ name: 'CI', url: 'https://github.example/gh-row' }]);
+  // pending in both shapes: named once; the post-ready run exists, so no awaitingReadyRun
+  const pend = go({ gh: view([ghRow({ status: 'in_progress', conclusion: '' })]), readyRun: ready([restRun({ status: 'in_progress', conclusion: null })]) });
+  assert.equal(pend.state, 'pending');
+  assert.deepEqual(pend.pending, ['CI']);
+  assert.equal('awaitingReadyRun' in pend, false);
+  // green in both shapes
+  assert.equal(go({ gh: view([ghRow({ conclusion: 'success' })]), readyRun: ready([restRun()]) }).state, 'green');
+});
+
+test('USAGE names awaitingReadyRun? among the envelope keys', () => {
+  const { main } = fixture(null);
+  const h = makeDeps(main);
+  assert.equal(run(['--help'], h.deps), 0);
+  assert.match(h.out.join(''), /prints \{[^}]*awaitingReadyRun\?[^}]*\}/);
+});
+
+// docs/plugin-structure.md's pr-checks.js row restates USAGE's envelope (`logged?` is described
+// separately there) and must name the ready-run read that fills `awaitingReadyRun`.
+function docsRowDrift(row, usage) {
+  const keys = (s) => {
+    const m = /prints \{([^}]*)\}/.exec(s);
+    return m ? m[1].replace(' (--run only)', '').split(', ').filter((k) => k !== 'logged?') : null;
+  };
+  const problems = [];
+  if (!row) return ['pr-checks.js row missing'];
+  if (JSON.stringify(keys(row)) !== JSON.stringify(keys(usage))) problems.push(`envelope ${JSON.stringify(keys(row))} != USAGE ${JSON.stringify(keys(usage))}`);
+  if (!row.includes('the ready-run read (`plugin/bin/lib/pr-checks/ready-run.js`')) problems.push('ready-run read not named');
+  return problems;
+}
+
+test('docs/plugin-structure.md: the pr-checks.js row carries USAGE\'s envelope and names the ready-run read', () => {
+  const { readText } = require('../../helpers/read-skill');
+  const docs = readText(path.join(__dirname, '..', '..', '..', 'docs', 'plugin-structure.md'));
+  const { main } = fixture(null);
+  const h = makeDeps(main);
+  assert.equal(run(['--help'], h.deps), 0);
+  const usage = h.out.join('');
+  const row = docs.split('\n').find((l) => l.startsWith('node plugin/bin/pr-checks.js '));
+  assert.deepEqual(docsRowDrift(row, usage), []);
+  // Controls: the pre-fix envelope (no awaitingReadyRun?) and a row without the ready-run read each go red alone.
+  const noKey = row.replace('held?, awaitingReadyRun?, prEventSettle?, headRefOid', 'held?, headRefOid');
+  assert.notEqual(noKey, row);
+  assert.equal(docsRowDrift(noKey, usage).length, 1);
+  assert.match(docsRowDrift(noKey, usage)[0], /^envelope /);
+  const noRead = row.replace('the ready-run read (`plugin/bin/lib/pr-checks/ready-run.js`', 'a read');
+  assert.notEqual(noRead, row);
+  assert.deepEqual(docsRowDrift(noRead, usage), ['ready-run read not named']);
+});
+
+test('the pending gate-line phrase "no run since ready" appears in _shared/pr-check-gate.md (prose twin of gateEntry)', () => {
+  const { readText } = require('../../helpers/read-skill');
+  const prose = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', '_shared', 'pr-check-gate.md'));
+  assert.match(prose, /'no run since ready: \{files\}' when only awaitingReadyRun holds it/);
+});
+
+// headRunCount (#5277): the head-runs read's row count rides the envelope whenever that read
+// succeeded, so drive.js's CI step can tell "no run on this sha" from "runs unreadable".
+const HEAD_RUN = { name: 'test', workflowName: 'test', status: 'completed', conclusion: 'success', url: 'https://ci.example/run', event: 'pull_request' };
+
+test('headRunCount: a successful head-runs read puts its row count and the head sha on the envelope, in both modes', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const runs = JSON.stringify([HEAD_RUN, { ...HEAD_RUN, name: 'lint', workflowName: 'lint' }]);
+  const viaRun = makeDeps(main, { gh: viewGh({ headRefOid: HEAD, statusCheckRollup: [PASS] }, runs) });
+  assert.equal(run(['--run', runDir], viaRun.deps), 0);
+  assert.equal(viaRun.json().state, 'green');
+  assert.equal(viaRun.json().headRunCount, 2);
+  assert.equal(viaRun.json().headRefOid, HEAD);
+  const viaPr = makeDeps(main, { gh: viewGh({ headRefOid: HEAD, statusCheckRollup: [PASS] }) });
+  assert.equal(run(['--pr', '7'], viaPr.deps), 0);
+  assert.equal(viaPr.json().headRunCount, 0, 'an empty run list is a count of zero, not an absent count');
+});
+
+test('headRunCount: absent when the head-runs read failed or never ran', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const failed = makeDeps(main, { gh: (args) => { if (args[0] === 'pr') return JSON.stringify({ headRefOid: HEAD, statusCheckRollup: [PASS] }); throw new Error('HTTP 502'); } });
+  assert.equal(run(['--run', runDir], failed.deps), 0);
+  assert.equal(failed.json().state, 'read-failed');
+  assert.equal('headRunCount' in failed.json(), false);
+  const stale = makeDeps(main, STATE_OVERRIDES.stale());
+  assert.equal(run(['--run', runDir], stale.deps), 0);
+  assert.equal(stale.json().state, 'stale');
+  assert.equal('headRunCount' in stale.json(), false, 'a stale head skips the runs read');
+});
+
+test('headRunCount: a failed ready-run read after a good head-runs read still carries the count', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { gh: viewGh({ headRefOid: HEAD, statusCheckRollup: [PASS] }, JSON.stringify([HEAD_RUN])), readyRun: () => ({ reason: 'gh absent' }) });
+  assert.equal(run(['--run', runDir], h.deps), 0);
+  assert.equal(h.json().state, 'read-failed');
+  assert.equal(h.json().headRunCount, 1);
+  assert.equal(h.json().headRefOid, HEAD);
+});
+
+// #3468: the PR-event settle window. pr-checks.js passes the clock (deps.now), the PR's createdAt
+// and, only when the head sha has no workflow run, the head commit's committer date.
+const SETTLE_CREATED = '2026-11-26T10:00:00Z';
+const SETTLE_T0 = Date.parse(SETTLE_CREATED);
+const PUSH_RUN = { databaseId: 1, name: 'CI', workflowName: 'CI', status: 'completed', conclusion: 'success', url: 'u', startedAt: SETTLE_CREATED, event: 'push', createdAt: SETTLE_CREATED };
+const COMMIT_CALL = ['api', `repos/{owner}/{repo}/commits/${HEAD}`, '--jq', '.commit.committer.date'];
+
+function settleGh({ view = {}, runs = [PUSH_RUN], commit = SETTLE_CREATED, calls = [] } = {}) {
+  return (args) => {
+    calls.push(args);
+    if (args[0] === 'pr') return JSON.stringify({ headRefOid: HEAD, statusCheckRollup: [PASS], createdAt: SETTLE_CREATED, ...view });
+    if (args[0] === 'run') return JSON.stringify(runs);
+    if (args[0] === 'api') { if (commit instanceof Error) throw commit; return `${commit}\n`; }
+    throw new Error('unexpected gh ' + args.join(' '));
+  };
+}
+
+test('AC1.1: --pr with a green push-only rollup inside the window prints pending with prEventSettle', () => {
+  const { main } = fixture(null);
+  const h = prDeps(main, { now: () => SETTLE_T0 + 30000, gh: settleGh() });
+  assert.equal(run(['--pr', '7'], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.state, 'pending');
+  assert.deepEqual(j.prEventSettle, { until: new Date(SETTLE_T0 + 60000).toISOString() });
+});
+
+test('AC2.1: --pr with a green push-only rollup after the window prints green', () => {
+  const { main } = fixture(null);
+  const h = prDeps(main, { now: () => SETTLE_T0 + 61000, gh: settleGh() });
+  assert.equal(run(['--pr', '7'], h.deps), 0);
+  assert.equal(h.json().state, 'green');
+  assert.equal('prEventSettle' in h.json(), false);
+});
+
+test('the PR view read requests createdAt and passes it as prCreatedAt', () => {
+  const { main } = fixture(null);
+  const calls = [];
+  const h = prDeps(main, { now: () => SETTLE_T0 + 61000, gh: settleGh({ calls }) });
+  assert.equal(run(['--pr', '7'], h.deps), 0);
+  assert.deepEqual(calls[0], ['pr', 'view', '7', '--json', 'headRefOid,statusCheckRollup,baseRefName,createdAt']);
+  // A view with no createdAt and push-only runs fails closed: pending, until null.
+  const noCreated = prDeps(main, { now: () => SETTLE_T0 + 3600000, gh: settleGh({ view: { createdAt: undefined } }) });
+  assert.equal(run(['--pr', '7'], noCreated.deps), 0);
+  assert.equal(noCreated.json().state, 'pending');
+  assert.deepEqual(noCreated.json().prEventSettle, { until: null });
+});
+
+test('an empty head-run list reads the committer date via gh api commits/{sha}', () => {
+  const { main } = fixture(null);
+  const calls = [];
+  const empty = prDeps(main, { now: () => SETTLE_T0 + 30000, gh: settleGh({ runs: [], calls }) });
+  assert.equal(run(['--pr', '7'], empty.deps), 0);
+  assert.equal(calls.filter((a) => a[0] === 'api').length, 1);
+  assert.deepEqual(calls.find((a) => a[0] === 'api'), COMMIT_CALL);
+  assert.equal(empty.json().state, 'pending');
+  assert.deepEqual(empty.json().prEventSettle, { until: new Date(SETTLE_T0 + 60000).toISOString() });
+  // Only when the runs list is empty: a run on the sha anchors the window, so no commit read.
+  const withRun = [];
+  const some = prDeps(main, { now: () => SETTLE_T0 + 30000, gh: settleGh({ calls: withRun }) });
+  assert.equal(run(['--pr', '7'], some.deps), 0);
+  assert.equal(withRun.some((a) => a[0] === 'api'), false);
+  // A throwing or empty read fails closed to pending, until null -- never read-failed.
+  for (const commit of [new Error('HTTP 502'), '']) {
+    const h = prDeps(main, { now: () => SETTLE_T0 + 3600000, gh: settleGh({ runs: [], commit }) });
+    assert.equal(run(['--pr', '7'], h.deps), 0);
+    assert.equal(h.json().state, 'pending', String(commit));
+    assert.deepEqual(h.json().prEventSettle, { until: null }, String(commit));
+  }
+});
+
+test('without PR CI the committer-date read is skipped', () => {
+  const { main } = fixture(null);
+  const calls = [];
+  const h = prDeps(main, { now: () => SETTLE_T0 + 30000, hasPullRequestCi: () => false, gh: settleGh({ runs: [], calls }) });
+  assert.equal(run(['--pr', '7'], h.deps), 0);
+  assert.equal(calls.some(isCommitterRead), false);
+  assert.equal(h.json().state, 'green');
+});
+
+test('a failed runs read skips the committer-date read', () => {
+  const { main } = fixture(null);
+  const calls = [];
+  const gh = settleGh({ runs: [], calls });
+  const h = prDeps(main, { now: () => SETTLE_T0 + 30000, gh: (args) => { if (args[0] === 'run') { calls.push(args); throw new Error('HTTP 502'); } return gh(args); } });
+  assert.equal(run(['--pr', '7'], h.deps), 0);
+  assert.equal(calls.some((a) => a[0] === 'run'), true);
+  assert.equal(calls.some(isCommitterRead), false);
+  assert.equal('prEventSettle' in h.json(), false);
+});
+
+test('--run: the settle pending line names the window', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { now: () => SETTLE_T0 + 30000, gh: settleGh() });
+  assert.equal(run(['--run', runDir, '--section', '/test'], h.deps), 0);
+  assert.equal(h.json().state, 'pending');
+  const text = fs.readFileSync(decisionsOf(runDir), 'utf8');
+  assert.ok(text.includes(`no pull_request run yet (settle window until ${new Date(SETTLE_T0 + 60000).toISOString()})`), text);
+  const closed = fixture({ pr: { number: 7 } });
+  const unknown = makeDeps(closed.main, { now: () => SETTLE_T0 + 30000, gh: settleGh({ view: { createdAt: undefined } }) });
+  assert.equal(run(['--run', closed.runDir, '--section', '/test'], unknown.deps), 0);
+  assert.ok(fs.readFileSync(decisionsOf(closed.runDir), 'utf8').includes('no pull_request run yet (settle window until unknown)'));
+});
+
+test('the settle pending phrase appears in _shared/pr-check-gate.md (prose twin of gateEntry)', () => {
+  const { readText } = require('../../helpers/read-skill');
+  const prose = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', '_shared', 'pr-check-gate.md'));
+  // Take the phrase from gateEntry's own output (until unreadable), so the pin follows the code, not a copy.
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { now: () => SETTLE_T0 + 30000, gh: settleGh({ view: { createdAt: undefined } }) });
+  assert.equal(run(['--run', runDir, '--section', '/test'], h.deps), 0);
+  const line = fs.readFileSync(decisionsOf(runDir), 'utf8');
+  const m = /\((no pull_request run yet \(settle window until )unknown\)\)/.exec(line);
+  assert.ok(m, line);
+  assert.ok(prose.includes(`'${m[1]}{until or unknown})' when only prEventSettle holds it`), 'pr-check-gate.md must name the settle-window caveat gateEntry writes');
+});
+
+test('USAGE names prEventSettle? among the envelope keys', () => {
+  const { main } = fixture(null);
+  const h = makeDeps(main);
+  assert.equal(run(['--help'], h.deps), 0);
+  assert.match(h.out.join(''), /prints \{[^}]*prEventSettle\?[^}]*\}/);
 });

@@ -2,10 +2,12 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { readText } = require('./helpers/read-skill');
+const { initRepo } = require('./helpers/git-fixtures');
 
 // #1493: tidy residue markers + `--approve`. This file pins the `.gitignore`
 // carve-out that makes a `*-tidy-standalone*` run's own audit files
@@ -303,11 +305,9 @@ test('AC2 half 2: tidy staleness clock reads the same updatedAt a comment edit b
 // carve-out rules, and asserts via `git diff --cached --name-only` that the
 // staged set is exactly what Step 7.5's new prose says it stages.
 test('#1493 C1: Step 7.5\'s copy+add lands decisions.md, report.md, and staged/** in the worktree\'s own commit', () => {
-  const wt = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-tidy-c1-')));
+  const wt = fs.realpathSync(scratchDir('ct-tidy-c1-'));
   const git = (...args) => execFileSync('git', args, { cwd: wt, encoding: 'utf8' });
-  git('init', '-q', '-b', 'main');
-  git('config', 'user.email', 't@example.com');
-  git('config', 'user.name', 'T');
+  initRepo(wt, { name: 'T', email: 't@example.com', branch: 'main', cwd: wt, encoding: 'utf8' });
 
   // The real .gitignore, copied verbatim — proves the simulation runs against
   // the actual carve-out, not a hand-rolled stand-in that could drift from it.
@@ -345,11 +345,9 @@ test('#1493 C1: Step 7.5\'s copy+add lands decisions.md, report.md, and staged/*
 // its own shared run dir, so the same Step 7.5 copy+add must succeed there
 // too, against the `.gitignore` carve-out lines this fix wave added for it.
 test('#1494 review fix: Step 7.5\'s copy+add also lands in a *-sweep-standalone* run dir\'s worktree commit', () => {
-  const wt = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sweep-c1-')));
+  const wt = fs.realpathSync(scratchDir('ct-sweep-c1-'));
   const git = (...args) => execFileSync('git', args, { cwd: wt, encoding: 'utf8' });
-  git('init', '-q', '-b', 'main');
-  git('config', 'user.email', 't@example.com');
-  git('config', 'user.name', 'T');
+  initRepo(wt, { name: 'T', email: 't@example.com', branch: 'main', cwd: wt, encoding: 'utf8' });
 
   fs.copyFileSync(path.join(ROOT, '.gitignore'), path.join(wt, '.gitignore'));
   git('add', '.gitignore');

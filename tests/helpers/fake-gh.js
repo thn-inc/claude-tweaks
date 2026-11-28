@@ -18,6 +18,7 @@
 // count() is the number of invocations so far; restore() puts PATH back and
 // removes the counter dir.
 const fs = require('node:fs');
+const { scratchDir } = require('./tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const { installStub } = require('./path-stub');
@@ -35,7 +36,7 @@ function modeBody(mode) {
 }
 
 function fakeGh({ first, rest = first }) {
-  const counterDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fakegh-'));
+  const counterDir = scratchDir('ct-fakegh-');
   const counter = path.join(counterDir, 'calls');
   fs.writeFileSync(counter, '');
   let restoreStub;

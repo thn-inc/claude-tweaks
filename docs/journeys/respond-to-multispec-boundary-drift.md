@@ -4,6 +4,7 @@ files:
   - plugin/skills/flow/multi-spec.md
   - plugin/skills/flow/multispec-batch-curation.md
   - plugin/skills/_shared/auto-mode-contract.md
+  - plugin/bin/lib/flow/manifest.js
 ---
 
 # Respond to Multi-Spec Boundary Drift
@@ -32,7 +33,7 @@ files:
 
 5. **Finish the batch with an unpolluted curation diff** — Let the run reach the consolidated Review Console and batch curation.
    - **Action:** `multispec-batch-curation.md`'s batch scope derives from `git merge-base --end-of-options HEAD "origin/{integration-branch}"` to `HEAD`, so the upstream commits the boundary merges brought in are excluded from the batch diff.
-   - **Check:** With zero boundary merges, the merge-base is the batch's starting commit — the diff is byte-identical to the old behavior. `manifest.yml` does not record that commit: `manifest-init` (#3035) never writes the legacy `baseSha` key, nothing reads it, and an older manifest that still carries one keeps it untouched on rewrite.
+   - **Check:** With zero boundary merges, the merge-base is the batch's starting commit — the diff is byte-identical to the old behavior. `manifest.yml` does not record that commit: `manifest-init` (#3035) never writes the legacy `baseSha` key, nothing reads it, and an older manifest that still carries one loses the line on its next rewrite.
 
 ## Outcome
 
@@ -40,3 +41,4 @@ The operator's long batch survives an active `origin/main`: quiet boundaries sta
 
 _Origin: record #1076 (multispec boundary freshness), built 2026-08-20._
 - Updated during build of #2541 ("flow multi-spec: boundary freshness HARD-GATE has no unattended default") — Step 3 gained the `autonomy: unattended` carve-out bullet: a run-modified-only, conflict-free overlap now auto-resolves with no `AskUserQuestion`.
+- Updated during build of #5542 (the manifest serializer stopped writing the legacy base-commit key back) — Step 5's Check now says an older manifest loses that line on its next rewrite; `plugin/bin/lib/flow/manifest.js`, whose serializer the sentence describes, joined `files:`.

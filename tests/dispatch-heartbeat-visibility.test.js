@@ -23,7 +23,7 @@ test('#2427 AC2: the heartbeat convention is explicitly passive -- neither the d
   const t = read('plugin/skills/dispatch/sequential-execution.md');
   const section = t.slice(t.indexOf('## Heartbeat'));
   assert.match(section, /Not from the dispatched Task call itself/);
-  assert.match(section, /recreating the exact stall hazard the Foreground execution clause/);
+  assert.match(section, /recreating the exact stall hazard\s+`task-prompt\.md`'s\s+Context pack item 7/);
   assert.match(section, /Not from the dispatching session either, while that Task call is in flight/);
   assert.match(section, /needs no new mechanism/);
   assert.match(section, /decisions\.md/);
@@ -37,8 +37,8 @@ test('#2427: the singleton-group granularity gap (no manifest.yml) is named expl
   assert.match(section, /this is a real, documented granularity gap, not one\nthis record closes/);
 });
 
-test('#2427: task-prompt.md cross-references the heartbeat convention beside the Foreground execution clause it must not conflict with', () => {
+test('#2427: task-prompt.md cross-references the heartbeat convention beside Context pack item 7 it must not conflict with', () => {
   const t = read('plugin/skills/dispatch/task-prompt.md');
   assert.match(t, /sequential-execution\.md`'s Heartbeat section \(#2427\)/);
-  assert.match(t, /never a\s+reason to relax the Foreground execution clause above or have this call check in mid-turn/);
+  assert.match(t, /never a\s+reason to relax Context pack item 7\s+or have this call check in mid-turn/);
 });

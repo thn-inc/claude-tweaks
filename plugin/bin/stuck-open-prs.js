@@ -29,7 +29,7 @@
 //   0  rows printed, possibly none
 //   2  malformed invocation, an unreadable or malformed --records file, `gh` absent, the repo or
 //      the main checkout unresolved, or an origin host that is not a known GitHub host (refused before
-//      any gh call, #4933; `GH_HOST={host}` opts in)
+//      any gh call, #4933; an exported `GH_HOST` opts in)
 //   4  the batched linked-PR read failed; no row is printed, since no failed read is taken as "no PR"
 'use strict';
 
@@ -42,7 +42,7 @@ const { classifyClaimBlob } = require('./lib/issues/claims');
 const {
   gateOriginRepo, ghAvailable, remoteUrl, ghOptions,
 } = require('./lib/repo-resolve');
-const { LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
+const { LARGE_MAX_BUFFER_BYTES, GH_BATCH_TIMEOUT_MS } = require('./lib/shared-primitives');
 const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
 const { findConflictingSession, findSessionOnWorktree } = require('./lib/hooks/sibling-sessions');
 const { stuckCandidates, stuckRow } = require('./lib/dispatch/stuck-open-pr');
@@ -50,18 +50,16 @@ const { stuckCandidates, stuckRow } = require('./lib/dispatch/stuck-open-pr');
 const USAGE = 'usage: stuck-open-prs.js --records <path> [--help]\n'
   + '  prints one JSON line: {rows:[{number, pr, remedy, title, createdAt, labels}]} (exit 0)\n'
   + '  exit 2 malformed invocation / unreadable --records / gh absent / repo or main checkout unresolved /\n'
-  + '    origin host not a known GitHub host (refused; GH_HOST={host} opts in);\n'
+  + '    origin host not a known GitHub host (refused; an exported GH_HOST opts in);\n'
   + '  exit 4 the linked-PR read failed; either prints {failed:{code, message}} once the invocation parsed\n';
 
 // ---- real deps ----
 
 // One aliased GraphQL call covers every candidate, up to a full 200-record snapshot, so the 5s single-call
-// default times out on a real backlog (observed: ETIMEDOUT); 30s is resolve-linked-prs.js's bound for the
-// same batched read.
-const LINKED_TIMEOUT_MS = 30000;
+// default times out on a real backlog (observed: ETIMEDOUT), so it gets the shared batched bound.
 function ghRunner(args) {
   return execFileSync('gh', args, ghOptions(args, {
-    encoding: 'utf8', timeout: LINKED_TIMEOUT_MS, maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true,
+    encoding: 'utf8', timeout: GH_BATCH_TIMEOUT_MS, maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true,
   }));
 }
 

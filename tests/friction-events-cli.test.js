@@ -9,6 +9,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { run, readEvents } = require('../plugin/bin/friction-events');
@@ -149,7 +150,7 @@ test('unions events from more than one sibling ad-hoc run dir', () => {
 // --- real readEvents behavior (against the actual filesystem-reading impl) ---
 
 test('the real readEvents helper parses events.jsonl, skips malformed lines, returns [] on a missing file', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-events-'));
+  const dir = scratchDir('ct-fe-events-');
   fs.writeFileSync(
     path.join(dir, 'events.jsonl'),
     '{"type":"gate-denial","ts":"t1"}\nnot json\n{"type":"wd-deny","ts":"t2"}\n',
@@ -168,7 +169,7 @@ test('the real readEvents helper parses events.jsonl, skips malformed lines, ret
 // other event type, even one that happens to carry `test: true`) still comes
 // through unfiltered.
 test('#1337: readEvents drops a test-tagged gate-denial event but keeps a real one', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-events-'));
+  const dir = scratchDir('ct-fe-events-');
   fs.writeFileSync(
     path.join(dir, 'events.jsonl'),
     [
@@ -193,7 +194,7 @@ test('#1337: readEvents drops a test-tagged gate-denial event but keeps a real o
 // unattributed event (or any event on the `adhoc` source, already
 // worktree-validated by findRunsByWorktreePath) still comes through.
 test('#1402: readEvents drops a primary fallback-attributed event but keeps a real one and an adhoc fallback one', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-events-'));
+  const dir = scratchDir('ct-fe-events-');
   fs.writeFileSync(
     path.join(dir, 'events.jsonl'),
     [
@@ -214,7 +215,7 @@ test('#1402: readEvents drops a primary fallback-attributed event but keeps a re
 // visibility only) — it must never inflate the Friction lens's count the
 // same way a genuine violation does.
 test('#2350: readEvents drops a lenient-variant contract-violation event but keeps a genuine violation', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-events-'));
+  const dir = scratchDir('ct-fe-events-');
   fs.writeFileSync(
     path.join(dir, 'events.jsonl'),
     [
@@ -247,7 +248,7 @@ function withTz(tz, fn) {
 }
 
 test('#2989: readEvents excludes an event timestamped before the run dir\'s first decisions.md entry', () => withTz('UTC', () => {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-claim-'));
+  const parent = scratchDir('ct-fe-claim-');
   // Minted at 12:00:00Z; claimed (decisions.md's first entry) at 12:02:00Z.
   const dir = path.join(parent, '2026-01-01T120000-record-999');
   fs.mkdirSync(dir);
@@ -268,7 +269,7 @@ test('#2989: readEvents excludes an event timestamped before the run dir\'s firs
 }));
 
 test('#2989: readEvents applies no pre-claim filtering when the run dir has no decisions.md yet', () => {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-claim-'));
+  const parent = scratchDir('ct-fe-claim-');
   const dir = path.join(parent, '2026-01-01T120000-record-999');
   fs.mkdirSync(dir);
   fs.writeFileSync(path.join(dir, 'events.jsonl'), '{"type":"ask-user-question","ts":"2026-01-01T12:00:30.000Z"}\n');
@@ -277,14 +278,14 @@ test('#2989: readEvents applies no pre-claim filtering when the run dir has no d
 });
 
 test('#2989: readEvents applies no pre-claim filtering on a non-canonical directory name', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-claim-noncanonical-'));
+  const dir = scratchDir('ct-fe-claim-noncanonical-');
   fs.writeFileSync(path.join(dir, 'events.jsonl'), '{"type":"ask-user-question","ts":"2026-01-01T12:00:30.000Z"}\n');
   const events = readEvents(dir, 'primary');
   assert.equal(events.length, 1, 'no run-id-shaped name — mint time can\'t be established, so no exclusion');
 });
 
 test('#2989: readEvents handles a mint/claim pair that straddles a UTC midnight rollover', () => withTz('UTC', () => {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-claim-'));
+  const parent = scratchDir('ct-fe-claim-');
   // Minted at 23:59:00Z on 2026-01-01; decisions.md's first entry logs only
   // HH:MM:SS (00:00:30), which is actually the next calendar day.
   const dir = path.join(parent, '2026-01-01T235900-record-999');
@@ -311,7 +312,7 @@ test('#2989: readEvents handles a mint/claim pair that straddles a UTC midnight 
 // claim time fails here.
 
 test('#3442 AC1.1: readEvents reads the decisions.md claim time as local time (TZ=Europe/Copenhagen)', () => withTz('Europe/Copenhagen', () => {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-claim-'));
+  const parent = scratchDir('ct-fe-claim-');
   // Minted at 18:39:00Z (20:39 local); claimed at 20:39:18 local = 18:39:18Z.
   const dir = path.join(parent, '2026-10-17T183900-record-999');
   fs.mkdirSync(dir);
@@ -332,7 +333,7 @@ test('#3442 AC1.1: readEvents reads the decisions.md claim time as local time (T
 }));
 
 test('#3442: a mint/claim pair straddling a local (non-UTC) midnight lands on the correct local day', () => withTz('Europe/Copenhagen', () => {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-claim-'));
+  const parent = scratchDir('ct-fe-claim-');
   // Minted at 22:30:00Z on 2026-10-17 (00:30 local on 2026-10-18); the
   // first decisions.md entry logs 00:31:00 local, which is 22:31:00Z.
   const dir = path.join(parent, '2026-10-17T223000-record-999');
@@ -354,7 +355,7 @@ test('#3442: a mint/claim pair straddling a local (non-UTC) midnight lands on th
 }));
 
 test('#3442: a claim logged after local midnight, past a mint before it, rolls to the next local day', () => withTz('Europe/Copenhagen', () => {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-claim-'));
+  const parent = scratchDir('ct-fe-claim-');
   // Minted at 21:50:00Z on 2026-10-17 (23:50 local on 10-17); the first
   // decisions.md entry logs 00:05:00 local, which is 10-18 00:05 local
   // (22:05:00Z) — read on the mint's own local day it lands before the mint,
@@ -383,7 +384,7 @@ test('#3442: a claim logged after local midnight, past a mint before it, rolls t
 // (UTC) reading of the claim time fails here.
 
 test('#3641 AC1.1: a log-decision-stamped claim under TZ=Europe/Copenhagen keeps a later wd-guard-refusal', () => withTz('Europe/Copenhagen', () => {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-claim-'));
+  const parent = scratchDir('ct-fe-claim-');
   // Minted at 18:58:00Z; claimed at 18:59:10Z, which is 20:59:10 local.
   const dir = path.join(parent, '2026-10-19T185800-record-999');
   fs.mkdirSync(dir);
@@ -407,7 +408,7 @@ test('#3641 AC1.1: a log-decision-stamped claim under TZ=Europe/Copenhagen keeps
 }));
 
 test('#3641 AC2.1: under TZ=America/Los_Angeles a pre-claim event is still excluded', () => withTz('America/Los_Angeles', () => {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-claim-'));
+  const parent = scratchDir('ct-fe-claim-');
   // Minted at 05:00:00Z on 2026-10-19 (22:00 local on 10-18, PDT); claimed at
   // 05:01:00Z, which is 22:01:00 local on 10-18. The UTC date in the name is
   // one day ahead of the local calendar day the claim belongs to.
@@ -441,7 +442,7 @@ test('#3641 AC2.1: under TZ=America/Los_Angeles a pre-claim event is still exclu
 // `session-end`, `skill_invoked`, …) never reaches stdout.
 
 test('#2016: run() filters the merged event stream to only the five Friction Lens vocabulary types', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-vocab-'));
+  const dir = scratchDir('ct-fe-vocab-');
   fs.writeFileSync(
     path.join(dir, 'events.jsonl'),
     [
@@ -468,7 +469,7 @@ test('#2016: run() filters the merged event stream to only the five Friction Len
 });
 
 test('#2016: a run dir whose events.jsonl holds only commit rows prints []', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-vocab-commits-'));
+  const dir = scratchDir('ct-fe-vocab-commits-');
   fs.writeFileSync(
     path.join(dir, 'events.jsonl'),
     ['{"type":"commit","ts":"t1"}', '{"type":"commit","ts":"t2"}'].join('\n') + '\n',
@@ -694,7 +695,7 @@ function realCliRunDirsAsS1(root, primary, extraArgs = []) {
 }
 
 test('#4704: the real CLI from a real main checkout drops another session\'s ad-hoc dir (real writer)', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-main-'));
+  const repo = scratchDir('ct-fe-main-');
   try {
     const { root, primary } = initMainCheckoutWithTwoSessions(repo);
     assert.deepStrictEqual(realCliRunDirsAsS1(root, primary), ['2026-10-31T100000-adhoc-standalone']);
@@ -708,7 +709,7 @@ test('#4704: the real CLI from a real main checkout drops another session\'s ad-
 // matches the main checkout's siblings, so it must still be recognised as the
 // main checkout and scoped. Needs a case-insensitive volume to be reachable.
 test('#4704: a miscased --worktree spelling of the main checkout is still scoped to this session (real writer)', (t) => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-MixedCase-'));
+  const repo = scratchDir('ct-fe-MixedCase-');
   try {
     const { root, primary } = initMainCheckoutWithTwoSessions(repo);
     const miscased = root.toLowerCase();

@@ -4,12 +4,15 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const sessionStart = require('../plugin/bin/lib/hooks/session-start');
 const ctxLib = require('../plugin/bin/lib/hooks/context');
 const deps = require('../plugin/bin/lib/deps');
 const { INTERACTION_STYLE_DIRECTIVE } = require('../plugin/bin/lib/hooks/interaction-style');
+const { fromTemplate, disableReceiveAutoGc } = require('./helpers/git-template');
+const { initRepo, writeIdentity } = require('./helpers/git-fixtures');
 
 // #3380: session-start.js reads the real ~/.claude/plugins/installed_plugins.json
 // through effectiveSuperpowersVersion unless a test injects `superpowersDeps`.
@@ -18,10 +21,37 @@ const { INTERACTION_STYLE_DIRECTIVE } = require('../plugin/bin/lib/hooks/interac
 const NO_INSTALL = { readFile: () => { throw Object.assign(new Error('no install (test)'), { code: 'ENOENT' }); } };
 // The default is applied after the spread, so a caller passing
 // `superpowersDeps: undefined` still gets NO_INSTALL, never the real file.
-const runSessionStart = (ctx) => sessionStart.run({ ...ctx, superpowersDeps: ctx.superpowersDeps || NO_INSTALL });
+// #5392: run() saves process.execPath under ~/.claude-tweaks/node-path unless
+// ctx.nodePathHome names another home; every in-process run here passes a
+// temp one so no test writes the developer's real home. HOME itself is left
+// alone: the git commits below need the global identity in ~/.gitconfig.
+const NODE_PATH_HOME = scratchDir('ct-ss-nodepath-');
+// #5377: run() takes its environment, home and child starter from the context. These are the real ones;
+// `spawn` looks up child_process.spawn per call so a test that stubs it (cp.spawn = ...) is still seen.
+const HOME_DIR = () => os.homedir();
+const SPAWN = (...args) => require('child_process').spawn(...args);
+const runSessionStart = (ctx) => sessionStart.run({
+  env: process.env, homeDir: HOME_DIR, spawn: SPAWN, ...ctx, superpowersDeps: ctx.superpowersDeps || NO_INSTALL, nodePathHome: ctx.nodePathHome || NODE_PATH_HOME,
+});
+
+test('#5392: run() writes the node path under ctx.nodePathHome, never under HOME', async () => {
+  const project = tmpProject();
+  const seamHome = scratchDir('ct-ss-seam-');
+  const decoyHome = scratchDir('ct-ss-decoy-');
+  const prior = process.env.HOME;
+  process.env.HOME = decoyHome;
+  try {
+    await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project, nodePathHome: seamHome });
+  } finally {
+    if (prior === undefined) delete process.env.HOME;
+    else process.env.HOME = prior;
+  }
+  assert.strictEqual(fs.readFileSync(path.join(seamHome, '.claude-tweaks', 'node-path'), 'utf8'), process.execPath + '\n');
+  assert.ok(!fs.existsSync(path.join(decoyHome, '.claude-tweaks', 'node-path')), 'nothing written under HOME');
+});
 
 function tmpProject() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-'));
+  const dir = scratchDir('ct-ss-');
   fs.mkdirSync(path.join(dir, '.claude-tweaks', 'pipelines'), { recursive: true });
   return dir;
 }
@@ -35,6 +65,15 @@ function mkStagedFile(run, name, content) {
   const stagedDir = path.join(run, 'staged');
   fs.mkdirSync(stagedDir, { recursive: true });
   fs.writeFileSync(path.join(stagedDir, name), content || '{}');
+}
+// #3977: the banner lists a run only once reconcile cached it as orphaned and
+// its run-liveness verdict reads `dead` on the real probes (owner pid gone).
+const { seedOrphan, deadOwner, writeOldEvents } = require('./helpers/orphan-fixture');
+function mkDeadOrphan(project, name, state, reason) {
+  const run = mkRun(project, name, { ...deadOwner(), ...state });
+  writeOldEvents(run);
+  seedOrphan(project, run, reason);
+  return run;
 }
 
 // #1909: the Interaction-style directive moved out of 35+ verbatim per-SKILL.md
@@ -56,21 +95,22 @@ test('deps.collect returns an array of strings and prints nothing', () => {
   for (const m of msgs) assert.strictEqual(typeof m, 'string');
 });
 
-test('stale runs are reported in additionalContext, capped at 3, newest first', async () => {
+test('orphaned runs are reported in additionalContext, capped at 3, newest first', async () => {
   const project = tmpProject();
-  // Four non-clean runs (more than MAX_REPORTED=3) so the cap is actually exercised —
-  // with only 2 non-clean candidates, listRunDirsWithState's own clean-status filter
+  // Four orphaned runs (more than MAX_REPORTED=3) so the cap is actually exercised —
+  // with only 2 candidates, listRunDirsWithState's own clean-status filter
   // (which drops spec-0 below) does all the work and .slice(0, 3) is a no-op, unable to
   // distinguish "the cap correctly keeps 3" from "there is no cap at all".
-  mkRun(project, '2026-07-01T090000-spec-1', { status: 'interrupted' });
-  mkRun(project, '2026-07-02T090000-spec-2', { status: 'active' });
-  mkRun(project, '2026-07-03T090000-spec-3', { status: 'interrupted' });
-  mkRun(project, '2026-07-04T090000-spec-4', { status: 'active' });
+  mkDeadOrphan(project, '2026-07-01T090000-spec-1', { status: 'interrupted' });
+  mkDeadOrphan(project, '2026-07-02T090000-spec-2', { status: 'active' });
+  mkDeadOrphan(project, '2026-07-03T090000-spec-3', { status: 'interrupted' });
+  mkDeadOrphan(project, '2026-07-04T090000-spec-4', { status: 'active' });
   mkRun(project, '2026-06-30T090000-spec-0', { status: 'clean' });
   const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   const ctx = out.json.hookSpecificOutput.additionalContext;
   assert.strictEqual(out.json.hookSpecificOutput.hookEventName, 'SessionStart');
-  assert.match(ctx, /unfinished pipeline run/i);
+  assert.match(ctx, /orphaned pipeline run\(s\) whose session is gone/i);
+  assert.match(ctx, /… and 1 more orphaned run\(s\) \(newest 3 shown\)/);
   assert.match(ctx, /spec-4/);
   assert.match(ctx, /spec-3/);
   assert.match(ctx, /spec-2/);
@@ -82,21 +122,33 @@ test('stale runs are reported in additionalContext, capped at 3, newest first', 
 
 test('#803: the banner names a designated consumer — relay the list once in the first reply', async () => {
   const project = tmpProject();
-  mkRun(project, '2026-07-01T090000-spec-1', { status: 'interrupted' });
+  mkDeadOrphan(project, '2026-07-01T090000-spec-1', { status: 'interrupted' });
   const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   const ctx = out.json.hookSpecificOutput.additionalContext;
   assert.match(ctx, /Relay this list once, in your first reply to the user/);
-  assert.ok(ctx.includes('do not proceed silently without mentioning it, and never run either command yourself'), 'AC1.1: unfinished-runs banner says never run the command yourself');
+  assert.ok(ctx.includes('do not proceed silently without mentioning it, and never run any of these commands yourself'), 'AC1.1: orphaned-runs banner says never run the command yourself');
+});
+
+test('#3977 AC8: session-start.js no longer carries the owning-session warning', () => {
+  const src = fs.readFileSync(require.resolve('../plugin/bin/lib/hooks/session-start'), 'utf8');
+  assert.ok(!src.includes('only the session owning a run should close it'));
+});
+
+test('#3977: a non-clean run never cached as orphaned is not listed', async () => {
+  const project = tmpProject();
+  mkRun(project, '2026-07-01T090000-spec-1', { status: 'interrupted', ...deadOwner() });
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /spec-1/);
 });
 
 test('#1493 AC5: a fixture with one interrupted run + one cleanly-clean standalone run with non-empty staged/ renders both — close-run for the interrupted run, tidy --approve for the standalone one', async () => {
   const project = tmpProject();
-  mkRun(project, '2026-07-01T090000-spec-1', { status: 'interrupted' });
+  mkDeadOrphan(project, '2026-07-01T090000-spec-1', { status: 'interrupted' });
   const standalone = mkRun(project, '2026-07-02T090000-tidy-standalone', { status: 'clean' });
   mkStagedFile(standalone, 'stale-close-1.json', '{}');
   const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   const ctx = out.json.hookSpecificOutput.additionalContext;
-  assert.match(ctx, /spec-1 \(status: interrupted\)/, 'the interrupted run keeps its existing entry');
+  assert.match(ctx, /spec-1 \(status: interrupted\)/, 'the orphaned run keeps its existing entry');
   assert.match(ctx, /close-run --run/, 'the interrupted run keeps its close-run pointer');
   assert.match(ctx, /2026-07-02T090000-tidy-standalone/, 'the cleanly-finished standalone run is named');
   assert.match(ctx, /\/claude-tweaks:tidy --approve/, 'the standalone run points at tidy --approve, not close-run');
@@ -133,6 +185,9 @@ test('#3370: an archived run with unreviewed console items gets its own banner n
   assert.match(ctx, /review-debate-deviation\.md/);
   assert.match(ctx, /console-residue\.js" --ack --run/);
   assert.match(ctx, /Relay this list once, in your first reply to the user, one line per item with its command/);
+  // #3419 / #3788: the runnable --ack lines are relayed, never run by the model.
+  assert.ok(ctx.includes('and never run it yourself: no human has reviewed these items'), 'console-residue banner says never run it yourself');
+  assert.doesNotMatch(ctx, /mark the run reviewed with its own command above/);
 });
 
 test('#3370: SessionStart renders no console-residue banner when every console is acknowledged', async () => {
@@ -247,6 +302,21 @@ test('#1738: a clean *-tidy-standalone* run with a fully-archived (clean) archiv
   }
 });
 
+test('AC10.2: unfinished-run report does not list a clean-twin work-only shell', async () => {
+  const project = tmpProject();
+  const runId = '2026-07-05T090000-spec-77';
+  const live = mkRun(project, runId);
+  fs.mkdirSync(path.join(live, 'work'), { recursive: true });
+  fs.writeFileSync(path.join(live, 'work', '77-spec.md'), 'x');
+  mkRun(project, path.join('archive', runId), { status: 'clean' });
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  if (out.json) {
+    assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, new RegExp(runId));
+  } else {
+    assert.deepStrictEqual(out, {});
+  }
+});
+
 test('#1493: a cleanly-clean standalone run with EMPTY staged/ renders no tidy --approve line', async () => {
   const project = tmpProject();
   const standalone = mkRun(project, '2026-07-02T090000-tidy-standalone', { status: 'clean' });
@@ -261,17 +331,17 @@ test('#1493: a cleanly-clean standalone run with EMPTY staged/ renders no tidy -
 
 test('#410: a stale run carrying a recorded pr URL includes it in the reported line; one without does not', async () => {
   const project = tmpProject();
-  mkRun(project, '2026-07-01T090000-spec-1', { status: 'active', pr: { number: 42, url: 'https://github.com/o/r/pull/42' } });
-  mkRun(project, '2026-07-02T090000-spec-2', { status: 'interrupted' });
+  mkDeadOrphan(project, '2026-07-01T090000-spec-1', { status: 'active', pr: { number: 42, url: 'https://github.com/o/r/pull/42' } });
+  mkDeadOrphan(project, '2026-07-02T090000-spec-2', { status: 'interrupted' }, 'unpushed commits on feat-2');
   const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   const ctx = out.json.hookSpecificOutput.additionalContext;
   assert.match(ctx, /spec-1 \(status: active\) — PR https:\/\/github\.com\/o\/r\/pull\/42/);
-  assert.match(ctx, /spec-2 \(status: interrupted\)\n/, 'a run with no recorded pr must not gain a PR suffix');
+  assert.match(ctx, /spec-2 \(status: interrupted\) — unpushed commits on feat-2: /, 'a run with no recorded pr must not gain a PR suffix');
 });
 
 test('close-run hint substitutes CLAUDE_PLUGIN_ROOT when set, else keeps the literal placeholder', async () => {
   const project = tmpProject();
-  mkRun(project, '2026-07-01T090000-spec-1', { status: 'interrupted' });
+  mkDeadOrphan(project, '2026-07-01T090000-spec-1', { status: 'interrupted' });
   const orig = process.env.CLAUDE_PLUGIN_ROOT;
 
   try {
@@ -295,7 +365,7 @@ test('close-run hint substitutes CLAUDE_PLUGIN_ROOT when set, else keeps the lit
 test('#2070: the build line and the close-run hint derive from the same single CLAUDE_PLUGIN_ROOT read', async () => {
   const root = tmpPluginRoot('6.120.0');
   const project = tmpProject();
-  mkRun(project, '2026-07-01T090000-spec-1', { status: 'interrupted' });
+  mkDeadOrphan(project, '2026-07-01T090000-spec-1', { status: 'interrupted' });
   const orig = process.env.CLAUDE_PLUGIN_ROOT;
   try {
     process.env.CLAUDE_PLUGIN_ROOT = root;
@@ -322,9 +392,10 @@ test('no stale runs and no deps warnings -> no json output', async () => {
 });
 
 function gitProject() {
-  const dir = tmpProject();
-  execFileSync('git', ['-C', dir, 'init', '-q']);
-  return dir;
+  return fromTemplate('session-start-git-project', (dir) => {
+    fs.mkdirSync(path.join(dir, '.claude-tweaks', 'pipelines'), { recursive: true });
+    execFileSync('git', ['-C', dir, 'init', '-q']);
+  }, { prefix: 'ct-ss-' });
 }
 function withPolicy(repo, content) {
   fs.mkdirSync(path.join(repo, '.claude-tweaks'), { recursive: true });
@@ -350,7 +421,7 @@ test('worktree-always nudge appears when policy is on and session is not yet iso
 // --- #137: resolved-build line, complementing (not replacing) the routine preamble ---
 
 function tmpPluginRoot(version) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-plugin-'));
+  const dir = scratchDir('ct-ss-plugin-');
   fs.mkdirSync(path.join(dir, '.claude-plugin'), { recursive: true });
   if (version !== undefined) {
     fs.writeFileSync(path.join(dir, '.claude-plugin', 'plugin.json'), JSON.stringify({ version }));
@@ -373,7 +444,7 @@ test('resolveBuildLine returns null when CLAUDE_PLUGIN_ROOT is unset', () => {
 });
 
 test('resolveBuildLine returns null when plugin.json is missing or unreadable', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-noplugin-'));
+  const root = scratchDir('ct-ss-noplugin-');
   try {
     assert.strictEqual(sessionStart.resolveBuildLine({ CLAUDE_PLUGIN_ROOT: root }), null);
   } finally {
@@ -428,24 +499,25 @@ test('worktree-always nudge is absent when policy is off', async () => {
 });
 
 function git(args, cwd) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8' });
+  // stderr captured: cloning the empty bare origin prints "You appear to have cloned an empty repository" otherwise.
+  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
 // #408 AC1: a session starting in a checkout strictly behind origin gets its
 // integration branch fast-forwarded before additionalContext renders, with a
 // one-line reconcile summary when anything changed.
 test('SessionStart fast-forwards a behind-and-clean integration branch via reconcile(), and reports it in additionalContext (#408 AC1)', async () => {
-  const originDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-origin-'));
+  const originDir = scratchDir('ct-ss-origin-');
   git(['init', '-q', '--bare', '--initial-branch=main'], originDir);
+  disableReceiveAutoGc(originDir);
 
   // seedDir is the ONLY pusher of history-defining commits — mainDir only
   // ever reads. Two independent pushers of sibling commits (both children
   // of the same parent) would diverge on the shared bare origin; having a
   // single writer avoids that entirely rather than working around it.
-  const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-seed-'));
+  const seedDir = scratchDir('ct-ss-seed-');
   git(['clone', '-q', originDir, seedDir]);
-  git(['config', 'user.email', 'test@example.com'], seedDir);
-  git(['config', 'user.name', 'Test'], seedDir);
+  writeIdentity(seedDir, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(seedDir, 'a.txt'), 'one\n');
   git(['add', 'a.txt'], seedDir);
   git(['commit', '-q', '-m', 'seed'], seedDir);
@@ -460,10 +532,9 @@ test('SessionStart fast-forwards a behind-and-clean integration branch via recon
   git(['commit', '-q', '-m', 'policy'], seedDir);
   git(['push', '-q', 'origin', 'main'], seedDir);
 
-  const mainDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-main-'));
+  const mainDir = scratchDir('ct-ss-main-');
   git(['clone', '-q', originDir, mainDir]);
-  git(['config', 'user.email', 'test@example.com'], mainDir);
-  git(['config', 'user.name', 'Test'], mainDir);
+  writeIdentity(mainDir, { name: 'Test', email: 'test@example.com' });
 
   // Origin moves ahead — mainDir is now strictly behind and clean.
   fs.writeFileSync(path.join(seedDir, 'b.txt'), 'two\n');
@@ -487,10 +558,9 @@ test('#413: a run carrying an unresolved console.json never crashes SessionStart
   // network-failure/gh-absent skip path every other reconcile check already
   // takes, not the positive "answered console" path (covered by
   // tests/console-execute.test.js's pure decideConsoleExecute unit tests).
-  const project = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-console-')));
+  const project = fs.realpathSync(scratchDir('ct-ss-console-'));
   execFileSync('git', ['init', '-q', '--initial-branch=main'], { cwd: project });
-  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: project });
-  execFileSync('git', ['config', 'user.name', 'Test'], { cwd: project });
+  writeIdentity(project, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(project, 'a.txt'), 'one\n');
   execFileSync('git', ['add', 'a.txt'], { cwd: project });
   execFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd: project });
@@ -507,10 +577,9 @@ test('#413: a run carrying an unresolved console.json never crashes SessionStart
 });
 
 test('#561: a redTip finding from reconcile() renders as its own additionalContext line', async () => {
-  const project = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-redtip-')));
+  const project = fs.realpathSync(scratchDir('ct-ss-redtip-'));
   execFileSync('git', ['init', '-q', '--initial-branch=main'], { cwd: project });
-  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: project });
-  execFileSync('git', ['config', 'user.name', 'Test'], { cwd: project });
+  writeIdentity(project, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(project, 'a.txt'), 'one\n');
   execFileSync('git', ['add', 'a.txt'], { cwd: project });
   execFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd: project });
@@ -536,7 +605,7 @@ test('#561: a redTip finding from reconcile() renders as its own additionalConte
   delete require.cache[require.resolve('../plugin/bin/lib/hooks/session-start')];
   try {
     const freshSessionStart = require('../plugin/bin/lib/hooks/session-start');
-    const out = await freshSessionStart.run({ superpowersDeps: NO_INSTALL, input: {}, runDir: null, runState: null, cwd: project });
+    const out = await freshSessionStart.run({ env: process.env, homeDir: HOME_DIR, spawn: SPAWN, superpowersDeps: NO_INSTALL, nodePathHome: NODE_PATH_HOME, input: {}, runDir: null, runState: null, cwd: project });
     assert.ok(out.json, 'a redTip finding must render additionalContext');
     assert.match(out.json.hookSpecificOutput.additionalContext, /CI is red on main tip at 0123456 — ci\/tests/);
   } finally {
@@ -568,7 +637,7 @@ test('#4578: SessionStart passes HOOK_FORGE_PROBE_TIMEOUT_MS into its inline rec
   delete require.cache[require.resolve('../plugin/bin/lib/hooks/session-start')];
   try {
     const freshSessionStart = require('../plugin/bin/lib/hooks/session-start');
-    await freshSessionStart.run({ superpowersDeps: NO_INSTALL, input: {}, runDir: null, runState: null, cwd: project });
+    await freshSessionStart.run({ env: process.env, homeDir: HOME_DIR, spawn: SPAWN, superpowersDeps: NO_INSTALL, nodePathHome: NODE_PATH_HOME, input: {}, runDir: null, runState: null, cwd: project });
     assert.strictEqual(seen.length, 1, 'the inline reconcile() must have been called exactly once');
     assert.strictEqual(typeof HOOK_FORGE_PROBE_TIMEOUT_MS, 'number');
     assert.strictEqual(seen[0].forgeProbeTimeoutMs, HOOK_FORGE_PROBE_TIMEOUT_MS);
@@ -592,7 +661,7 @@ test('worktree-always nudge is absent when the session is already inside a linke
   withPolicy(project, 'worktree-always: true\n');
   execFileSync('git', ['-C', project, 'add', '.claude-tweaks/policy.yml']);
   execFileSync('git', ['-C', project, 'commit', '-m', 'policy', '-q']);
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-wt-'));
+  const parent = scratchDir('ct-ss-wt-');
   const wt = path.join(parent, 'wt');
   execFileSync('git', ['-C', project, 'worktree', 'add', '-q', wt, '-b', 'wt-branch']);
   const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: fs.realpathSync(wt) });
@@ -603,6 +672,24 @@ test('worktree-always nudge is absent when the session is already inside a linke
   assert.ok(out.json, 'a policy file exists, so the verdict banner must render');
   assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /using-git-worktrees/);
   assert.match(out.json.hookSpecificOutput.additionalContext, /worktree-always: ON \(matched key: worktree-always\)/);
+});
+
+// #4492 F3: a sibling-placed linked worktree of a project that keeps policy.yml out of git
+// reads main's policy, so the fast-reject must not hide the banner.
+test('worktree-always banner reads ON from a sibling linked worktree when policy.yml is untracked in main', async () => {
+  const project = gitProject();
+  execFileSync('git', ['-C', project, 'commit', '--allow-empty', '-m', 'init', '-q']);
+  withPolicy(project, 'worktree-always: true\n');
+  const parent = scratchDir('ct-ss-wt-');
+  const wt = path.join(parent, 'wt');
+  execFileSync('git', ['-C', project, 'worktree', 'add', '-q', wt, '-b', 'wt-branch-untracked']);
+  try {
+    const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: fs.realpathSync(wt) });
+    assert.ok(out.json, 'main\'s policy is readable from the worktree, so the verdict banner must render');
+    assert.match(out.json.hookSpecificOutput.additionalContext, /worktree-always: ON \(matched key: worktree-always\)/);
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
 });
 
 // IL-133 verdict-banner coverage: policy.resolveWorktreeAlways drives the banner text
@@ -691,13 +778,65 @@ test('SessionStart renders a prior background pass\'s reaped/branch/remote-prune
   const project = gitProject();
   fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(project, '.claude-tweaks', 'reconcile-background-status.json'), JSON.stringify({
-    completedAt: Date.now(), surfaced: false, summary: { reaped: 1, archivedBranches: 2, prunedRemote: 3 },
+    completedAt: Date.now(), surfaced: false, summary: { reaped: 1, archivedBranches: 2, prunedRemote: 3, planRefsDeleted: 2 },
   }));
   const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   assert.match(
     out.json.hookSpecificOutput.additionalContext,
-    /background reconcile \(from a prior session\) — 1 finished worktree\(s\) removed \(already merged\); 2 local branch\(es\) archived\/deleted; 3 merged remote branch\(es\) deleted on origin\./,
+    /background reconcile \(from a prior session\) — 1 finished worktree\(s\) removed \(already merged\); 2 local branch\(es\) archived\/deleted; 3 merged remote branch\(es\) deleted on origin; /,
   );
+  assert.match(out.json.hookSpecificOutput.additionalContext, /2 closed record plan ref\(s\) deleted on origin/);
+});
+
+test('SessionStart names the hollow merges a prior background pass held (#6143)', async () => {
+  const project = gitProject();
+  fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(project, '.claude-tweaks', 'reconcile-background-status.json'), JSON.stringify({
+    completedAt: Date.now(), surfaced: false,
+    summary: { hollowMerges: [{ runId: 'run-a', pr: 7, reason: 'hollow-merge', phase: 'build' }, { runId: 'run-b', pr: null, reason: 'hollow-check-failed' }] },
+  }));
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  const ctxText = out.json.hookSpecificOutput.additionalContext;
+  assert.ok(ctxText.includes('1 merged PR(s) held as hollow merges (run unfinished; claim and run dir kept): run-a (PR #7, build unfinished); '), ctxText);
+  assert.ok(ctxText.includes('1 run(s) held because the hollow-merge check failed (merge state unknown; claim and run dir kept): run-b.'), ctxText);
+});
+
+test('SessionStart renders a hollow-check-failed entry with a known PR as a check failure, never as an unfinished run (#6143)', async () => {
+  const project = gitProject();
+  fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(project, '.claude-tweaks', 'reconcile-background-status.json'), JSON.stringify({
+    completedAt: Date.now(), surfaced: false,
+    summary: { hollowMerges: [{ runId: 'run-c', pr: 9, reason: 'hollow-check-failed', detail: 'PR #9 state lookup: transient' }] },
+  }));
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  const ctxText = out.json.hookSpecificOutput.additionalContext;
+  assert.ok(ctxText.includes('1 run(s) held because the hollow-merge check failed (merge state unknown; claim and run dir kept): run-c (PR #9).'), ctxText);
+  assert.doesNotMatch(ctxText, /held as hollow merges/);
+});
+
+test('SessionStart surfaces a prior background pass failed plan-ref deletions, and stays silent at zero', async () => {
+  const project = gitProject();
+  fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
+  const statusFile = path.join(project, '.claude-tweaks', 'reconcile-background-status.json');
+  fs.writeFileSync(statusFile, JSON.stringify({ completedAt: Date.now(), surfaced: false, summary: { reaped: 1, planRefsDeleteFailed: 3 } }));
+  const root = tmpPluginRoot();
+  const orig = process.env.CLAUDE_PLUGIN_ROOT;
+  try {
+    process.env.CLAUDE_PLUGIN_ROOT = root;
+    let out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+    const hint = out.json.hookSpecificOutput.additionalContext;
+    assert.match(hint, /3 plan ref deletion\(s\) failed on origin — /);
+    assert.ok(hint.includes(`node "${root}/bin/hooks.js" reconcile --checks plan-refs`), 'hint runs the plugin-root hooks.js, not a repo-relative path');
+    assert.doesNotMatch(hint, /--dry-run/);
+    assert.doesNotMatch(hint, / node plugin\/bin\/hooks\.js/);
+    fs.writeFileSync(statusFile, JSON.stringify({ completedAt: Date.now(), surfaced: false, summary: { reaped: 1, planRefsDeleteFailed: 0 } }));
+    out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+    assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /plan ref deletion/);
+  } finally {
+    if (orig === undefined) delete process.env.CLAUDE_PLUGIN_ROOT;
+    else process.env.CLAUDE_PLUGIN_ROOT = orig;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('SessionStart surfaces a prior background pass that failed, with its reason (#4032)', async () => {
@@ -807,9 +946,60 @@ test('SessionStart renders a prior background pass\'s post-merge runs and parent
     /post-merge steps ran for 2 merged run\(s\), closing 2 parent record\(s\) below the oversight floor; post-merge steps closed 1 parent record\(s\) below the oversight floor in run\(s\) whose decisions\.md marker could not be written\./,
   );
 
+  seed({ postMergeRan: 0, postMergeParentsClosed: 0, postMergeSuperseded: [{ pr: 12, parentsClosed: 2, recordsReopened: [7] }] });
+  const superseded = (await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project })).json.hookSpecificOutput.additionalContext;
+  assert.match(superseded, /post-merge steps in run\(s\) whose claim another pass took over had already changed GitHub: PR #12 closed 2 parent record\(s\) below the oversight floor, reopened #7/);
+  assert.doesNotMatch(superseded, /marker could not be written/);
+
+  // The superseded line beside a nonzero ran count and a nonzero unmarked-close count: all three render.
+  seed({ postMergeRan: 2, postMergeParentsClosed: 2, postMergeUnmarkedParentsClosed: 1, postMergeSuperseded: [{ pr: 12, parentsClosed: 2, recordsReopened: [7] }] });
+  const allThree = (await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project })).json.hookSpecificOutput.additionalContext;
+  assert.match(allThree, /post-merge steps ran for 2 merged run\(s\), closing 2 parent record\(s\) below the oversight floor/);
+  assert.match(allThree, /post-merge steps closed 1 parent record\(s\) below the oversight floor in run\(s\) whose decisions\.md marker could not be written/);
+  assert.match(allThree, /post-merge steps in run\(s\) whose claim another pass took over had already changed GitHub: PR #12 closed 2 parent record\(s\) below the oversight floor, reopened #7/);
+
   seed({ postMergeRan: 0, postMergeParentsClosed: 0 });
   const quiet = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   assert.doesNotMatch(quiet.json.hookSpecificOutput.additionalContext || '', /post-merge/);
+});
+
+test('AC1.1 + Q5: SessionStart names the parents a prior pass\'s Step 4.0b left open, and the step skips, each as its own clause (#4798)', async () => {
+  const project = gitProject();
+  fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
+  const statusPath = path.join(project, '.claude-tweaks', 'reconcile-background-status.json');
+  const seed = (summary) => fs.writeFileSync(statusPath, JSON.stringify({ completedAt: Date.now(), surfaced: false, summary }));
+  const contextOf = async () => (await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project })).json.hookSpecificOutput.additionalContext;
+
+  seed({ postMergeRan: 0, postMergeFailed: 2, postMergeFailedRecords: [101], postMergeParentsLeftOpen: [
+    { pr: 11, parent: 100, reason: 'gh-failed' }, { pr: 11, issue: 103, reason: 'internal-error' }, { pr: 12, reason: 'unreadable-policy' },
+  ], postMergeStepSkips: [{ pr: 13, reason: 'invalid-risk-floor' }] });
+  const named = await contextOf();
+  assert.match(named, /post-merge steps failed for 2 merged run\(s\) \(records #101 need a hand reopen or close/);
+  assert.match(named, /post-merge Step 4\.0b left parent record\(s\) open: #100 \(gh-failed, PR #11\), the parent of record #103 \(internal-error, PR #11\), every parent \(unreadable-policy, PR #12\) — tidy's parent-gate backstop recovers them/);
+  assert.match(named, /post-merge Step 4\.0b skipped step-wide, leaving no parent open \(nothing left to close\): invalid-risk-floor \(PR #13\)/);
+
+  // Q5: a marker-write-failed entry's parent is named although no count includes that run.
+  seed({ postMergeRan: 0, postMergeFailed: 0, postMergeParentsLeftOpen: [{ pr: 14, parent: 200, reason: 'gh-failed' }] });
+  const unmarked = await contextOf();
+  assert.match(unmarked, /post-merge Step 4\.0b left parent record\(s\) open: #200 \(gh-failed, PR #14\)/);
+  assert.doesNotMatch(unmarked, /post-merge steps failed/);
+
+  // Step skips alone never read as a parent left open.
+  seed({ postMergeRan: 1, postMergeStepSkips: [{ pr: 12, reason: 'unreadable-policy' }] });
+  const skipsOnly = await contextOf();
+  assert.doesNotMatch(skipsOnly, /left parent record/);
+  assert.match(skipsOnly, /skipped step-wide, leaving no parent open \(nothing left to close\): unreadable-policy \(PR #12\)/);
+
+  // An older status file, and junk values: nothing new renders.
+  for (const summary of [
+    { postMergeRan: 0, postMergeFailed: 1 },
+    { postMergeRan: 0, postMergeFailed: 1, postMergeParentsLeftOpen: ['x', null, { pr: 11, reason: 5 }, { pr: 'x', parent: 1, reason: 'gh-failed' }], postMergeStepSkips: 'x' },
+  ]) {
+    seed(summary);
+    const legacy = await contextOf();
+    assert.match(legacy, /post-merge steps failed for 1 merged run\(s\) \(tidy's parent-gate backstop recovers the parents\)/);
+    assert.doesNotMatch(legacy, /left parent record|skipped step-wide/);
+  }
 });
 
 test('SessionStart renders a prior background pass\'s ledger-residue PR count and notable residue (#3812)', async () => {
@@ -852,23 +1042,22 @@ test('SessionStart renders a prior background pass\'s ledger-residue PR count an
 // must still spawn, because the STATUS file (not the reconcile cache) is
 // absent/stale.
 function prFirstRemoteFixture() {
-  const originDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-spawn-origin-'));
+  const originDir = scratchDir('ct-ss-spawn-origin-');
   git(['init', '-q', '--bare', '--initial-branch=main'], originDir);
+  disableReceiveAutoGc(originDir);
 
-  const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-spawn-seed-'));
+  const seedDir = scratchDir('ct-ss-spawn-seed-');
   git(['clone', '-q', originDir, seedDir]);
-  git(['config', 'user.email', 'test@example.com'], seedDir);
-  git(['config', 'user.name', 'Test'], seedDir);
+  writeIdentity(seedDir, { name: 'Test', email: 'test@example.com' });
   fs.mkdirSync(path.join(seedDir, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(seedDir, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
   git(['add', '.claude-tweaks/policy.yml'], seedDir);
   git(['commit', '-q', '-m', 'seed'], seedDir);
   git(['push', '-q', 'origin', 'main'], seedDir);
 
-  const mainDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-spawn-main-'));
+  const mainDir = scratchDir('ct-ss-spawn-main-');
   git(['clone', '-q', originDir, mainDir]);
-  git(['config', 'user.email', 'test@example.com'], mainDir);
-  git(['config', 'user.name', 'Test'], mainDir);
+  writeIdentity(mainDir, { name: 'Test', email: 'test@example.com' });
   return mainDir;
 }
 
@@ -987,11 +1176,12 @@ test('SessionStart: a throw while rendering the background summary still leaves 
 
 // #1687: the reconcile-background child had no way to learn the spawning
 // session's id at all — neither argv nor env — so archive-merged.js's
-// ownership gate (isAbandonedInterrupted) was permanently inert on the one
-// path that actually runs the 'archive' check in production. session-start.js
-// now threads ctx.input.session_id into the spawned child's own environment
-// via a dedicated var, never CLAUDE_CODE_SESSION_ID (this file's own header
-// comment documents that one as unreliable for a hook-spawned process).
+// ownership gate (the `abandoned-interrupted` classification) was permanently
+// inert on the one path that actually runs the 'archive' check in production.
+// session-start.js now threads ctx.input.session_id into the spawned child's
+// own environment via a dedicated var, never CLAUDE_CODE_SESSION_ID (this
+// file's own header comment documents that one as unreliable for a
+// hook-spawned process).
 test('SessionStart spawn gate: threads ctx.input.session_id into the background child\'s environment as CLAUDE_TWEAKS_SESSION_ID (#1687)', async () => {
   const cp = require('child_process');
   const originalSpawn = cp.spawn;
@@ -1049,12 +1239,12 @@ test('SessionStart: a second session start inside the TTL short-circuits the inl
   // both or the async twin reaches a real `gh` call.
   preflight.ghHealthCheckAsync = async () => ({ ok: true, reason: null });
   try {
-    const originDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-ttl-origin-'));
+    const originDir = scratchDir('ct-ss-ttl-origin-');
     git(['init', '-q', '--bare', '--initial-branch=main'], originDir);
-    const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-ttl-seed-'));
+    disableReceiveAutoGc(originDir);
+    const seedDir = scratchDir('ct-ss-ttl-seed-');
     git(['clone', '-q', originDir, seedDir]);
-    git(['config', 'user.email', 'test@example.com'], seedDir);
-    git(['config', 'user.name', 'Test'], seedDir);
+    writeIdentity(seedDir, { name: 'Test', email: 'test@example.com' });
     fs.mkdirSync(path.join(seedDir, '.claude-tweaks'), { recursive: true });
     fs.writeFileSync(path.join(seedDir, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
     // Mirrors this repo's own .gitignore. Without it the cache file the
@@ -1067,10 +1257,9 @@ test('SessionStart: a second session start inside the TTL short-circuits the inl
     git(['commit', '-q', '-m', 'seed'], seedDir);
     git(['push', '-q', 'origin', 'main'], seedDir);
 
-    const mainDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-ttl-main-'));
+    const mainDir = scratchDir('ct-ss-ttl-main-');
     git(['clone', '-q', originDir, mainDir]);
-    git(['config', 'user.email', 'test@example.com'], mainDir);
-    git(['config', 'user.name', 'Test'], mainDir);
+    writeIdentity(mainDir, { name: 'Test', email: 'test@example.com' });
 
     function advanceOrigin(name) {
       fs.writeFileSync(path.join(seedDir, `${name}.txt`), `${name}\n`);
@@ -1141,10 +1330,8 @@ test('verdict banner: a throw from policy.resolveWorktreeAlways is swallowed —
 // `git rev-parse --abbrev-ref origin/HEAD` spawn rather than short-circuiting on
 // the policy value, so the cache has something real to coalesce.
 function fixtureRepoNoPolicy() {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-spawn-')));
-  execFileSync('git', ['-C', root, 'init', '-q', '-b', 'trunk']);
-  execFileSync('git', ['-C', root, 'config', 'user.email', 't@example.com']);
-  execFileSync('git', ['-C', root, 'config', 'user.name', 'T']);
+  const root = fs.realpathSync(scratchDir('ct-ss-spawn-'));
+  initRepo(root, { name: 'T', email: 't@example.com', branch: 'trunk' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'base\n');
   execFileSync('git', ['-C', root, 'add', 'a.txt']);
   execFileSync('git', ['-C', root, 'commit', '-q', '-m', 'base']);
@@ -1156,8 +1343,9 @@ function fixtureRepoNoPolicy() {
 test('AC1 (#381): one worktree-list spawn and one origin/HEAD spawn per SessionStart, not one per stale run', async (t) => {
   const { root, wt } = fixtureRepoNoPolicy();
   for (const name of ['2026-08-01T090000-spec-1', '2026-08-01T090100-spec-2', '2026-08-01T090200-spec-3']) {
-    const run = mkRun(root, name, { status: 'active', worktree: wt });
+    const run = mkRun(root, name, { status: 'active', worktree: wt, ...deadOwner() });
     fs.writeFileSync(path.join(run, 'events.jsonl'), '');
+    seedOrphan(root, run); // #3977: only cached orphans are judged, each through the shared listing
   }
 
   const cp = require('child_process');
@@ -1381,7 +1569,7 @@ test('#2027: envWriteError on an inactive result never renders the warning', asy
 // installed_plugins.json under a temp CLAUDE_CONFIG_DIR and injects it (plus a
 // fake homedir) through `superpowersDeps`, so none can read the real config.
 function mkSuperpowersWorld(project, { projectVersion, userVersion, rawFile, userInstallPath } = {}) {
-  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ss-sp-')));
+  const tmp = fs.realpathSync(scratchDir('ct-ss-sp-'));
   const config = path.join(tmp, 'config');
   fs.mkdirSync(path.join(config, 'plugins'), { recursive: true });
   const artifact = (name, version) => {
@@ -1409,7 +1597,7 @@ function mkSuperpowersWorld(project, { projectVersion, userVersion, rawFile, use
   return { env: { CLAUDE_CONFIG_DIR: config }, homedir: () => path.join(tmp, 'home') };
 }
 const SP_NOTICE = /superpowers 6\.3\.0 is older than 7\.0\.0/g;
-const spCtx = (project, input, superpowersDeps) => ({ input, runDir: null, runState: null, cwd: project, superpowersDeps });
+const spCtx = (project, input, superpowersDeps) => ({ env: process.env, homeDir: HOME_DIR, spawn: SPAWN, input, runDir: null, runState: null, cwd: project, superpowersDeps });
 
 test('#3380: startup emits the superpowers notice once', async () => {
   const project = tmpProject();
@@ -1470,7 +1658,7 @@ test('#3380: a throwing superpowersNotice is swallowed — the rest of the conte
   delete require.cache[require.resolve('../plugin/bin/lib/hooks/session-start')];
   try {
     const freshSessionStart = require('../plugin/bin/lib/hooks/session-start');
-    const out = await freshSessionStart.run(spCtx(project, { source: 'startup' }, sp));
+    const out = await freshSessionStart.run({ ...spCtx(project, { source: 'startup' }, sp), nodePathHome: NODE_PATH_HOME });
     assert.match(out.json.hookSpecificOutput.additionalContext, /^> \*\*Interaction style:\*\*/);
     assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /superpowers 6\.3\.0/);
   } finally {
@@ -1496,12 +1684,20 @@ test('#3380: the notice is inform-only — no permissionDecision, no exit code',
 const { reentryFixture } = require('./helpers/reentry-fixture');
 
 test('AC6.1 SessionStart banner carries the review-console suffix for an eligible multi-spec run', async () => {
-  const { root } = reentryFixture();
+  const { root, wt, runDir } = reentryFixture();
+  // #3977: the banner lists only a dead, cached orphan — age the parent's commit
+  // past the live window and stamp a gone owner, then seed the reconcile cache.
+  execFileSync('git', ['-C', wt, 'commit', '-q', '--amend', '--no-edit', '--date', '2026-09-01T00:00:00Z'], {
+    env: { ...process.env, GIT_COMMITTER_DATE: '2026-09-01T00:00:00Z' },
+  });
+  const state = JSON.parse(fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8'));
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ ...state, ...deadOwner() }));
+  seedOrphan(root, runDir);
   const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: root });
   const ctx = out.json.hookSpecificOutput.additionalContext;
   assert.ok(ctx.includes('/claude-tweaks:flow #11,#12 review-console'), ctx);
-  assert.ok(ctx.includes('one line per run naming its close-run command, or its re-entry command where the line carries one'), ctx);
-  assert.ok(ctx.includes('never run either command yourself'), ctx);
+  assert.ok(ctx.includes('one line per run naming its reason and the command on its line'), ctx);
+  assert.ok(ctx.includes('never run any of these commands yourself'), ctx);
   assert.ok(ctx.includes('PIPELINE_RUN_DIR="'), ctx);
 });
 

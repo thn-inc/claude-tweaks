@@ -8,6 +8,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
+const { sectionOf } = require('./helpers/conformance-asserts');
 
 const SHARED = path.join(__dirname, '..', 'plugin', 'skills', '_shared');
 const read = (f) => readText(path.join(SHARED, f));
@@ -196,12 +197,16 @@ test('#4549 AC1.1: Step 3 no longer claims keywords close on any integration bra
   assert.throws(() => assertNoAnyBranchClaim(PRE_CHANGE_STEP3_CLAIM), /any integration branch/, 'go-red: the pre-change sentence fails the check');
 });
 
-test('#4549 AC1.2: Step 3 says keywords close only on the default branch and points at Step 4.0', () => {
+test('#4549 AC1.2: Step 3 points at the appendix rationale, which says keywords close only on the default branch and points at Step 4.0', () => {
+  // The Fixes-lines rationale moved to the appendix's Rationale notes (#5153, composed-bundle byte rail);
+  // Step 3 keeps a pointer to it.
   const step3 = step3Of(read('pr-first-merge.md'));
-  assertStep3DefaultOnly(step3);
+  assert.ok(step3.includes("`pr-first-merge-appendix.md`'s \"Rationale notes\""), 'Step 3 points at the appendix Rationale notes');
+  const rationale = collapse(sectionOf(read('pr-first-merge-appendix.md'), '## Rationale notes'));
+  assertStep3DefaultOnly(rationale);
   assert.throws(() => assertStep3DefaultOnly(PRE_CHANGE_STEP3_CLAIM), /scopes the keywords/, 'go-red: the pre-change sentence fails the check');
-  const noPointer = step3.replace("`pr-first-merge-post-merge.md`'s Step 4.0 closes those records itself", '');
-  assert.notEqual(noPointer, step3, 'go-red: the doctored text differs');
+  const noPointer = rationale.replace("`pr-first-merge-post-merge.md`'s Step 4.0 closes those records itself", '');
+  assert.notEqual(noPointer, rationale, 'go-red: the doctored text differs');
   assert.throws(() => assertStep3DefaultOnly(noPointer), /points at Step 4\.0/, 'go-red: dropping the Step 4.0 pointer fails the check');
 });
 
@@ -234,6 +239,25 @@ test('#4549 AC7.1b: Step 4.0 names the baseUnchecked envelope', () => {
   const withoutList = step40.replace("name the envelope's `unchecked[]` records in the closing summary", 'name them in the closing summary');
   assert.notEqual(withoutList, step40, 'go-red: the doctored text differs from the live section');
   assert.throws(() => assertStep40ReportsBaseUnchecked(withoutList), /unchecked\[\] list/, 'go-red: the pre-fix "name them" sentence fails the check');
+});
+
+// #4817: a post-merge exit 4 (run-marker mismatch, non-default base) is reported as the mismatch and
+// the PR, with no hand close of its Fixes records -- they may belong to another run.
+function assertStep40ReportsExit4(step40) {
+  assert.ok(step40.includes('Exit 4 (run-marker mismatch: the PR body names another run, or none, so nothing was reopened or closed)'), 'Step 4.0 describes the exit-4 run-marker mismatch');
+  assert.ok(step40.includes('name the mismatch and PR #{n} in the closing summary'), 'Step 4.0 names the mismatch and the PR');
+  assert.ok(step40.includes('ask for no hand close of its `Fixes` records, which may belong to another run'), 'Step 4.0 asks for no hand close of the Fixes records');
+}
+
+test('#4817 AC1: Step 4.0 reports a post-merge exit 4 as the mismatch, with no hand close', () => {
+  const step40 = step40Of(read('pr-first-merge-post-merge.md'));
+  assertStep40ReportsExit4(step40);
+  const noCaller = step40.replace(/ Exit 4 \(run-marker mismatch:.*?another run\. Exit 4, exit 5 or `gh-absent`:/, ' Exit 5 or `gh-absent`:');
+  assert.notEqual(noCaller, step40, 'go-red: the doctored text differs from the live section');
+  assert.throws(() => assertStep40ReportsExit4(noCaller), /describes the exit-4 run-marker mismatch/, 'go-red: dropping the exit-4 instruction fails the check');
+  const handClose = step40.replace('ask for no hand close of its `Fixes` records, which may belong to another run', 'hand close its `Fixes` records');
+  assert.notEqual(handClose, step40, 'go-red: the doctored text differs from the live section');
+  assert.throws(() => assertStep40ReportsExit4(handClose), /no hand close/, 'go-red: asking for a hand close fails the check');
 });
 
 test('#4549 final review, #4599: Step 4.0 states that the late run closes an armed merge\'s Fixes records on a non-default base', () => {

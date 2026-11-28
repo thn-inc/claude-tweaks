@@ -7,7 +7,7 @@ const { readText } = require('./helpers/read-skill');
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => readText(path.join(ROOT, rel));
 
-// #2429: task-prompt.md's Foreground execution clause and settle-and-merge.md's
+// #2429: task-prompt.md's foreground rule (Context pack item 7) and settle-and-merge.md's
 // merge-check clause were enforced by prose alone -- both were violated by
 // dispatched agents in one real firing (3/30 backgrounded execution, 2/5
 // first-attempt merges skipped merge-check). These pin the mechanical,

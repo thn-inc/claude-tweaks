@@ -19,9 +19,10 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync, spawnSync } = require('node:child_process');
+const { spawnSync } = require('node:child_process');
 const { readRunState } = require('../plugin/bin/lib/hooks/context');
-const { fixtureGit, gitRepo, FIXTURE_TIMEOUT_MS } = require('./helpers/git-fixtures');
+const { fixtureGit, gitRepo, hookEnv, FIXTURE_TIMEOUT_MS } = require('./helpers/git-fixtures');
+const { runCli } = require('./helpers/run-cli');
 const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
@@ -79,6 +80,7 @@ function extractFence(text, needle) {
 
 // Run a fence under bash, substituting {placeholders} from `vars`; ${CLAUDE_PLUGIN_ROOT} and $RUN_DIR
 // expand from the child env, the way an agent's shell would.
+// real process: the subject is the skill's own bash fence, run by bash as an agent's shell would
 function runFence(body, { cwd, env = {}, vars = {} }) {
   const script = body.replace(/\{([a-z-]+)\}/g, (whole, name) => (name in vars ? vars[name] : whole));
   const r = spawnSync('bash', ['-c', script], {
@@ -225,13 +227,20 @@ function tmpProject() {
 
 // A run owned by 'owner-session' is closed, then `fence` runs as 'reconciler-session' (the re-protect of a
 // run another terminal owns). Returns the run's owner afterwards; the fence must leave it untouched.
-function ownerAfterReprotect(fence, { vars, worktreeVar }) {
+async function ownerAfterReprotect(fence, { vars, worktreeVar }) {
   const { dir, run } = tmpProject();
-  const hook = (env, ...args) => execFileSync(process.execPath, [HOOKS, ...args], {
-    cwd: dir, encoding: 'utf8', timeout: FIXTURE_TIMEOUT_MS, env: { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1', ...env },
-  });
-  hook({ CLAUDE_CODE_SESSION_ID: 'owner-session' }, 'record-worktree', '--run', run, vars[worktreeVar]);
-  hook({ CLAUDE_CODE_SESSION_ID: 'owner-session' }, 'close-run', '--run', run);
+  const hook = async (env, ...args) => {
+    const r = await runCli(HOOKS, args, {
+      cwd: dir, env: hookEnv({ CT_HOOKS_TEST_MODE: '1', ...env }),
+    });
+    assert.strictEqual(r.code, 0, r.stderr);
+  };
+  await hook({ CLAUDE_CODE_SESSION_ID: 'owner-session' }, 'record-worktree', '--run', run, vars[worktreeVar]);
+  await hook({ CLAUDE_CODE_SESSION_ID: 'owner-session' }, 'close-run', '--run', run);
+  // close-run exits 0 on its refusal paths too: check the run really closed, as assertReprotectRestores does.
+  const closed = readRunState(run);
+  assert.strictEqual(closed.worktree, null, 'close-run clears the worktree assignment');
+  assert.strictEqual(closed.status, 'clean');
   const r = runFence(fence, {
     cwd: dir,
     env: { CLAUDE_PLUGIN_ROOT: posix(PLUGIN_DIR), RUN_DIR: posix(run), CLAUDE_CODE_SESSION_ID: 'reconciler-session' },
@@ -241,20 +250,23 @@ function ownerAfterReprotect(fence, { vars, worktreeVar }) {
   return readRunState(run).sessionId;
 }
 const REPROTECT_OWNER_CLAUSE = 'env -u CLAUDE_CODE_SESSION_ID ';
-function assertKeepsOwner(fence, site) {
-  assert.strictEqual(ownerAfterReprotect(fence, site), 'owner-session', "the re-protect re-stamped the reconciler's session as the run's owner");
+async function assertKeepsOwner(fence, site) {
+  assert.strictEqual(await ownerAfterReprotect(fence, site), 'owner-session', "the re-protect re-stamped the reconciler's session as the run's owner");
 }
 
 // Run the re-protect fence against a closed run and assert it restores the worktree assignment and `active`.
-function assertReprotectRestores(fence, vars, worktreeVar) {
+async function assertReprotectRestores(fence, vars, worktreeVar) {
   const { dir, run } = tmpProject();
-  const hook = (...args) => execFileSync(process.execPath, [HOOKS, ...args], {
-    cwd: dir, encoding: 'utf8', timeout: FIXTURE_TIMEOUT_MS, env: { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1' },
-  });
+  const hook = async (...args) => {
+    const r = await runCli(HOOKS, args, {
+      cwd: dir, env: hookEnv({ CT_HOOKS_TEST_MODE: '1' }),
+    });
+    assert.strictEqual(r.code, 0, r.stderr);
+  };
   const wt = vars[worktreeVar];
   assert.ok(wt, `SITES entry names no ${worktreeVar} fixture value`);
-  hook('record-worktree', '--run', run, wt);
-  hook('close-run', '--run', run);
+  await hook('record-worktree', '--run', run, wt);
+  await hook('close-run', '--run', run);
   let state = readRunState(run);
   assert.strictEqual(state.worktree, null, 'close-run clears the worktree assignment');
   assert.strictEqual(state.status, 'clean');
@@ -392,9 +404,9 @@ for (const site of SITES) {
     assert.notStrictEqual(attempt(makeRepo(), { overrides: { branch: 'nope' } }).code, 0, 'an unknown ref aborts, it does not merge');
   });
 
-  test(`${label}: the re-protect fence restores the worktree assignment after close-run`, () => {
+  test(`${label}: the re-protect fence restores the worktree assignment after close-run`, async () => {
     const fence = extractFence(raw, REPROTECT_NEEDLE);
-    assertReprotectRestores(fence, vars, worktreeVar);
+    await assertReprotectRestores(fence, vars, worktreeVar);
   });
 
   test(`${label}: the fallback logs a re-stamp that does not print "worktree recorded"`, () => {
@@ -439,16 +451,17 @@ for (const site of CITING_SITES) {
   });
 }
 
-test("worktree-merge.md: its owner-preserving re-protect fence restores the run and keeps its owner", () => {
+// #5376 injected-value proof: fails when record-worktree reads process.env instead of the injected env
+test("worktree-merge.md: its owner-preserving re-protect fence restores the run and keeps its owner", async () => {
   const live = readText(path.join(ROOT, 'plugin/skills/flow/worktree-merge.md'));
   const fence = extractFence(live, REPROTECT_NEEDLE);
   const site = { vars: { 'worktree-path': posix(WORKTREE) }, worktreeVar: 'worktree-path' };
-  assertReprotectRestores(fence, site.vars, site.worktreeVar);
-  assertKeepsOwner(fence, site);
+  await assertReprotectRestores(fence, site.vars, site.worktreeVar);
+  await assertKeepsOwner(fence, site);
   assert.ok(fence.includes(REPROTECT_OWNER_CLAUSE), 'the fence unsets CLAUDE_CODE_SESSION_ID');
   const mutated = fence.replace(REPROTECT_OWNER_CLAUSE, '');
   assert.notStrictEqual(mutated, fence);
-  assert.throws(() => assertKeepsOwner(mutated, site), /re-stamped the reconciler/, 'go-red: a fence that inherits CLAUDE_CODE_SESSION_ID must fail');
+  await assert.rejects(() => assertKeepsOwner(mutated, site), /re-stamped the reconciler/, 'go-red: a fence that inherits CLAUDE_CODE_SESSION_ID must fail');
 });
 
 const KEEPS_RUN = 'keeps its worktree assignment and `active` status';

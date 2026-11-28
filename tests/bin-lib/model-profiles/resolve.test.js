@@ -2,13 +2,81 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { resolve } = require('../../../plugin/bin/lib/model-profiles/profiles');
+const { resolve, STEP_DOWN_REASONS } = require('../../../plugin/bin/lib/model-profiles/profiles');
 
 test('table default resolves with source default', () => {
   assert.deepStrictEqual(resolve('standard', {}), {
     model: 'sonnet', effort: 'high', source: 'default',
     effortLine: '[Effort: high — apply high-level reasoning depth to this task.]',
+    launchEffort: null,
   });
+});
+
+const { parsePolicyModelConfig } = require('../../../plugin/bin/lib/model-profiles/policy-fragment');
+
+const EFFORT_LINE = (e) => `[Effort: ${e} — apply ${e}-level reasoning depth to this task.]`;
+test('unset key leaves the four existing fields byte-identical', () => {
+  const before = { fast: ['haiku', null, ''], standard: ['sonnet', 'high'], capable: ['opus', 'high'], frontier: ['fable', 'high'] };
+  for (const [p, [model, effort]] of Object.entries(before)) {
+    for (const policy of [{}, { 'model-effort': 'inherit' }]) {
+      assert.deepStrictEqual(resolve(p, { policy }), { model, effort, source: 'default', effortLine: effort ? EFFORT_LINE(effort) : '', launchEffort: null });
+    }
+  }
+});
+test('profile binds launchEffort to the resolved effort', () => {
+  const policy = { 'model-effort': 'profile' };
+  for (const p of ['standard', 'capable', 'frontier']) assert.strictEqual(resolve(p, { policy }).launchEffort, 'high');
+  assert.strictEqual(resolve('fast', { policy }).launchEffort, null);
+});
+test('launchEffort follows a policy row and a stance', () => {
+  const policy = { 'model-effort': 'profile', 'model-profiles': { capable: { effort: 'medium' } } };
+  assert.deepStrictEqual([resolve('capable', { policy }).effort, resolve('capable', { policy }).launchEffort], ['medium', 'medium']);
+  const econ = resolve('capable', { policy, stance: 'economy' });
+  assert.deepStrictEqual([econ.effort, econ.launchEffort], ['low', 'low']);
+});
+test('launchEffort follows the ceiling', () => {
+  const r = resolve('capable', { policy: { 'model-effort': 'profile', 'model-ceiling': 'standard' } });
+  assert.strictEqual(r.model, 'sonnet'); assert.strictEqual(r.launchEffort, r.effort);
+});
+test('a fast row with an effort yields that effort', () => {
+  assert.strictEqual(resolve('fast', { policy: { 'model-effort': 'profile', 'model-profiles': { fast: { effort: 'medium' } } } }).launchEffort, 'medium');
+});
+test('a trailing comment on the model-effort line still reads profile', () => {
+  const policy = parsePolicyModelConfig('model-effort: profile   # note\n');
+  assert.strictEqual(policy['model-effort'], 'profile');
+  assert.strictEqual(resolve('standard', { policy }).launchEffort, 'high');
+});
+test('launchEffort follows the diff ceiling', () => {
+  const r = resolve('capable', { policy: { 'model-effort': 'profile' }, diffFacts: { implFiles: 1, totalLines: 10 } });
+  assert.strictEqual(r.source, 'diff-ceiling');
+  assert.strictEqual(r.model, 'sonnet');
+  assert.strictEqual(r.effort, 'high');
+  assert.strictEqual(r.launchEffort, 'high');
+});
+test('launchEffort is read after the diff ceiling, not captured from the policy row', () => {
+  const policy = { 'model-effort': 'profile', 'model-profiles': { capable: { effort: 'low' } } };
+  const r = resolve('capable', { policy, diffFacts: { implFiles: 1, totalLines: 10 } });
+  assert.strictEqual(r.model, 'sonnet');
+  assert.strictEqual(r.effort, 'high');
+  assert.strictEqual(r.launchEffort, 'high');
+});
+test('launchEffort follows session-failure step-down to fast (null)', () => {
+  const r = resolve('standard', { policy: { 'model-effort': 'profile' }, failedModels: new Set(['sonnet', 'opus']) });
+  assert.strictEqual(r.model, 'haiku');
+  assert.strictEqual(r.launchEffort, null);
+});
+test('launchEffort follows max-rigor', () => {
+  assert.strictEqual(resolve('capable', { policy: { 'model-effort': 'profile' }, stance: 'max-rigor' }).launchEffort, 'xhigh');
+});
+test('model-effort is a closed rule: any other value throws', () => {
+  for (const bad of ['Profile', 'sometimes']) {
+    assert.throws(() => resolve('standard', { policy: { 'model-effort': bad } }), new RegExp(`unknown model-effort "${bad}"`));
+  }
+});
+
+test('an empty model-effort is unset: inherit, launchEffort null, no throw', () => {
+  const r = resolve('standard', { policy: { 'model-effort': '' } });
+  assert.strictEqual(r.launchEffort, null);
 });
 
 test('policy row overrides the table; partial rows merge field-wise', () => {
@@ -227,4 +295,154 @@ test('diff-facts ceiling defers to an explicit cliOverride (cliOverride already 
   });
   assert.strictEqual(r.model, 'opus');
   assert.strictEqual(r.source, 'cli');
+});
+
+// ---- design-reader frontier exception (#6351) ----
+const DR = { exception: 'design-reader' };
+
+test('AC1.1: under design-reader, resolutions 1 to 22 return fable with source exception:design-reader', () => {
+  for (let used = 0; used < 22; used += 1) {
+    const r = resolve('frontier', { ...DR, exceptionUsed: used });
+    assert.strictEqual(r.model, 'fable');
+    assert.strictEqual(r.source, 'exception:design-reader');
+    assert.strictEqual(r.effort, 'high');
+  }
+});
+
+test('AC1.2: under design-reader, resolution 23 returns stepDown limit', () => {
+  assert.deepStrictEqual(resolve('frontier', { ...DR, exceptionUsed: 22 }), { stepDown: { reason: 'limit' } });
+});
+
+const GATES = {
+  policy: { policy: { 'model-profiles': { frontier: { model: 'opus' } } } },
+  stance: { stance: 'economy' },
+  ceiling: { policy: { 'model-ceiling': 'capable' } },
+  limit: { exceptionUsed: 22 },
+  'session-failure': { failedModels: new Set(['fable']) },
+};
+function mergeGates(...names) {
+  const out = {};
+  for (const n of names) {
+    const g = GATES[n];
+    if (g.policy) out.policy = { ...(out.policy || {}), ...g.policy };
+    for (const k of Object.keys(g)) if (k !== 'policy') out[k] = g[k];
+  }
+  return out;
+}
+
+test('AC2.1: each step-down reason is reported with no model', () => {
+  for (const reason of Object.keys(GATES)) {
+    const r = resolve('frontier', { ...DR, ...mergeGates(reason) });
+    assert.deepStrictEqual(r, { stepDown: { reason } });
+    assert.ok(!('model' in r));
+  }
+});
+
+test('AC2.2: precedence — with every gate firing, the first reason in STEP_DOWN_REASONS order wins', () => {
+  const order = STEP_DOWN_REASONS.filter((x) => x !== 'tally');
+  for (let i = 0; i < order.length; i += 1) {
+    const r = resolve('frontier', { ...DR, ...mergeGates(...order.slice(i)) });
+    assert.deepStrictEqual(r, { stepDown: { reason: order[i] } });
+  }
+});
+
+test('effort-only changes are not step-downs under the exception', () => {
+  const a = resolve('frontier', { ...DR, stance: 'max-rigor' });
+  assert.strictEqual(a.model, 'fable');
+  assert.strictEqual(a.effort, 'xhigh');
+  assert.strictEqual(a.source, 'exception:design-reader');
+  const b = resolve('frontier', { ...DR, policy: { 'model-profiles': { frontier: { effort: 'medium' } } } });
+  assert.strictEqual(b.model, 'fable');
+  assert.strictEqual(b.effort, 'medium');
+  assert.strictEqual(b.source, 'exception:design-reader');
+});
+
+test('a model-ceiling equal to the top tier does not step down', () => {
+  const r = resolve('frontier', { ...DR, policy: { 'model-ceiling': 'frontier' } });
+  assert.strictEqual(r.stepDown, undefined);
+  assert.strictEqual(r.model, 'fable');
+  assert.strictEqual(r.source, 'exception:design-reader');
+});
+
+test('a policy row restating the frontier model does not step down', () => {
+  const r = resolve('frontier', { ...DR, policy: { 'model-profiles': { frontier: { model: 'fable' } } } });
+  assert.strictEqual(r.stepDown, undefined);
+  assert.strictEqual(r.model, 'fable');
+  assert.strictEqual(r.source, 'exception:design-reader');
+});
+
+test('the run frontier cap is never consulted under the exception', () => {
+  for (const frontierUsed of [3, 10]) {
+    const r = resolve('frontier', { ...DR, frontierUsed });
+    assert.strictEqual(r.model, 'fable');
+    assert.strictEqual(r.source, 'exception:design-reader');
+  }
+  // The same inputs without the exception degrade on the cap — the cap is live, the exception bypasses it.
+  assert.strictEqual(resolve('frontier', { frontierUsed: 3 }).source, 'degraded:cap');
+});
+
+test('the exception path computes launchEffort and effortLine like the non-exception frontier path', () => {
+  const cases = [
+    { policy: { 'model-effort': 'profile' } },
+    {},
+    { policy: { 'model-effort': 'profile' }, stance: 'max-rigor' },
+    { stance: 'max-rigor' },
+    { policy: { 'model-effort': 'profile', 'model-profiles': { frontier: { effort: 'medium' } } } },
+    { policy: { 'model-profiles': { frontier: { effort: 'medium' } } } },
+  ];
+  for (const opts of cases) {
+    const exc = resolve('frontier', { ...DR, ...opts });
+    const plain = resolve('frontier', opts);
+    assert.strictEqual(exc.effort, plain.effort, JSON.stringify(opts));
+    assert.strictEqual(exc.launchEffort, plain.launchEffort, JSON.stringify(opts));
+    assert.strictEqual(exc.effortLine, plain.effortLine, JSON.stringify(opts));
+  }
+  const profile = resolve('frontier', { ...DR, policy: { 'model-effort': 'profile' } });
+  assert.strictEqual(profile.launchEffort, 'high');
+  assert.strictEqual(profile.effortLine, EFFORT_LINE('high'));
+  assert.strictEqual(resolve('frontier', DR).launchEffort, null);
+  const shifted = resolve('frontier', { ...DR, stance: 'max-rigor', policy: { 'model-effort': 'profile' } });
+  assert.strictEqual(shifted.launchEffort, 'xhigh');
+  assert.strictEqual(shifted.effortLine, EFFORT_LINE('xhigh'));
+});
+
+test('AC4.1: design-reader with unattended throws the refusal', () => {
+  assert.throws(() => resolve('frontier', { ...DR, unattended: true }), /refuses an unattended call/);
+});
+
+test('AC6.1: an unknown exception throws naming design-reader', () => {
+  assert.throws(() => resolve('frontier', { exception: 'other' }), /unknown exception "other" — the one exception is "design-reader"/);
+});
+
+test('a bad exceptionUsed throws instead of failing open', () => {
+  for (const bad of [NaN, -1, 1.5, '3', null, Infinity]) {
+    assert.throws(() => resolve('frontier', { ...DR, exceptionUsed: bad }), /exceptionUsed must be a non-negative integer/);
+  }
+  assert.strictEqual(resolve('frontier', { ...DR, exceptionUsed: undefined }).model, 'fable');
+});
+
+test('a cliOverride naming model or effort throws under the exception', () => {
+  const msg = /takes no per-invocation model or effort override/;
+  assert.throws(() => resolve('frontier', { ...DR, cliOverride: { model: 'opus' } }), msg);
+  assert.throws(() => resolve('frontier', { ...DR, cliOverride: { effort: 'low' } }), msg);
+  assert.strictEqual(resolve('frontier', { ...DR, cliOverride: {} }).model, 'fable');
+});
+
+test('an unknown exception plus a bad stance throws the exception message first', () => {
+  assert.throws(() => resolve('frontier', { exception: 'other', stance: 'bogus' }), /unknown exception "other"/);
+  assert.throws(() => resolve('frontier', { ...DR, stance: 'bogus' }), /unknown stance "bogus"/);
+});
+
+test('a bad model-effort throws on the exception path', () => {
+  assert.throws(() => resolve('frontier', { ...DR, policy: { 'model-effort': 'bogus' } }), /unknown model-effort "bogus"/);
+});
+
+test('the exception applies only to frontier', () => {
+  assert.throws(() => resolve('capable', DR), /applies only to the frontier profile/);
+});
+
+test('AC5.1: without an exception the fourth frontier resolution still degrades with degraded:cap', () => {
+  const r = resolve('frontier', { frontierUsed: 3 });
+  assert.strictEqual(r.model, 'opus');
+  assert.strictEqual(r.source, 'degraded:cap');
 });

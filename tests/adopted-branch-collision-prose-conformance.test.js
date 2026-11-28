@@ -79,6 +79,15 @@ test('AC1.1: prior-attempt adopts by merge and never stops (#3887)', () => {
   assert.match(norm(WORKTREE_SETUP.slice(start, end)), /prior attempt/i);
 });
 
+test('AC4.1: the check runs as one plain CLI command, not a node-eval-file heredoc (#5589)', () => {
+  assert.ok(
+    CHECK.includes('node "${CLAUDE_PLUGIN_ROOT}/bin/remote-branch-collision.js" --branch "{branch}" --repo "{repo}" --records "{records}"'),
+    'the fence must carry the one-command CLI call',
+  );
+  assert.doesNotMatch(CHECK, /NODE_EVAL_EOF|node-eval-file/);
+  assert.match(norm(CHECK), /exit 2[^.]*malformed call/i);
+});
+
 test('the adopted-branch collision stop is registered in auto-mode-contract.md\'s HARD-GATE row, and the build sub-file cites the registration (#3094)', () => {
   const contract = read('plugin', 'skills', '_shared', 'auto-mode-contract.md');
   const row = contract.split('\n').find((l) => l.includes('HARD-GATE / BLOCKED / STOP conditions'));

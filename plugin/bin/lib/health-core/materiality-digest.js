@@ -8,7 +8,7 @@
 // contract's whole purpose (reducing issue volume for low-materiality findings).
 //
 // Pure — no I/O, no gh calls, no network. The routing skill (review/step3-routing.md,
-// wrap-up/residue-sweep.md, the four health sweeps, ...) calls isMaterialityDuplicate before
+// wrap-up/residue-sweep.md, the five health sweeps, ...) calls isMaterialityDuplicate before
 // appending a new entry, and materialityEntryLine to compose the line it appends. Dedup reads
 // only trusted fingerprint sources (#3766): a github-issues caller passes comment objects, and
 // only OWNER/MEMBER/COLLABORATOR comments (issues/comment-trust.js) can suppress a finding.
@@ -31,7 +31,10 @@ const ENTRY_LINE = /^- \[[^\]]+\] /;
 const TRAILING_MARK = /\s*(→ (?:expired|#?\d+))((?:\s*<!--(?:(?!-->).)*-->)*)\s*$/;
 const RUN_ID_DATE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2})(\d{2})(\d{2})(?:-|$)/;
 // The markers a dedup or sweep reads. A fixed list: the container's comments also hold agent-claim markers.
-const DEDUP_MARKER = /<!-- (?:materiality-fingerprint|consolebackfill-item): \S+? -->/g;
+// `console-finding` is the Review Console's can't-tell digest marker (lib/console/finding-filing.js
+// composes and reads it); the prefix lives here because that module already requires this one.
+const CONSOLE_FINDING_PREFIX = 'console-finding';
+const DEDUP_MARKER = new RegExp(`<!-- (?:${MATERIALITY_MARKER_PREFIX}|consolebackfill-item|${CONSOLE_FINDING_PREFIX}): \\S+? -->`, 'g');
 const FIRST_SEEN_MARKER = new RegExp(`<!-- ${MATERIALITY_FIRST_SEEN_PREFIX}: (\\S+?) -->`, 'g');
 const FIRST_SEEN_STRIP = new RegExp(`\\s*<!-- ${MATERIALITY_FIRST_SEEN_PREFIX}: \\S+? -->`, 'g');
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
@@ -491,6 +494,7 @@ function classifyRolloverResume(candidates, oldIssue) {
 
 module.exports = {
   MATERIALITY_MARKER_PREFIX,
+  CONSOLE_FINDING_PREFIX,
   MATERIALITY_FIRST_SEEN_PREFIX,
   DIGEST_REPLACEMENT_PREFIX,
   CarryOverInputError,

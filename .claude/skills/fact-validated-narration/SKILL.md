@@ -50,6 +50,28 @@ enumerated; you are patching.
 The rule this skill teaches is the enumeration discipline, not the list. The list is always longer
 than it looks.
 
+Test a neutralizer against each hostile shape glued to every allowed neighbouring character (`-`,
+`.`, `_`, `(`, a letter, the start of the string), not only after a space. The test must go red when
+the boundary is narrowed back. #5219's `reduceDetail` passed seven task reviews on space-separated
+inputs, while `-C/Users/me/x` and `foo./home/me/.ssh` reached a public comment untouched.
+
+A neutralizer that removes text can splice what was around it into a new hostile shape: removing `#7`
+from `h#7ttps://github.com/o/r/issues/5` leaves a live issue URL, and removing `#1` from `<!#1--`
+leaves a comment opener. #5269's `neutralize` in `plugin/bin/lib/driver/events.js` repeats its
+removals until the text stops changing, and escapes `<!--` only after that loop. Test each removal
+against an input built so that removing it forms the next shape (the `#5269 AC2` rebuilt-reference
+and `#5269 AC4` comment-opener tests in `tests/bin-lib/driver/run.test.js`), and keep the loop
+linear (`regex-scan-linearity`).
+
+Settle which shapes are live by asking GitHub's renderer, not the autolink spec or memory:
+`gh api markdown -f mode=gfm -F context={owner}/{repo} -f text='…'` (`-F`, not `-f`, fills the
+placeholders from the current repository). #5352's spec said a bare
+`github.com/o/r/issues/5` URL autolinks. The probe showed the host never links, and the reference is
+the `owner/repo/issues/N` path itself, whatever precedes the owner (only `_` stops it), so `neutralize`
+gained `PATH_REF`. Probe against a repository that exists: #5269 pinned
+`xhttps://github.com/o/r/issues/5` as surviving from a probe against one that does not, and #5352
+had to flip that pin.
+
 ## A partial gather is never an empty period
 
 `failures.length === 0` belongs in the "nothing happened in this period" predicate. Without it, a
@@ -121,6 +143,34 @@ channel, and the output is a comment on the record. It adds four things to the r
 
 Pins: `tests/bin-lib/wrap-up/packet-validate.test.js`, `tests/bin-lib/wrap-up/packet-render.test.js`,
 `tests/acceptance-packet-cli.test.js`.
+
+The packet's recording fact (#4612) added two more channels, found the same way:
+
+- **The fact the narrator reads is a channel, not only the rendered page.** A render-time screen
+  keeps a secret off the record but not out of the model's context or the session transcript.
+  Gather writes the redacted form of the recording's `text`, `captions` and `failure` into the fact,
+  with the count in `redactions` (`redactText` in `plugin/bin/lib/walkthrough/redact.js`), and
+  `renderRecordingSection` in `packet-render.js` still redacts at one choke point, so a hand-built
+  fact cannot leak. The build first redacted only at render; the final review moved it into gather too.
+- **A link's path is a channel.** `checkLink` in `packet-links.js` refuses a bearer-shaped path
+  segment, and review found two spellings it read past: a `;` path parameter (`/a;{value}`) and a
+  route held in a hash-router fragment or a rooted query value (`#/reset/{value}`,
+  `?next=/reset/{value}`). `parameterRefusal` and `pathRefusal` read both now.
+
+Pins: `tests/bin-lib/walkthrough/redact.test.js`, `tests/bin-lib/wrap-up/packet-links.test.js`,
+`tests/bin-lib/wrap-up/packet-recording.test.js`.
+
+The pipeline driver's acceptance worker (#5228, `plugin/bin/lib/driver/acceptance.js`) narrates the
+same packet with no human reading it before it posts, which adds one more rule:
+
+- **The render's counts are the caller's signal, not only the reader's.** `acceptance-packet.js render`
+  drops or screens a claim, writes a warning line into the packet, and still exits 0 with `dropped` and
+  `screened` counts on stdout. A person reading the packet sees the warning, but an automated caller that
+  checks only the exit code does not. Until review's gap sweep, a no-parent packet whose Try it steps
+  had all been dropped was still posted, labelled and reported completed. The driver now parses both
+  counts and stops with nothing posted when either is non-zero or unreadable.
+
+Pins: `tests/bin-lib/driver/acceptance.test.js` (the `dropped claims` and `screened claims` rows).
 
 ## When to use
 

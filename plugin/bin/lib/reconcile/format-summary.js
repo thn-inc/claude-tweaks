@@ -5,13 +5,20 @@
 // layer — takes exactly the object reconcile() already returns; no changes
 // to reconcile()/its per-check modules, and no I/O of its own.
 //
-// Three kinds of line:
+// Five kinds of line:
 //   - one per non-empty action category, naming what was actually DONE
 //     (e.g. "archived: 1 run dir", "released: 3 claims", "reaped: 1
 //     worktree") — drawn from the taken-action entries in each of
 //     reconcile()'s array-shaped fields, plus mirror/redTip/console's own
 //     single-object shapes, and the archive pass's own count lines
 //     ("residue (dry run): ...", "ownerless non-clean: N run dirs");
+//   - up to two post-merge Step 4.0b lines, right after those category
+//     lines (#4798): the parent record(s) it left open and its step-wide
+//     skips that left no parent open, each flattened from every post-merge
+//     entry whatever its action or verdict;
+//   - one line after those naming what a run whose claim another pass took
+//     over had already changed on GitHub (#4797) — numbers only; the run
+//     itself still folds into the aggregated in-flight skip below;
 //   - one aggregated "skipped: N {unit} (reason count, reason count, ...)"
 //     line, folding together every PER-ITEM skip across every category
 //     (archive's per-run-dir skip reasons, reap's per-worktree reasons,
@@ -35,9 +42,12 @@
 //     clean no-op.
 'use strict';
 
-// post-merge.js's classifyEntry judges a post-merge entry, and its
-// failedRecordNumbers names the records a failed run left. Both are
-// loaded on first use, never at module load: `bin/hooks.js reconcile`
+// post-merge.js's classifyEntry judges a post-merge entry, its
+// failedRecordNumbers names the records a failed run left, and
+// formatPostMergeStep40bLines loads parentsLeftOpen, stepSkipsOf,
+// parentsLeftOpenLine and stepSkipsLine to render Step 4.0b's two lines;
+// formatSupersededChangesLine loads supersededChanges and supersededChangesLine.
+// All are loaded on first use, never at module load: `bin/hooks.js reconcile`
 // requires this file outside the try that turns a module-load fault
 // into the `reconcile-threw` fallback, so a module-level require of
 // post-merge.js would make that fault silent. The fallback result
@@ -49,9 +59,11 @@ const failedRecordsSuffix = (taken) => {
   return numbers.length ? ` (records ${numbers.map((n) => `#${n}`).join(', ')})` : '';
 };
 // A skip's detail can be multi-line or long (a raw gh error): flattened and bounded exactly as post-merge.js does, so it cannot break the one-line-per-entry summary.
-const boundedDetail = (text) => {
+// An `unknown-host` detail is the gate's own refusal text (#4794): flattened but never bounded, because
+// a real SSH-remote refusal runs past the bound and the cut would drop its GitHub Enterprise advice.
+const boundedDetail = (text, reason) => {
   const { oneLine, boundDetail } = require('./post-merge');
-  return boundDetail(oneLine(text));
+  return reason === 'unknown-host' ? oneLine(text) : boundDetail(oneLine(text));
 };
 
 // Array-shaped result fields: unit noun (singular), the action value(s)
@@ -82,6 +94,8 @@ const CATEGORIES = [
   { key: 'branches', unit: 'tag', verb: 'aged out', takenActions: ['aged-out'], skipActions: ['skip'], kindFilter: (e) => e.kind === 'tag' },
   { key: 'remoteBranches', unit: 'remote branch', verb: 'pruned', takenActions: ['delete'], skipActions: ['skip'] },
   { key: 'ledgerResidue', unit: 'residue ledger', verb: 'removal PR opened', takenActions: ['pr-opened'], skipActions: ['skip'] },
+  { key: 'planRefs', unit: 'plan ref', verb: 'deleted', takenActions: ['delete'], skipActions: ['skip'] },
+  { key: 'planRefs', unit: 'plan ref', verb: 'to delete (dry run)', takenActions: ['would-delete'], skipActions: [] },
 ];
 
 function scopedEntries(cat, arr) {
@@ -136,6 +150,29 @@ function formatResiduePlanLine(plan) {
 function formatOwnerlessLine(n) {
   if (!Number.isInteger(n)) return null;
   return `ownerless non-clean: ${n} ${pluralize('run dir', n)}`;
+}
+
+// #3977: the archive pass's report-only disposition pass (archive-merged.js
+// reportRunDispositions). One `would close` line per run, with the evidence it
+// was judged on; then the orphan and unknown-liveness counts, each only when
+// above 0. Nothing renders when the archive pass did not run (no report).
+function formatDispositionLines(report) {
+  if (!report || typeof report !== 'object') return [];
+  const lines = [];
+  if (report.error) lines.push(`would close: report failed (${report.error})`);
+  for (const w of Array.isArray(report.wouldClose) ? report.wouldClose : []) {
+    const ev = w.evidence && typeof w.evidence === 'object'
+      ? Object.entries(w.evidence).filter(([, v]) => v !== null && v !== undefined).map(([k, v]) => `${k}=${v}`).join(', ')
+      : '';
+    const drops = Array.isArray(w.dropFindings) && w.dropFindings.length
+      ? `, would drop ${w.dropFindings.length} ${pluralize('finding', w.dropFindings.length)}: run-abandoned`
+      : '';
+    lines.push(`would close ${w.runId} (${w.reason}${ev ? `, evidence: ${ev}` : ''}${drops})`);
+  }
+  const orphans = Array.isArray(report.orphaned) ? report.orphaned.length : 0;
+  if (orphans > 0) lines.push(`orphaned: ${orphans} ${pluralize('run dir', orphans)}`);
+  if (Number.isInteger(report.unknown) && report.unknown > 0) lines.push(`unknown liveness: ${report.unknown} ${pluralize('run dir', report.unknown)}`);
+  return lines;
 }
 
 function formatConsoleReadyLine(console_) {
@@ -212,11 +249,41 @@ function formatItemSkippedLine(result) {
 function formatCheckSkipLines(result) {
   if (!Array.isArray(result.skipped)) return [];
   return result.skipped.map((e) => {
-    const detailSuffix = e.detail ? ` (${boundedDetail(e.detail)})` : '';
+    const detailSuffix = e.detail ? ` (${boundedDetail(e.detail, e.reason)})` : '';
     const countSuffix = e.count > 1 ? ` x${e.count}` : '';
     const namesSuffix = Array.isArray(e.names) && e.names.length ? `: ${e.names.join(', ')}` : '';
     return `skipped: ${e.check} — ${e.reason}${detailSuffix}${countSuffix}${namesSuffix}`;
   });
+}
+
+// #6143: one line per run held because its PR merged while the run was in flight. `pr` is null for a
+// `hollow-check-failed` entry whose check threw before a PR was known, so that line names the run only.
+function formatHollowMergeLines(result) {
+  if (!Array.isArray(result.hollowMerges)) return [];
+  return result.hollowMerges.map((e) => {
+    if (e.reason === 'hollow-check-failed') return `hollow-merge check failed for run ${e.runId}; held this pass`;
+    const commented = Array.isArray(e.commented) && e.commented.length ? `; commented on ${e.commented.map((n) => `#${n}`).join(', ')}` : '';
+    return `hollow merge held: PR #${e.pr} (run ${e.runId}) — ${e.phase} unfinished; claim, auto:build and run dir kept${commented}`;
+  });
+}
+
+// #4798: Step 4.0b's parents left open and its step-wide skips, flattened from every post-merge entry
+// whatever its action or verdict — a `marker-write-failed` or `error` entry folds into the aggregated `skipped:`
+// line, so these lines are the only place its fields show. Same two lines SessionStart prints.
+function formatPostMergeStep40bLines(result) {
+  const pm = result.postMerge;
+  if (!Array.isArray(pm)) return [];
+  const { parentsLeftOpen, stepSkipsOf, parentsLeftOpenLine, stepSkipsLine } = require('./post-merge');
+  return [parentsLeftOpenLine(parentsLeftOpen(pm)), stepSkipsLine(stepSkipsOf(pm))].filter(Boolean);
+}
+
+// #4797: what a run whose claim another pass took over had already changed on GitHub before it stopped. Its
+// entry still folds into the aggregated in-flight skip; this line is the only place the changes show.
+function formatSupersededChangesLine(result) {
+  const pm = result.postMerge;
+  if (!Array.isArray(pm)) return null;
+  const { supersededChanges, supersededChangesLine } = require('./post-merge');
+  return supersededChangesLine(supersededChanges(pm));
 }
 
 // result -> compact multi-line string (no trailing newline; caller appends
@@ -243,11 +310,20 @@ function formatSummary(result) {
     if (taken.length) lines.push(`${cat.verb}: ${taken.length} ${pluralize(cat.unit, taken.length)}${cat.suffix ? cat.suffix(taken) : ''}`);
   }
 
+  lines.push(...formatHollowMergeLines(result));
+
+  lines.push(...formatPostMergeStep40bLines(result));
+
+  const supersededLine = formatSupersededChangesLine(result);
+  if (supersededLine) lines.push(supersededLine);
+
   const residuePlanLine = formatResiduePlanLine(result.residuePlan);
   if (residuePlanLine) lines.push(residuePlanLine);
 
   const ownerlessLine = formatOwnerlessLine(result.ownerlessNonClean);
   if (ownerlessLine) lines.push(ownerlessLine);
+
+  lines.push(...formatDispositionLines(result.runDispositions));
 
   const consoleReadyLine = formatConsoleReadyLine(result.console);
   if (consoleReadyLine) lines.push(consoleReadyLine);
@@ -255,10 +331,16 @@ function formatSummary(result) {
   const itemSkippedLine = formatItemSkippedLine(result);
   if (itemSkippedLine) lines.push(itemSkippedLine);
 
+  // #3975: one completion line for every stranded shell, right after the aggregated skipped: line.
+  const shell = Array.isArray(result.runs)
+    ? result.runs.find((e) => e.shell === true && e.command)
+    : null;
+  if (shell) lines.push(`archive stranded shells: ${shell.command}`);
+
   lines.push(...formatCheckSkipLines(result));
 
   if (lines.length === 0) return 'reconcile: nothing to do';
   return lines.join('\n');
 }
 
-module.exports = { formatSummary };
+module.exports = { formatSummary, formatDispositionLines };

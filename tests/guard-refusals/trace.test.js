@@ -65,12 +65,21 @@ const CASES = [
   ['gh-text', 'runs gh with the text "\\(.title) [\\(.state)]… inside a construct too complex to verify, so what it runs cannot be shown not to be git'],
   ['bash-construct', 'runs bash inside a construct too complex to verify; what it reads or is handed as shell text cannot be shown not to run git'],
   ['bash-construct', 'runs pwsh in a plain command; what it reads or is handed as shell text cannot be shown not to run git'],
-  ['other', 'runs awk with a program that can execute commands or that it cannot read in a plain command, so what it runs cannot be shown not to be git'],
-  ['other', 'runs playwright-cli with a value computed at runtime (the variable SS) inside a construct too complex to verify, so what it runs cannot be shown not to be git'],
-  ['other', 'runs a command whose name is computed at runtime in a plain command, so it cannot be shown not to be git'],
+  ['awk-program', 'runs awk with a program that can execute commands or that it cannot read in a plain command, so what it runs cannot be shown not to be git'],
+  ['playwright-runtime', 'runs playwright-cli with a value computed at runtime (the variable SS) inside a construct too complex to verify, so what it runs cannot be shown not to be git'],
+  ['computed-command-name', 'runs a command whose name is computed at runtime in a plain command, so it cannot be shown not to be git'],
+  ['env-text', 'runs env with the text "FOO=1 git status" inside a construct too complex to verify, so what it runs cannot be shown not to be git'],
+  ['python-git-text', 'feeds python text naming git in a plain command, so what it runs cannot be shown not to be git'],
+  ['git-twice', 'names git more than once in a single command, so it is too complex to verify that it stays inside the worktree'],
+  ['subshell', 'uses a subshell, so it is too complex to verify that it stays inside the worktree'],
+  ['arithmetic', 'evaluates a value computed at runtime arithmetically, which can run commands, so it cannot be shown not to be git'],
+  ['other-worktree-cwd', 'runs in a working directory (/tmp/wt-b) that is in a different worktree'],
+  // A clause that matches an existing pattern and a new one keeps the existing id (new patterns are appended last).
+  ['gh-text', 'runs gh with the text "x" and uses a subshell inside a construct too complex to verify, so what it runs cannot be shown not to be git'],
+  ['other', 'does something no named clause describes in a plain command'],
 ];
 
-test('classifyReason maps each live refusal clause, inside a real stored refusal frame, from §7 wording', () => {
+test('AC6: classifyReason maps each live refusal clause, inside a real stored refusal frame, from §7 wording', () => {
   for (const [id, clause] of CASES) {
     const text = refusal(clause);
     assert.ok(text.includes(clause) && text.includes('Refusing to run'), `${id}: the swapped frame must hold the clause and its tail`);

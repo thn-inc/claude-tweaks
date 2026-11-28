@@ -18,7 +18,9 @@
 // `echo "git"` running the full handler is an accepted false positive. The process-kill
 // family (`pkill`, `taskkill`, `Stop-Process`, …) alone matches case-insensitively, because
 // `taskkill` and PowerShell cmdlets are case-insensitive on Windows; the other families do
-// not (#4548).
+// not (#4548). One pre-tool-use-only rule is not a guarded program word: a call whose words hold `gh`,
+// `pr` and `merge` or `ready` (GH_PR_LIFECYCLE, #6143; `gh` case-folded, as a case-insensitive filesystem runs `GH`) runs the full handler, while any other `gh`
+// call keeps the skip path.
 //
 // It reads every word and every assignment value, so `G=git; $G push` is
 // reached, and any command holding both an assignment and a `$NAME` reference
@@ -28,16 +30,17 @@
 // push`) is not reached, and the handler cannot resolve it either.
 //
 // Dependency-light by contract: fs, git-command.js (which requires only path)
-// and harness-refusal.js (which requires nothing), plus guard-rewrite.js (path
-// and ../path-guard), loaded only on a pre-tool-use skip. Adding a heavier require here
+// and harness-refusal.js (which requires nothing), plus guard-rewrite.js (path,
+// ../path-guard and ../shared-primitives, whose top level requires only path and
+// ./path-guard), loaded only on a pre-tool-use skip. Adding a heavier require here
 // moves cost onto EVERY Bash call. The same holds for user-prompt-submit: it fires
 // on every human prompt and Claude Code waits for it, so it is governed here too,
 // by a raw substring test on `claude-tweaks:` with no JSON parse.
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { GUARDED_PROGRAM_WORDS, forEachShellSegment, redirectRawTargets, resolveWriteTarget } = require('./git-command');
-const { REFUSAL_SIGNATURES } = require('./harness-refusal');
+const { GUARDED_PROGRAM_WORDS, GH_PR_LIFECYCLE, forEachShellSegment, redirectRawTargets, resolveWriteTarget } = require('./git-command');
+const { SESSION_NOUN, AGENT_NOUN, REFUSAL_SIGNATURES } = require('./harness-refusal');
 
 // Both word sets come from git-command.js, where the parsers that key on these
 // words live (#3092): pre-tool-use runs every guard family, post-tool-use only the
@@ -154,6 +157,10 @@ function shouldRunFull(event, input) {
   if (event === 'pre-tool-use' && hasFileRedirection(command)) return true;
   return readings.some((c) => {
     const present = commandWords(c);
+    // #6143: pre-tool-use only, `gh pr ready|merge` (the in-flight-run merge gate). All three words must
+    // appear, so other gh calls keep the skip path; a superset of ghPrLifecycleCalls.
+    if (event === 'pre-tool-use' && [...present].some((word) => word.toLowerCase() === GH_PR_LIFECYCLE.program) && present.has(GH_PR_LIFECYCLE.group)
+      && GH_PR_LIFECYCLE.verbs.some((verb) => present.has(verb))) return true;
     return covered.some((word) => present.has(word)) || (folded !== null && [...present].some((word) => folded.has(word.toLowerCase())));
   });
 }
@@ -162,13 +169,15 @@ function shouldRunFull(event, input) {
 // only acts on the harness worktree-isolation refusal, whose text always carries
 // one of these phrases (harness-refusal.js's REFUSAL_SIGNATURES, the tails of
 // post-tool-use-failure.js's HARNESS_ISOLATION_REFUSAL_RE; #3819 added the
-// worktree-gone one). Matched on the raw payload OR the parsed `error`, so a
-// JSON-escaped spelling still runs.
+// worktree-gone one). The gate mirrors the matcher's start anchor (#4523): the parsed
+// `error` must begin with a noun and carry a signature (a JSON-escaped spelling is
+// decoded in `error`).
 // Unparseable input skips: the handler does nothing with it either.
-function failureCarriesRefusal(raw, input) {
-  const carriesSignature = (text) => REFUSAL_SIGNATURES.some((signature) => text.includes(signature));
-  if (carriesSignature(raw)) return true;
-  return Boolean(input && typeof input.error === 'string' && carriesSignature(input.error));
+function failureCarriesRefusal(input) {
+  if (!input || typeof input !== 'object' || typeof input.error !== 'string') return false;
+  const { error } = input;
+  return (error.startsWith(SESSION_NOUN) || error.startsWith(AGENT_NOUN))
+    && REFUSAL_SIGNATURES.some((signature) => error.includes(signature));
 }
 
 // Reads stdin once — the caller must hand `raw` on to the full handler, since
@@ -190,7 +199,7 @@ function earlyGate(event, readRaw = () => fs.readFileSync(0, 'utf8'), deps = {})
   try { input = JSON.parse(raw); } catch { input = null; }
   if (isFailure) {
     let carries = true;
-    try { carries = failureCarriesRefusal(raw, input); } catch { carries = true; }
+    try { carries = failureCarriesRefusal(input); } catch { carries = true; }
     return { raw, skip: !carries };
   }
   // stdin is already drained, so `raw` must survive even if the decision throws.

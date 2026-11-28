@@ -305,7 +305,7 @@ for (const shell of ['bash', 'zsh']) {
         .replaceAll('{branches-path}', forwardSlashes(path.join(tmp, 'branches.txt')))
         .replaceAll('{REPO_ROOT}', forwardSlashes(repo));
       const run = (limit, rows, text = fence) => runFence(withPaths(`${fetches}\n${text}`), { limit, ghRows: prRows(rows), shell });
-      // The stub serves the same rows to both states, as `--state closed` also returns merged PRs (#4819):
+      // The stub serves the same rows to both states (it ignores `--search`), so the two lists overlap (#4819):
       // the block de-duplicates by `number`, so each remnant prints once, under the first state that holds it.
       const remnants = ['merged PR #2 branch-2', 'merged PR #4 branch-4'];
       // A limit above the list: each remnant once, no cap row.
@@ -476,9 +476,9 @@ const TRIAGE_ITEM1_LABEL = '1. **Pending authorization**';
 
 test('no gh list call in github-pr-scan-triage.md carries a fixed --limit', () => {
   assert.deepEqual(fixedLimitSites(TRIAGE), []);
-  // Items 1 (ready) and 2 (blocked) are the two sized fetches; item 3 is a commits-endpoint call with no --limit.
-  assert.deepEqual(limitSites(TRIAGE), ['{resolved-limit}', '{resolved-limit}']);
-  assert.equal(jsonListCalls(TRIAGE).length, 2, 'every gh list call in the triage scope must carry --limit {resolved-limit}');
+  // Items 1 (ready), 2 (blocked) and 4 (needs:answer) are the three sized fetches; item 3 is a commits-endpoint call with no --limit.
+  assert.deepEqual(limitSites(TRIAGE), ['{resolved-limit}', '{resolved-limit}', '{resolved-limit}']);
+  assert.equal(jsonListCalls(TRIAGE).length, 3, 'every gh list call in the triage scope must carry --limit {resolved-limit}');
 });
 
 test('triage-queue carries the Fetch limit rule and the floor render', () => {

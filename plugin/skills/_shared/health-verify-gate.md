@@ -1,6 +1,6 @@
 # Health Verify Gate — Canonical Adversarial-Verify Discipline
 
-`code-health`, `docs-health`, and `journey-health` each run an adversarial verify gate on their
+`code-health`, `docs-health`, `journey-health`, and `ci-health` each run an adversarial verify gate on their
 own judge output, right before fingerprinting/dedup: re-examine every surviving finding and drop
 anything that doesn't hold up under scrutiny. `harness-health` follows the identical discipline
 but folds it into its JUDGE step via `_shared/harness-health-analysis.md`'s own embedded verify

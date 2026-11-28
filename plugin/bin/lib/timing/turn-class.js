@@ -11,6 +11,8 @@
 const path = require('path');
 const { isAncestorOrSelf } = require('../path-guard');
 const { toPosix, relativeDisplayId } = require('../shared-primitives');
+const { stripHeredocBodies } = require('../hooks/git-command');
+const { SESSION_NOUN, AGENT_NOUN, ISOLATION_CLAUSE, escapeRegex } = require('../hooks/harness-refusal');
 
 const TURN_CLASSES = Object.freeze(['edit', 'read', 'explore', 'procedure', 'bookkeeping', 'orientation', 'verify', 'guard-refusal', 'dispatch', 'other']);
 // The classes whose turns are process overhead rather than the work itself.
@@ -23,7 +25,12 @@ const CEREMONY_CLASSES = Object.freeze(['procedure', 'bookkeeping', 'orientation
 // is externally sized, and an unbounded `\S+.*` backtracked quadratically on
 // one ([IL-162]). The permission text quotes the denied command before "has
 // been denied", so its gap is sized to the scan window, not to a short command.
-const GUARD_REFUSAL_RE = /This session is isolated in the worktree|PreToolUse:\S{1,64} hook error|Permission to use \S{1,64}[^\n]{0,1500}has been denied/;
+// The isolation alternative is composed from harness-refusal.js's nouns and clause
+// (session or agent subject), so a wording update lands once.
+const GUARD_REFUSAL_RE = new RegExp(
+  '(?:' + escapeRegex(SESSION_NOUN) + '|' + escapeRegex(AGENT_NOUN) + ')' + escapeRegex(ISOLATION_CLAUSE)
+  + '|' + /PreToolUse:\S{1,64} hook error|Permission to use \S{1,64}[^\n]{0,1500}has been denied/.source,
+);
 const REFUSAL_SCAN_CHARS = 2048;
 
 // A Read counts as procedure loading when it targets a skill file — the
@@ -36,10 +43,47 @@ const REFUSAL_SCAN_CHARS = 2048;
 // arguments and get the native path.
 function isProcedurePath(filePath, worktree, pathImpl = path) {
   if (typeof filePath !== 'string' || !filePath) return false;
-  const inWorktree = worktree && pathImpl.isAbsolute(filePath) && isAncestorOrSelf(worktree, filePath, { pathImpl });
-  const p = inWorktree ? relativeDisplayId(worktree, filePath, pathImpl) : toPosix(filePath, pathImpl.sep);
+  const p = normalizedPath(filePath, worktree, pathImpl);
   if (/(^|\/)(plugin\/)?skills\/.+\.md$/.test(p)) return true;
   return p.includes('/.claude/plugins/') && p.includes('/skills/') && p.endsWith('.md');
+}
+
+// The worktree-relative (when inside it), `/`-normalized form both
+// isProcedurePath and procedureFileKey judge.
+function normalizedPath(filePath, worktree, pathImpl) {
+  const inWorktree = worktree && pathImpl.isAbsolute(filePath) && isAncestorOrSelf(worktree, filePath, { pathImpl });
+  return inWorktree ? relativeDisplayId(worktree, filePath, pathImpl) : toPosix(filePath, pathImpl.sep);
+}
+
+// A procedure path -> its `skills/…/*.md` key (from the first `skills/`
+// segment on), so the repo, worktree and plugin-cache copies of one skill file
+// count as one file (#4359). Any other path -> null.
+function procedureFileKey(filePath, worktree, pathImpl = path) {
+  if (!isProcedurePath(filePath, worktree, pathImpl)) return null;
+  const p = normalizedPath(filePath, worktree, pathImpl);
+  const at = p.search(/(^|\/)skills\//);
+  return p.slice(p[at] === '/' ? at + 1 : at);
+}
+
+// A composed bundle a pipeline step reads instead of its skill sources
+// (`.claude-tweaks/pipelines/<run-id>/context/<name>.md`, a nested spec-N run
+// dir included) -> `context/<name>.md`; any other path -> null (#4359). Never a
+// `skills/` key and never isProcedurePath: a bundle read is not a skill-file
+// read, but it is counted, so reads that moved from a source to its bundle
+// stay visible.
+const CONTEXT_BUNDLE_RE = /(?:^|\/)\.claude-tweaks\/pipelines\/(?:[^/]+\/)+context\/([^/]+\.md)$/;
+function contextBundleKey(filePath, worktree, pathImpl = path) {
+  if (typeof filePath !== 'string' || !filePath) return null;
+  const m = CONTEXT_BUNDLE_RE.exec(normalizedPath(filePath, worktree, pathImpl));
+  return m ? `context/${m[1]}` : null;
+}
+
+// The per-file read key a Read or a Bash read path counts under: its
+// contextBundleKey, else its procedureFileKey, else null. The bundle check
+// goes first: a main checkout under a `skills/` directory makes a bundle path
+// look like a procedure path too.
+function readFileKey(filePath, worktree, pathImpl = path) {
+  return contextBundleKey(filePath, worktree, pathImpl) || procedureFileKey(filePath, worktree, pathImpl);
 }
 
 // Quote-aware split of a shell command on && || ; | so a quoted "a && b" (a
@@ -71,12 +115,21 @@ function splitSegments(command) {
   return segments.map((s) => s.trim()).filter(Boolean);
 }
 
+const TOKEN_RE = /"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+)/g;
+
 // Whitespace tokens with surrounding quotes removed ("a b" -> a b).
 function tokenize(segment) {
+  return tokenizeMarked(segment).map((t) => t.text);
+}
+
+// tokenize's tokens as { text, quoted }: quoted is true for a token that was
+// one quoted string, whose `>`, `<` or glob character is literal, never an
+// operator. Only bashProcedureFiles reads the mark.
+function tokenizeMarked(segment) {
   const tokens = [];
-  const re = /"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+)/g;
+  const re = new RegExp(TOKEN_RE.source, 'g');
   let m;
-  while ((m = re.exec(segment)) !== null) tokens.push(m[1] ?? m[2] ?? m[3]);
+  while ((m = re.exec(segment)) !== null) tokens.push({ text: m[1] ?? m[2] ?? m[3], quoted: m[3] === undefined });
   return tokens;
 }
 
@@ -173,6 +226,78 @@ function classifyBash(command) {
   return 'other';
 }
 
+// command -> the procedureFileKey of every skill path a read-shaped segment
+// names, one entry per path token, in order (#4359). Only READ_HEADS read a
+// file's text; `git show HEAD:…` or a node script's argument is not a read.
+const READ_HEADS = new Set(['cat', 'head', 'tail', 'sed', 'awk', 'grep', 'rg', 'ugrep', 'wc']);
+// Heads whose first operand is a pattern, not a file — unless a pattern flag
+// (-e/--regexp/-f/--file, as its own token or attached) supplied it.
+const PATTERN_HEADS = new Set(['grep', 'rg', 'ugrep']);
+const PATTERN_FLAG_RE = /^(?:-[A-Za-z]*[ef]|--regexp|--file)$/; // value is the next token
+const PATTERN_FLAG_ATTACHED_RE = /^(?:-[ef].|--regexp=|--file=)/;
+// Their other flags whose value is the next token (context and max-count: a
+// number that must not take the pattern slot); `-A3` and `--context=3` carry it attached.
+const PATTERN_HEAD_VALUE_FLAG_RE = /^(?:-[A-Za-z]*[ABCm]|--max-count|--context|--after-context|--before-context)$/;
+// An output redirect (`>`, `>>`, `2>`, `&>`, `>|`, …); group 1 is an attached target.
+const OUT_REDIRECT_RE = /^(?:\d+|&)?>>?\|?(.*)$/;
+// Leading wrappers that run the real command: `timeout [flags] <duration>` and
+// `xargs [flags]`. The sets name each one's flags that take a separate value.
+const WRAPPER_VALUE_FLAGS = {
+  timeout: new Set(['-s', '-k', '--signal', '--kill-after']),
+  xargs: new Set(['-I', '-n', '-L', '-P', '-d', '-s', '-E', '-a']),
+};
+
+function stripWrappers(tokens) {
+  let t = tokens;
+  for (;;) {
+    const head = (t[0] || '').replace(/^.*\//, '');
+    const valueFlags = WRAPPER_VALUE_FLAGS[head];
+    if (!valueFlags) return t;
+    let i = 1;
+    while (i < t.length && t[i].startsWith('-')) i += valueFlags.has(t[i]) ? 2 : 1;
+    if (head === 'timeout') i += 1; // the duration
+    t = t.slice(i);
+  }
+}
+
+// Heredoc bodies are data, not commands, so they are stripped first (the write
+// gate's own stripper; on any failure it returns the command unchanged). Each
+// path token yields its readFileKey: a skill file's `skills/…` key or a
+// composed bundle's `context/…` key.
+function bashProcedureFiles(command, worktree, pathImpl = path) {
+  if (typeof command !== 'string' || !command.trim()) return [];
+  const { outer } = stripHeredocBodies(command);
+  const keys = [];
+  for (const segment of splitSegments(stripPrefixes(outer)).map(stripPrefixes).filter(Boolean)) {
+    const marked = tokenizeMarked(segment);
+    const unwrapped = stripWrappers(marked.map((t) => t.text));
+    const tokens = marked.slice(marked.length - unwrapped.length);
+    const head = ((tokens[0] && tokens[0].text) || '').replace(/^.*\//, '');
+    if (!READ_HEADS.has(head)) continue;
+    // grep permutes its arguments: a pattern flag anywhere means no operand is the pattern.
+    const patternHead = PATTERN_HEADS.has(head);
+    let patternPending = patternHead && !tokens.slice(1).some(({ text }) => PATTERN_FLAG_RE.test(text) || PATTERN_FLAG_ATTACHED_RE.test(text));
+    for (let i = 1; i < tokens.length; i++) {
+      let { text: t } = tokens[i];
+      const { quoted } = tokens[i];
+      const redirect = quoted ? null : OUT_REDIRECT_RE.exec(t);
+      if (redirect) { if (!redirect[1]) i++; continue; }
+      if (!quoted && t.startsWith('<') && !t.startsWith('<<')) t = t.slice(1); // input redirect: still a read
+      if (!t) continue;
+      if (t.startsWith('-')) {
+        // its value is a pattern, a pattern file, or a count
+        if (patternHead && (PATTERN_FLAG_RE.test(t) || PATTERN_HEAD_VALUE_FLAG_RE.test(t))) i++;
+        continue;
+      }
+      if (patternPending) { patternPending = false; continue; }
+      if (!quoted && /[*?[]/.test(t)) continue;
+      const key = readFileKey(t, worktree, pathImpl);
+      if (key) keys.push(key);
+    }
+  }
+  return keys;
+}
+
 // { name, input, isError, resultText, worktree } -> one of TURN_CLASSES.
 function classifyToolCall({ name, input, isError, resultText, worktree } = {}) {
   if (isError === true && typeof resultText === 'string' && GUARD_REFUSAL_RE.test(resultText.slice(0, REFUSAL_SCAN_CHARS))) return 'guard-refusal';
@@ -182,7 +307,7 @@ function classifyToolCall({ name, input, isError, resultText, worktree } = {}) {
     case 'Read': return isProcedurePath(inp.file_path, worktree) ? 'procedure' : 'read';
     case 'Skill': return 'procedure';
     case 'Grep': case 'Glob': case 'LS': return 'explore';
-    case 'Agent': case 'Task': return 'dispatch';
+    case 'Agent': case 'Task': case 'Workflow': return 'dispatch';
     case 'ToolSearch': return 'orientation';
     case 'TodoWrite': return 'bookkeeping';
     case 'Bash': return classifyBash(inp.command);
@@ -190,4 +315,4 @@ function classifyToolCall({ name, input, isError, resultText, worktree } = {}) {
   }
 }
 
-module.exports = { TURN_CLASSES, CEREMONY_CLASSES, classifyToolCall, classifyBash, isProcedurePath };
+module.exports = { TURN_CLASSES, CEREMONY_CLASSES, classifyToolCall, classifyBash, isProcedurePath, procedureFileKey, contextBundleKey, readFileKey, bashProcedureFiles };

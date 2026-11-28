@@ -12,8 +12,10 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const {
-  run, BOT_IN_PROGRESS, ABORT_REASON, USAGE, FLOW_STEPS, defaultAppendClaimLog,
+  run, BOT_IN_PROGRESS, ABORT_REASON, USAGE, FLOW_STEPS, defaultAppendClaimLog, readRunManifestPlanInputs,
 } = require('../../../plugin/bin/lib/claim-targets/claim-targets');
+const { STATIONS } = require('../../../plugin/bin/lib/station-events/stations');
+const { buildLine } = require('../../../plugin/bin/lib/station-events/emit');
 const { hasClaimLogFor, classifyDecisions } = require('../../../plugin/bin/lib/log-decision/claim-log');
 // #787 residual finding (progress.md's parked "expectedContent has zero test
 // coverage" item): claim-targets.js requires this same module-level object,
@@ -734,6 +736,29 @@ test('staleClaimInFlightPr: a no-match listing at the 1000-entry limit reaches o
   assert.equal(errors.length, 1);
   assert.equal(claimStore.staleClaimInFlightPr(staleMarker(RUN), () => JSON.stringify(filler.slice(0, 999)), 'acme', 'w', onError), null);
   assert.equal(errors.length, 1, 'a no-match listing under the limit is a clean no-match');
+});
+
+test('#4794: staleClaimInFlightPr lists and matches on one target host', () => {
+  const target = { host: 'mine.example', ghRepo: 'mine.example/acme/w' };
+  const marked = (url) => [{ url, body: `claude-tweaks-run: ${RUN}`, isCrossRepository: false }];
+  const record = (listing) => {
+    const argvs = [];
+    const gh = (args) => { argvs.push(args); return JSON.stringify(listing); };
+    return { argvs, gh };
+  };
+  const same = 'https://mine.example/acme/w/pull/3';
+  const a = record(marked(same));
+  assert.deepEqual(claimStore.staleClaimInFlightPr(staleMarker(RUN), a.gh, 'acme', 'w', undefined, target), { link: same });
+  assert.equal(a.argvs.length, 1);
+  assert.equal(a.argvs[0][a.argvs[0].indexOf('--repo') + 1], 'mine.example/acme/w', 'the listing carries the target ghRepo');
+  assert.equal(a.argvs[0].filter((x) => x === '--repo').length, 1);
+  const b = record(marked('https://github.com/acme/w/pull/3'));
+  assert.equal(claimStore.staleClaimInFlightPr(staleMarker(RUN), b.gh, 'acme', 'w', undefined, target), null, 'a github.com url under the mine.example target is not a match');
+  assert.equal(b.argvs[0][b.argvs[0].indexOf('--repo') + 1], 'mine.example/acme/w');
+  // No target: today's bare listing and github.com match.
+  const c = record(marked('https://github.com/acme/w/pull/3'));
+  assert.deepEqual(claimStore.staleClaimInFlightPr(staleMarker(RUN), c.gh, 'acme', 'w'), { link: 'https://github.com/acme/w/pull/3' });
+  assert.equal(c.argvs[0][c.argvs[0].indexOf('--repo') + 1], 'acme/w');
 });
 
 test('staleClaimInFlightPr: a throwing onError is swallowed — the check still returns null (fail open)', () => {
@@ -2920,4 +2945,716 @@ test('(bm9) write-site second sighting under --keep-going discards the git tip c
   ]);
   assert.equal(bootstrapPushes(remote).length, 1, 'bootstrap is attempted once per run');
   assert.equal(claimsFetches.length, 3, '720 fetches twice (missing, then after the bootstrap); 721 fetches fresh instead of reusing 720\'s tip');
+});
+
+// ---- #4794: the origin gate and the run's one repo target ----------------------------------------
+// `deps.gateOrigin` is the origin-host gate's verdict (bin/claim-targets.js's realDeps); a refusal
+// is run-level, so it stops before the first gh call, claim read or write, label or claim-log line.
+// `deps.repoTarget(owner, repo)` is the gh seam's one `resolveRepoTarget` result, which the stale
+// listing, the stale match and the tombstone's PR-url check all share.
+
+const GATE_REFUSAL = 'origin host git.corp.invalid is not a known GitHub host (test refusal text)';
+
+test('#4794: a refused origin exits 2 unknown-host before any gh call, with or without --keep-going', () => {
+  for (const extra of [[], ['--keep-going'], ['--keep-going', '--run', '/some/run/r1']]) {
+    const r = recordingRefusers();
+    const { deps, io } = baseDeps({ ghApi: r.ghApi, gh: r.gh });
+    deps.gitRunner = r.gitRunner;
+    deps.appendClaimLog = r.appendClaimLog;
+    deps.gateOrigin = () => ({ spec: null, refusal: GATE_REFUSAL });
+
+    const code = run(['--run-id', 'r1', '--targets', '720,721', ...extra], deps);
+
+    assert.equal(code, 2, extra.join(' '));
+    assert.deepEqual(io.err, [`claim-targets: unknown-host — ${GATE_REFUSAL}\n`], extra.join(' '));
+    assert.deepEqual(io.out, [], 'a refusal prints no envelope');
+    assert.deepEqual(r.calls, { ghApi: [], gh: [], gitRunner: [], appendClaimLog: [] }, `${extra.join(' ')}: no gh call, claim read or write, label or claim-log line`);
+  }
+});
+
+test('#4794: the --steps skip guard answers before the origin gate is consulted', () => {
+  const r = recordingRefusers();
+  const { deps, io } = baseDeps({ ghApi: r.ghApi, gh: r.gh });
+  deps.gitRunner = r.gitRunner;
+  deps.appendClaimLog = r.appendClaimLog;
+  deps.gateOrigin = () => { throw new Error('gateOrigin must not be called'); };
+
+  const code = run(['--run-id', 'r1', '--targets', '720', '--steps', 'review,wrap-up'], deps);
+
+  assert.equal(code, 0);
+  assert.deepEqual(io.out, [SKIP_GUARD_ENVELOPE]);
+  assert.deepEqual(r.calls, { ghApi: [], gh: [], gitRunner: [], appendClaimLog: [] });
+});
+
+test('#4794: a gate verdict with no refusal (an unparseable or absent origin) claims as today', () => {
+  for (const gateOrigin of [() => ({ spec: null, refusal: null }), () => null, undefined]) {
+    const { ghApi, calls: apiCalls } = makeGhApi({
+      reads: { 720: [readAbsent, confirmRead()] },
+      writes: { 720: [writeOk] },
+    });
+    const { gh, calls: ghCalls } = makeGh({});
+    const { deps, io } = baseDeps({ ghApi, gh });
+    if (gateOrigin) deps.gateOrigin = gateOrigin;
+
+    const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+    assert.equal(code, 0, io.err.join(''));
+    assert.deepEqual(JSON.parse(io.out[0]).claimed, [720]);
+    assert.ok(ghCalls.some((a) => a[0] === 'repo' && a[1] === 'view'), 'the repo still comes from gh repo view');
+    assert.ok(apiCalls.some((a) => isWrite(a, '720')));
+  }
+});
+
+// A same-repo PR url on `acme.ghe.com`, marked with the stale claim's run.
+const GHE_PR_URL = 'https://acme.ghe.com/acme/w/pull/12';
+const GHE_TARGET = { host: 'acme.ghe.com', ghRepo: 'acme.ghe.com/acme/w' };
+const markedPrAt = (url) => ({ url, body: `<!-- claude-tweaks-run: ${RUN} -->\n`, isCrossRepository: false });
+
+test('#4794: under a GHE repo target the stale-claim listing carries the host-qualified --repo once and a same-host PR url is in flight', () => {
+  const { ghApi, calls } = makeGhApi({ reads: { 770: [readOk(staleMarker(RUN), 'sha770')] }, writes: {} });
+  const { gh, calls: ghCalls } = makeGh({ openPrs: [markedPrAt(GHE_PR_URL)] });
+  const { deps, io } = baseDeps({ ghApi, gh });
+  const targetArgs = [];
+  deps.repoTarget = (owner, repo) => { targetArgs.push([owner, repo]); return GHE_TARGET; };
+
+  const code = run(['--run-id', 'r1', '--targets', '770'], deps);
+
+  assert.equal(code, 3, io.err.join(''));
+  assert.deepEqual(JSON.parse(io.out[0]).inFlight, [{ issue: 770, link: GHE_PR_URL }]);
+  assert.deepEqual(targetArgs, [['acme', 'w']], 'the target is resolved once, from the gh-resolved slug');
+  const list = ghCalls.filter(isPrList);
+  assert.equal(list.length, 1);
+  assert.deepEqual(list[0], ['pr', 'list', '--repo', 'acme.ghe.com/acme/w', '--state', 'open', '--json', 'url,body,isCrossRepository', '--limit', '1000']);
+  assert.equal(list[0].filter((a) => a === '--repo').length, 1);
+  assert.ok(!calls.some((a) => isWrite(a, '770')));
+});
+
+test('#4794: under a GHE repo target a marked github.com PR url is not in flight', () => {
+  const { ghApi, calls } = makeGhApi({
+    reads: { 770: [readOk(staleMarker(RUN), 'sha770'), confirmRead()] },
+    writes: { 770: [writeOk] },
+  });
+  const { gh } = makeGh({ openPrs: [markedPrAt(PR_URL)] });
+  const { deps, io } = baseDeps({ ghApi, gh });
+  deps.repoTarget = () => GHE_TARGET;
+
+  const code = run(['--run-id', 'r1', '--targets', '770'], deps);
+
+  assert.equal(code, 0, io.err.join(''));
+  assert.deepEqual(JSON.parse(io.out[0]).claimed, [770]);
+  assert.ok(calls.some((a) => isWrite(a, '770')), 'the github.com url is not the origin host, so the stale claim is reclaimed');
+});
+
+test('#4794: a pr-opened tombstone is matched against the same target host as the stale listing', () => {
+  const { ghApi, calls } = makeGhApi({
+    reads: { 760: [readOk(prOpenedTombstoneMarker('otherRun', GHE_PR_URL), 'sha760')] },
+    writes: {},
+  });
+  const { gh, calls: ghCalls } = makeGh({ prState: 'OPEN' });
+  const { deps, io } = baseDeps({ ghApi, gh });
+  deps.repoTarget = () => GHE_TARGET;
+
+  const code = run(['--run-id', 'r1', '--targets', '760'], deps);
+
+  assert.equal(code, 3, io.err.join(''));
+  assert.deepEqual(JSON.parse(io.out[0]).inFlight, [{ issue: 760, link: GHE_PR_URL }]);
+  assert.ok(ghCalls.some((a) => a[0] === 'pr' && a[1] === 'view' && a[2] === GHE_PR_URL), 'the tombstone link reached gh pr view');
+  assert.ok(!calls.some((a) => isWrite(a, '760')));
+});
+
+test('#4794: under a GHE repo target a github.com tombstone link is never sent to gh pr view', () => {
+  const { ghApi } = makeGhApi({
+    reads: { 760: [readOk(prOpenedTombstoneMarker('otherRun', 'https://github.com/acme/w/pull/304'), 'sha760'), confirmRead()] },
+    writes: { 760: [writeOk] },
+  });
+  const { gh, calls: ghCalls } = makeGh({ prState: 'OPEN' });
+  const { deps, io } = baseDeps({ ghApi, gh });
+  deps.repoTarget = () => GHE_TARGET;
+
+  const code = run(['--run-id', 'r1', '--targets', '760'], deps);
+
+  assert.equal(code, 0, io.err.join(''));
+  assert.deepEqual(JSON.parse(io.out[0]).claimed, [760]);
+  assert.ok(!ghCalls.some((a) => a[0] === 'pr' && a[1] === 'view'), 'a link off the target host is rejected before any gh call');
+});
+
+test('#4794: under GH_HOST=mine.example on a bare slug the listing stays bare while the PR-url match follows mine.example', () => {
+  const MINE = { host: 'mine.example', ghRepo: 'acme/w' };
+  const listing = (url) => {
+    const { ghApi } = makeGhApi({
+      reads: { 770: [readOk(staleMarker(RUN), 'sha770'), confirmRead()] },
+      writes: { 770: [writeOk] },
+    });
+    const { gh, calls: ghCalls } = makeGh({ openPrs: [markedPrAt(url)] });
+    const { deps, io } = baseDeps({ ghApi, gh });
+    deps.repoTarget = () => MINE;
+    return { code: run(['--run-id', 'r1', '--targets', '770'], deps), io, ghCalls };
+  };
+
+  const hit = listing('https://mine.example/acme/w/pull/12');
+  assert.equal(hit.code, 3, hit.io.err.join(''));
+  assert.deepEqual(hit.ghCalls.filter(isPrList)[0].slice(0, 4), ['pr', 'list', '--repo', 'acme/w']);
+
+  const miss = listing(PR_URL);
+  assert.equal(miss.code, 0, miss.io.err.join(''));
+  assert.deepEqual(JSON.parse(miss.io.out[0]).claimed, [770], 'a github.com url is not the GH_HOST host');
+});
+
+test('#4794: with no repo target the listing is today\'s bare --repo acme/w and the match is github.com', () => {
+  const { ghApi } = makeGhApi({ reads: { 770: [readOk(staleMarker(RUN), 'sha770')] }, writes: {} });
+  const { gh, calls: ghCalls } = makeGh({ openPrs: [markedPr] });
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '770'], deps);
+
+  assert.equal(code, 3, io.err.join(''));
+  assert.deepEqual(ghCalls.filter(isPrList)[0], ['pr', 'list', '--repo', 'acme/w', '--state', 'open', '--json', 'url,body,isCrossRepository', '--limit', '1000']);
+});
+
+// The one host rule: the gate's admitted host decides, never a second origin read. `seamTarget`
+// models bin/claim-targets.js's realDeps.repoTarget with its own fallback read simulated as
+// timing out (`fallbackHost` null = resolveGhHost answers github.com): the gate's host, when it
+// passes one, must win over it.
+const { resolveRepoTarget } = require('../../../plugin/bin/lib/repo-resolve');
+const seamTarget = (argsSeen, fallbackHost = null) => (owner, repo, gateHost) => {
+  argsSeen.push([owner, repo, gateHost]);
+  return resolveRepoTarget({ owner, repo, originHost: gateHost || fallbackHost }, { env: {} });
+};
+const gheGate = () => ({ spec: { host: 'acme.ghe.com', owner: 'acme', repo: 'w' }, refusal: null });
+
+test('#4794: the gate\'s admitted GHE host reaches the repo target, so the stale listing and its PR-url match use it although a second origin read would answer github.com', () => {
+  const { ghApi, calls } = makeGhApi({ reads: { 770: [readOk(staleMarker(RUN), 'sha770')] }, writes: {} });
+  const { gh, calls: ghCalls } = makeGh({ openPrs: [markedPrAt(GHE_PR_URL)] });
+  const { deps, io } = baseDeps({ ghApi, gh });
+  const seen = [];
+  deps.gateOrigin = gheGate;
+  deps.repoTarget = seamTarget(seen);
+
+  const code = run(['--run-id', 'r1', '--targets', '770'], deps);
+
+  assert.equal(code, 3, io.err.join(''));
+  assert.deepEqual(seen, [['acme', 'w', 'acme.ghe.com']], 'the gate host is the third argument');
+  assert.deepEqual(JSON.parse(io.out[0]).inFlight, [{ issue: 770, link: GHE_PR_URL }]);
+  assert.deepEqual(ghCalls.filter(isPrList)[0].slice(0, 4), ['pr', 'list', '--repo', 'acme.ghe.com/acme/w']);
+  assert.ok(!calls.some((a) => isWrite(a, '770')));
+});
+
+test('#4794: the gate\'s admitted GHE host also decides the tombstone\'s PR-url match', () => {
+  const { ghApi, calls } = makeGhApi({
+    reads: { 760: [readOk(prOpenedTombstoneMarker('otherRun', GHE_PR_URL), 'sha760')] },
+    writes: {},
+  });
+  const { gh, calls: ghCalls } = makeGh({ prState: 'OPEN' });
+  const { deps, io } = baseDeps({ ghApi, gh });
+  deps.gateOrigin = gheGate;
+  deps.repoTarget = seamTarget([]);
+
+  const code = run(['--run-id', 'r1', '--targets', '760'], deps);
+
+  assert.equal(code, 3, io.err.join(''));
+  assert.deepEqual(JSON.parse(io.out[0]).inFlight, [{ issue: 760, link: GHE_PR_URL }]);
+  assert.ok(ghCalls.some((a) => a[0] === 'pr' && a[1] === 'view' && a[2] === GHE_PR_URL));
+  assert.ok(!calls.some((a) => isWrite(a, '760')));
+});
+
+test('#4794: a gate with no spec passes a null host so the seam keeps its own fallback read; a github.com spec passes github.com', () => {
+  for (const [gate, expected, listed, prUrl] of [
+    [() => ({ spec: null, refusal: null }), null, 'acme.ghe.com/acme/w', GHE_PR_URL],
+    [() => ({ spec: { host: 'github.com', owner: 'acme', repo: 'w' }, refusal: null }), 'github.com', 'acme/w', PR_URL],
+  ]) {
+    const { ghApi } = makeGhApi({ reads: { 770: [readOk(staleMarker(RUN), 'sha770')] }, writes: {} });
+    const { gh, calls: ghCalls } = makeGh({ openPrs: [markedPrAt(prUrl)] });
+    const { deps, io } = baseDeps({ ghApi, gh });
+    const seen = [];
+    deps.gateOrigin = gate;
+    deps.repoTarget = seamTarget(seen, expected === null ? 'acme.ghe.com' : null);
+
+    run(['--run-id', 'r1', '--targets', '770'], deps);
+
+    assert.deepEqual(seen, [['acme', 'w', expected]], io.err.join(''));
+    assert.equal(ghCalls.filter(isPrList)[0][3], listed);
+  }
+});
+
+// ---- #5902: station events (session_bound + the bot:in-progress transition) ----
+const CLAIMED_AT = new Date(NOW).toISOString();
+
+function claimFixture(issues) {
+  const reads = {}; const writes = {};
+  for (const n of issues) { reads[n] = [readAbsent, confirmRead()]; writes[n] = [writeOk]; }
+  return makeGhApi({ reads, writes });
+}
+
+function withRecorder(deps) {
+  const events = [];
+  deps.stationEvent = (e) => { events.push(e); };
+  return events;
+}
+
+const kindStation = (e) => `${e.kind}:${e.station}${e.outcome ? `:${e.outcome}` : ''}`;
+
+test('station: claiming [5902] records one session_bound naming the record, repo, session, run, lane and claimedAt', () => {
+  const { ghApi } = claimFixture([5902]);
+  const { gh } = makeGh({});
+  const { deps } = baseDeps({ ghApi, gh });
+  const events = withRecorder(deps);
+
+  assert.equal(run(['--run-id', 'r1', '--targets', '5902'], deps), 0);
+
+  const bound = events.filter((e) => e.kind === 'session_bound');
+  assert.equal(bound.length, 1);
+  assert.deepEqual(bound[0], {
+    repoName: 'acme/w', recordNumber: 5902, kind: 'session_bound', station: 'build', outcome: null,
+    lane: 'unknown', sessionId: 'sess1', runId: 'r1', discriminator: CLAIMED_AT,
+  });
+});
+
+test('station: claiming [1,2,3] records three session_bound events with one sessionId, in target order', () => {
+  const { ghApi } = claimFixture([1, 2, 3]);
+  const { gh } = makeGh({});
+  const { deps } = baseDeps({ ghApi, gh });
+  const events = withRecorder(deps);
+
+  assert.equal(run(['--run-id', 'r1', '--targets', '1,2,3'], deps), 0);
+
+  const bound = events.filter((e) => e.kind === 'session_bound');
+  assert.deepEqual(bound.map((e) => e.recordNumber), [1, 2, 3]);
+  assert.deepEqual([...new Set(bound.map((e) => e.sessionId))], ['sess1']);
+});
+
+test('station: a claim whose label add succeeded records exited release passed and entered build', () => {
+  const { ghApi } = claimFixture([720]);
+  const { gh } = makeGh({});
+  const { deps } = baseDeps({ ghApi, gh });
+  const events = withRecorder(deps);
+
+  assert.equal(run(['--run-id', 'r1', '--targets', '720'], deps), 0);
+
+  assert.deepEqual(events.map(kindStation), ['session_bound:build', 'exited:release:passed', 'entered:build', 'planned:build']);
+  const [, exited, entered] = events;
+  for (const e of [exited, entered]) {
+    assert.equal(e.repoName, 'acme/w');
+    assert.equal(e.recordNumber, 720);
+    assert.equal(e.runId, 'r1');
+    assert.equal(e.sessionId, 'sess1');
+    assert.equal(e.lane, 'unknown');
+  }
+  assert.deepEqual(exited.payload, { actor: 'script' });
+  assert.equal(exited.discriminator, `${CLAIMED_AT}:exited:release`);
+  assert.equal(entered.discriminator, `${CLAIMED_AT}:entered:build`);
+  assert.equal(entered.outcome, null);
+});
+
+test('station: a failed label add records session_bound and planned, never the transition', () => {
+  const { ghApi } = claimFixture([750]);
+  const { gh } = makeGh({ fail: { labelAdd: true } });
+  const { deps, io } = baseDeps({ ghApi, gh });
+  const events = withRecorder(deps);
+
+  assert.equal(run(['--run-id', 'r1', '--targets', '750'], deps), 0);
+
+  assert.deepEqual(JSON.parse(io.out[0]).claimed, [750]);
+  assert.deepEqual(events.map(kindStation), ['session_bound:build', 'planned:build']);
+});
+
+test('station: --lane driver stamps lane driver on every event', () => {
+  const { ghApi } = claimFixture([720, 721]);
+  const { gh } = makeGh({});
+  const { deps } = baseDeps({ ghApi, gh });
+  const events = withRecorder(deps);
+
+  assert.equal(run(['--run-id', 'r1', '--targets', '720,721', '--lane', 'driver'], deps), 0);
+
+  assert.equal(events.length, 8);
+  assert.deepEqual([...new Set(events.map((e) => e.lane))], ['driver']);
+});
+
+test('station: --lane outside standard|express|driver|unknown, or with no value, exits 2 with USAGE and no gh call', () => {
+  for (const argv of [['--lane', 'bogus'], ['--lane'], ['--lane', '']]) {
+    const gh = () => { throw new Error('must not be called'); };
+    const ghApi = () => { throw new Error('must not be called'); };
+    const { deps, io } = baseDeps({ ghApi, gh });
+    const events = withRecorder(deps);
+
+    assert.equal(run(['--run-id', 'r1', '--targets', '720', ...argv], deps), 2, argv.join(' '));
+    assert.ok(io.err.join('').includes(USAGE), argv.join(' '));
+    assert.deepEqual(events, []);
+  }
+  assert.match(USAGE, /--lane <standard\|express\|driver\|unknown>/);
+});
+
+test('station: every accepted --lane value claims and is stamped', () => {
+  for (const lane of ['standard', 'express', 'driver', 'unknown']) {
+    const { ghApi } = claimFixture([720]);
+    const { gh } = makeGh({});
+    const { deps } = baseDeps({ ghApi, gh });
+    const events = withRecorder(deps);
+    assert.equal(run(['--run-id', 'r1', '--targets', '720', '--lane', lane], deps), 0, lane);
+    assert.deepEqual([...new Set(events.map((e) => e.lane))], [lane]);
+  }
+});
+
+test('station: an empty or absent sessionId records the transition events and planned, and no session_bound', () => {
+  for (const sessionId of ['', undefined]) {
+    const { ghApi } = claimFixture([720]);
+    const { gh } = makeGh({});
+    const { deps } = baseDeps({ ghApi, gh, sessionId });
+    if (sessionId === undefined) delete deps.sessionId;
+    const events = withRecorder(deps);
+
+    assert.equal(run(['--run-id', 'r1', '--targets', '720'], deps), 0);
+
+    assert.deepEqual(events.map(kindStation), ['exited:release:passed', 'entered:build', 'planned:build'], String(sessionId));
+  }
+});
+
+test('station: an alreadyOwned re-assert, a contested target and a transient target record nothing', () => {
+  const { ghApi } = makeGhApi({
+    reads: {
+      730: [readOk(liveMarker('r1'), 'sha730')],
+      731: [readOk(liveMarker('otherRun'), 'sha731')],
+      732: [readFail('network-failure')],
+      733: [readOk('not-valid-json{{{', 'sha733')],
+    },
+    writes: {},
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+  const events = withRecorder(deps);
+
+  assert.equal(run(['--run-id', 'r1', '--targets', '730,731,732,733', '--keep-going'], deps), 0);
+
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.alreadyOwned, [730]);
+  assert.deepEqual(body.skipped.map((s) => s.reason), ['contested', 'transient', 'contested']);
+  assert.deepEqual(events, []);
+});
+
+test('station: an unverified claim and a --steps skip-guard run record nothing', () => {
+  const { ghApi } = makeGhApi({ reads: { 720: [readAbsent] }, writes: { 720: [writeOk] } });
+  const { gh } = makeGh({});
+  const { deps } = baseDeps({ ghApi, gh });
+  const events = withRecorder(deps);
+  assert.equal(run(['--run-id', 'r1', '--targets', '720', '--keep-going'], deps), 0);
+  assert.deepEqual(events, []);
+
+  const { deps: deps2 } = baseDeps({
+    ghApi: () => { throw new Error('must not be called'); }, gh: () => { throw new Error('must not be called'); },
+  });
+  const events2 = withRecorder(deps2);
+  assert.equal(run(['--run-id', 'r1', '--targets', '720', '--steps', 'review,wrap-up'], deps2), 0);
+  assert.deepEqual(events2, []);
+});
+
+test('station: a stationEvent that throws leaves exit code, stdout and claimed identical to a run without it', () => {
+  function once(stationEvent) {
+    const { ghApi } = claimFixture([720, 721]);
+    const { gh } = makeGh({});
+    const { deps, io } = baseDeps({ ghApi, gh });
+    let calls = 0;
+    if (stationEvent) deps.stationEvent = (e) => { calls += 1; stationEvent(e); };
+    const code = run(['--run-id', 'r1', '--targets', '720,721'], deps);
+    return { code, out: io.out.join('\n'), calls };
+  }
+  const plain = once(null);
+  const throwing = once(() => { throw new Error('emitter exploded'); });
+
+  assert.ok(throwing.calls > 0, 'the throwing emitter was actually reached');
+  assert.equal(throwing.code, plain.code);
+  assert.equal(throwing.out, plain.out);
+  assert.deepEqual(JSON.parse(throwing.out).claimed, [720, 721]);
+});
+
+test('station: a recording stationEvent leaves exit code and stdout identical to a run without it', () => {
+  function once(record) {
+    const { ghApi } = claimFixture([720, 721]);
+    const { gh } = makeGh({});
+    const { deps, io } = baseDeps({ ghApi, gh });
+    const events = record ? withRecorder(deps) : null;
+    const code = run(['--run-id', 'r1', '--targets', '720,721'], deps);
+    return { code, out: io.out.join('\n'), events };
+  }
+  const plain = once(false);
+  const recording = once(true);
+
+  assert.equal(recording.events.length, 8, 'the recorder saw every event');
+  assert.equal(recording.code, plain.code);
+  assert.equal(recording.out, plain.out);
+});
+
+test('station: a rolled-back partial claim closes its build visit with exited build stopped; --keep-going rolls back nothing', () => {
+  const { ghApi } = makeGhApi({
+    reads: {
+      720: [readAbsent, confirmRead(), readOk('irrelevant', 'sha720-release')],
+      721: [readOk(liveMarker('otherRun'), 'sha721')],
+    },
+    writes: { 720: [writeOk, writeOk] },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+  const events = withRecorder(deps);
+
+  assert.equal(run(['--run-id', 'r1', '--targets', '720,721'], deps), 3);
+
+  assert.deepEqual(JSON.parse(io.out[0]).released, [720]);
+  const for720 = events.filter((e) => e.recordNumber === 720);
+  assert.deepEqual(for720.map(kindStation), ['session_bound:build', 'exited:release:passed', 'entered:build', 'planned:build', 'exited:build:stopped']);
+  const exit = for720[4];
+  assert.deepEqual(exit.payload, { reason: ABORT_REASON, actor: 'script', reasonCode: 'unspecified' });
+  assert.ok(buildLine(exit), 'the rollback exit line is accepted by the emitter');
+  assert.equal(exit.discriminator, `${CLAIMED_AT}:abort`);
+  assert.equal(exit.repoName, 'acme/w');
+  assert.equal(exit.runId, 'r1');
+  assert.equal(exit.sessionId, 'sess1');
+  assert.equal(exit.lane, 'unknown');
+  assert.equal(events.filter((e) => e.recordNumber === 721).length, 0);
+
+  const { ghApi: ghApi2 } = makeGhApi({
+    reads: { 720: [readAbsent, confirmRead()], 721: [readOk(liveMarker('otherRun'), 'sha721')] },
+    writes: { 720: [writeOk] },
+  });
+  const { deps: deps2 } = baseDeps({ ghApi: ghApi2, gh: makeGh({}).gh });
+  const events2 = withRecorder(deps2);
+  assert.equal(run(['--run-id', 'r1', '--targets', '720,721', '--keep-going'], deps2), 0);
+  assert.ok(!events2.some((e) => e.kind === 'exited' && e.station === 'build'), JSON.stringify(events2));
+});
+
+test('station: a rollback whose release write fails (releaseFailed) emits no build exit', () => {
+  const { ghApi } = makeGhApi({
+    reads: {
+      720: [readAbsent, confirmRead(), readOk('irrelevant', 'sha720-release')],
+      721: [readOk(liveMarker('otherRun'), 'sha721')],
+    },
+    writes: { 720: [writeOk, writeFail('network-failure')] },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+  const events = withRecorder(deps);
+
+  assert.equal(run(['--run-id', 'r1', '--targets', '720,721'], deps), 3);
+
+  assert.deepEqual(JSON.parse(io.out[0]).released, []);
+  assert.ok(!events.some((e) => e.kind === 'exited' && e.station === 'build'), JSON.stringify(events));
+});
+
+test('station: a --resume-pr re-claim records session_bound but no bot:in-progress transition and no planned', () => {
+  const { ghApi } = makeGhApi({
+    reads: { 780: [readOk(staleMarker(RUN), 'sha780'), confirmRead()] },
+    writes: { 780: [writeOk] },
+  });
+  const { gh } = makeGh({ openPrs: [resumeMarkedPr] });
+  const { deps, io } = baseDeps({ ghApi, gh });
+  const events = withRecorder(deps);
+
+  assert.equal(run(['--run-id', 'r1', '--targets', '780', '--resume-pr', RESUME_PR], deps), 0);
+
+  assert.deepEqual(JSON.parse(io.out[0]).resumedPr, [{ issue: 780, link: RESUME_PR }]);
+  assert.deepEqual(events.map(kindStation), ['session_bound:build']);
+  assert.equal(events[0].recordNumber, 780);
+  assert.equal(events[0].discriminator, CLAIMED_AT);
+});
+
+test('station: a claim payload with no claimedAt skips its events with one stderr line; stdout and exit code unchanged', () => {
+  // claim-targets.js destructures claimPayload at require time, so load a
+  // fresh copy against a claims.js export whose marker lacks claimedAt.
+  const claimsPath = require.resolve('../../../plugin/bin/lib/issues/claims');
+  const ctPath = require.resolve('../../../plugin/bin/lib/claim-targets/claim-targets');
+  const claims = require(claimsPath);
+  const realClaimPayload = claims.claimPayload;
+  const cached = require.cache[ctPath];
+  let freshRun;
+  try {
+    claims.claimPayload = (o) => {
+      const p = realClaimPayload(o);
+      const marker = JSON.parse(p.fileContent);
+      delete marker.claimedAt;
+      return { ...p, fileContent: JSON.stringify(marker, null, 2) };
+    };
+    delete require.cache[ctPath];
+    freshRun = require(ctPath).run;
+  } finally {
+    claims.claimPayload = realClaimPayload;
+    require.cache[ctPath] = cached;
+  }
+
+  function once(withEmitter) {
+    const { ghApi } = claimFixture([720]);
+    const { gh } = makeGh({});
+    const { deps, io } = baseDeps({ ghApi, gh });
+    const events = withEmitter ? withRecorder(deps) : null;
+    const code = freshRun(['--run-id', 'r1', '--targets', '720'], deps);
+    return { code, out: io.out.join('\n'), err: io.err, events };
+  }
+  const plain = once(false);
+  const recorded = once(true);
+
+  assert.equal(recorded.code, 0);
+  assert.equal(recorded.out, plain.out);
+  assert.deepEqual(JSON.parse(recorded.out).claimed, [720]);
+  assert.deepEqual(recorded.events, []);
+  assert.deepEqual(recorded.err, ['claim-targets: station events skipped for #720 — claim payload has no claimedAt\n']);
+  assert.deepEqual(plain.err, [], 'no emitter, nothing to skip, no line');
+});
+
+// ---- #6147: the plan written at the claim ----
+const STATION_RUN_ID = 'r1';
+
+// An anchored run dir (a `.git` directory at the root, the run under
+// `.claude-tweaks/pipelines/`), the shape `resolveTarget` accepts; the
+// matching main root is `anchorOf(dir)`.
+function manifestRunDir(manifest) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-plan-'));
+  tmpRoots.push(root);
+  fs.mkdirSync(path.join(root, '.git'));
+  const dir = path.join(root, '.claude-tweaks', 'pipelines', STATION_RUN_ID);
+  fs.mkdirSync(dir, { recursive: true });
+  if (manifest !== undefined) fs.writeFileSync(path.join(dir, 'manifest.json'), typeof manifest === 'string' ? manifest : JSON.stringify(manifest));
+  return dir;
+}
+
+function anchorOf(dir) {
+  return path.dirname(path.dirname(path.dirname(dir)));
+}
+
+function claimWithManifest(manifest, extraArgs = []) {
+  const { ghApi } = claimFixture([720]);
+  const { deps, io } = baseDeps({ ghApi, gh: makeGh({}).gh });
+  deps.appendClaimLog = () => {};
+  const events = withRecorder(deps);
+  const dir = manifestRunDir(manifest);
+  deps.mainRoot = anchorOf(dir);
+  const code = run(['--run-id', STATION_RUN_ID, '--targets', '720', '--run', dir, ...extraArgs], deps);
+  return { code, events, io };
+}
+
+test('AC1.5: a claim writes one planned line carrying the stations and reason', () => {
+  const { ghApi } = claimFixture([720]);
+  const { deps } = baseDeps({ ghApi, gh: makeGh({}).gh });
+  const events = withRecorder(deps);
+  assert.equal(run(['--run-id', 'r1', '--targets', '720'], deps), 0);
+  const planned = events.filter((e) => e.kind === 'planned');
+  assert.equal(planned.length, 1);
+  assert.equal(planned[0].station, 'build');
+  assert.equal(planned[0].recordNumber, 720);
+  assert.equal(planned[0].runId, 'r1');
+  assert.deepEqual(planned[0].payload, { process: 'build-a-record', processVersion: 1, list: 'standard', stations: [...STATIONS], reasonCode: 'default-list' });
+  assert.ok(buildLine(planned[0]), 'appendStationEvent accepts it');
+});
+
+test('AC1.6, AC2.1, AC2.2: claiming the same record again in the same run writes no second planned', () => {
+  const { ghApi } = claimFixture([720]);
+  const { deps } = baseDeps({ ghApi, gh: makeGh({}).gh });
+  const first = withRecorder(deps);
+  assert.equal(run(['--run-id', 'r1', '--targets', '720'], deps), 0);
+
+  const { ghApi: ghApi2 } = makeGhApi({ reads: { 720: [readOk(liveMarker('r1'), 'sha720')] }, writes: {} });
+  const { deps: deps2, io } = baseDeps({ ghApi: ghApi2, gh: makeGh({}).gh });
+  const second = withRecorder(deps2);
+  assert.equal(run(['--run-id', 'r1', '--targets', '720'], deps2), 0);
+
+  assert.deepEqual(JSON.parse(io.out[0]).alreadyOwned, [720]);
+  assert.equal(first.filter((e) => e.kind === 'planned').length, 1);
+  assert.equal(second.filter((e) => e.kind === 'planned').length, 0);
+});
+
+test('a claim with --run reads lane and ceremony profile from the run manifest', () => {
+  const manifest = { lane: 'driver', ceremonyProfile: 'fast-lane' };
+  const { code, events } = claimWithManifest(manifest);
+  assert.equal(code, 0);
+  const planned = events.filter((e) => e.kind === 'planned');
+  assert.equal(planned.length, 1);
+  assert.equal(planned[0].payload.list, 'driver');
+  assert.equal(planned[0].payload.reasonText, 'lane driver');
+
+  const passed = claimWithManifest(manifest, ['--lane', 'standard']).events.find((e) => e.kind === 'planned');
+  assert.equal(passed.payload.list, 'fast-lane');
+  assert.equal(passed.payload.reasonText, 'ceremony profile fast-lane');
+  assert.equal(passed.lane, 'standard');
+});
+
+test('the planned line and the claim\'s other events carry the same lane field even when the manifest lane differs', () => {
+  const { events } = claimWithManifest({ lane: 'driver', ceremonyProfile: 'standard' });
+  const planned = events.find((e) => e.kind === 'planned');
+  assert.equal(planned.payload.list, 'driver');
+  assert.deepEqual(events.map(kindStation), ['session_bound:build', 'exited:release:passed', 'entered:build', 'planned:build']);
+  assert.deepEqual([...new Set(events.map((e) => e.lane))], ['unknown']);
+});
+
+test('a corrupt run manifest plans the default list and leaves the claim unchanged', () => {
+  const { code, events, io } = claimWithManifest('not json{');
+  const planned = events.find((e) => e.kind === 'planned');
+  assert.equal(planned.payload.list, 'standard');
+  assert.equal(planned.payload.reasonCode, 'default-list');
+
+  const { ghApi } = claimFixture([720]);
+  const { deps, io: io2 } = baseDeps({ ghApi, gh: makeGh({}).gh });
+  deps.appendClaimLog = () => {};
+  const corruptDir = manifestRunDir('not json{');
+  deps.mainRoot = anchorOf(corruptDir);
+  const plainCode = run(['--run-id', STATION_RUN_ID, '--targets', '720', '--run', corruptDir], deps);
+  assert.equal(code, plainCode);
+  assert.equal(io.out.join('\n'), io2.out.join('\n'));
+});
+
+test('a multi-target claim reads the run manifest once', () => {
+  const dir = manifestRunDir({ lane: 'driver', ceremonyProfile: 'standard' });
+  const manifestPath = path.join(fs.realpathSync(dir), 'manifest.json');
+  const { ghApi } = claimFixture([720, 721]);
+  const { deps } = baseDeps({ ghApi, gh: makeGh({}).gh });
+  deps.appendClaimLog = () => {};
+  deps.mainRoot = anchorOf(dir);
+  const events = withRecorder(deps);
+  const realRead = fs.readFileSync;
+  let reads = 0;
+  fs.readFileSync = function wrapped(file, ...rest) {
+    if (file === manifestPath) reads += 1;
+    return realRead.call(this, file, ...rest);
+  };
+  let code;
+  try {
+    code = run(['--run-id', STATION_RUN_ID, '--targets', '720,721', '--run', dir], deps);
+  } finally {
+    fs.readFileSync = realRead;
+  }
+  assert.equal(code, 0);
+  assert.equal(reads, 1);
+  const planned = events.filter((e) => e.kind === 'planned');
+  assert.deepEqual(planned.map((e) => e.recordNumber), [720, 721]);
+  assert.deepEqual(planned.map((e) => e.payload.list), ['driver', 'driver']);
+});
+
+test('readRunManifestPlanInputs returns nulls for a missing dir, a missing file and a non-object JSON', () => {
+  const nulls = { lane: null, ceremonyProfile: null };
+  const read = (dir) => readRunManifestPlanInputs(dir, { mainRoot: anchorOf(dir) });
+  assert.deepEqual(readRunManifestPlanInputs(path.join(os.tmpdir(), 'ct-no-such-dir-6147')), nulls);
+  assert.deepEqual(read(manifestRunDir()), nulls);
+  assert.deepEqual(read(manifestRunDir('[1,2]')), nulls);
+  assert.deepEqual(read(manifestRunDir('null')), nulls);
+  assert.deepEqual(read(manifestRunDir({ lane: 3, ceremonyProfile: 'fast-lane' })), { lane: null, ceremonyProfile: 'fast-lane' });
+  assert.deepEqual(read(manifestRunDir({ lane: 'driver', ceremonyProfile: 7 })), { lane: 'driver', ceremonyProfile: null });
+});
+
+test('a run dir that fails the anchoring check plans the default list', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-plan-unanchored-'));
+  tmpRoots.push(root);
+  fs.mkdirSync(path.join(root, '.git'));
+  const dir = path.join(root, 'elsewhere', STATION_RUN_ID);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ lane: 'driver', ceremonyProfile: 'fast-lane' }));
+  const claim = (runArgs, mainRoot) => {
+    const { ghApi } = claimFixture([720]);
+    const { deps, io } = baseDeps({ ghApi, gh: makeGh({}).gh });
+    deps.appendClaimLog = () => {};
+    deps.mainRoot = mainRoot;
+    const events = withRecorder(deps);
+    return { code: run(['--run-id', STATION_RUN_ID, '--targets', '720', ...runArgs], deps), events, io };
+  };
+  const shadow = claim(['--run', dir], root);
+  const anchoredDir = manifestRunDir();
+  const plain = claim(['--run', anchoredDir], anchorOf(anchoredDir));
+  const planned = shadow.events.find((e) => e.kind === 'planned');
+  assert.equal(planned.payload.list, 'standard');
+  assert.equal(planned.payload.reasonCode, 'default-list');
+  assert.equal(shadow.code, plain.code);
+  assert.equal(shadow.io.out.join('\n'), plain.io.out.join('\n'));
 });

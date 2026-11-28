@@ -47,13 +47,14 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const {
   CarryOverInputError, classifyRolloverResume, planCarryOver,
 } = require('./lib/health-core/materiality-digest');
-const { ghAvailable, ghOptions } = require('./lib/repo-resolve');
-const { GH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
+const { ghAvailable, ghOptions, injectedGhDeps } = require('./lib/repo-resolve');
+const { GH_BATCH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 const { resolvePrinted } = require('./session-tmp-resolve');
 
 const USAGE = `usage: digest-rollover.js verdict --old <n> --candidates <n>[,<n>...]
@@ -71,8 +72,6 @@ const VERB_FLAGS = {
 const POSITIVE = /^[1-9]\d*$/;
 const NUMBER_FLAGS = new Set(['--old', '--new']);
 const COUNT_FLAGS = new Set(['--count', '--new-count']);
-// A paged comment read of a full digest walks several pages, so it earns more than a single call's bound.
-const PAGED_READ_TIMEOUT_MS = 30000;
 
 function parseArgs(argv) {
   if (argv.includes('--help') || argv.includes('-h')) return { help: true };
@@ -112,14 +111,18 @@ function parseArgs(argv) {
   return o;
 }
 
-function defaultGh(args) {
+// `{ cwd, env, stderr, homeDir }` is the caller's injected process context; absent, gh inherits the real one.
+function defaultGh(args, { cwd, env, stderr, homeDir } = {}) {
   return execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: Math.max(GH_TIMEOUT_MS, PAGED_READ_TIMEOUT_MS),
+    // A paged comment read of a full digest walks several pages, so it gets the batched bound.
+    timeout: GH_BATCH_TIMEOUT_MS,
     maxBuffer: LARGE_MAX_BUFFER_BYTES,
     windowsHide: true,
-  }));
+    ...(cwd ? { cwd } : {}),
+    ...(env ? { env } : {}),
+  }, injectedGhDeps({ env, stderr, homeDir })));
 }
 
 const realDeps = {
@@ -133,6 +136,9 @@ const realDeps = {
   },
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
+  cwd: () => process.cwd(),
+  homeDir: () => os.homedir(),
+  get env() { return process.env; },
 };
 
 // A read that failed: mapped to exit 3. Anything else that throws is a bug and stays loud.
@@ -239,13 +245,16 @@ function runCarry(opts, deps) {
   return 0;
 }
 
-function run(argv, deps) {
+function run(argv, callerDeps = {}) {
+  const deps = { ...realDeps, ...callerDeps };
+  const gh = deps.gh;
+  deps.gh = (args) => gh(args, { cwd: deps.cwd(), env: deps.env, stderr: deps.stderr, homeDir: deps.homeDir });
   const opts = parseArgs(argv);
   if (opts.help) { deps.stdout(USAGE); return 0; }
   if (opts.error) { deps.stderr(`digest-rollover.js: ${opts.error}\n${USAGE}`); return 1; }
   if (!opts.fileForm) {
     let available = false;
-    try { available = deps.ghAvailable(); } catch { /* a probe that throws reads as absent */ }
+    try { available = deps.ghAvailable({ env: deps.env, cwd: deps.cwd() }); } catch { /* a probe that throws reads as absent */ }
     if (!available) {
       deps.stderr('digest-rollover.js: gh CLI not found on PATH — fetch through MCP and use the file form\n');
       return 2;
