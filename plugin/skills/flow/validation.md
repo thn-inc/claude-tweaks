@@ -78,7 +78,7 @@ A closed prerequisite is not enough — its closing commit must have reached `or
 
 1. **`work-backend: local-files`** — skip the substep entirely, the way Step 2.8 skips itself: no `preflight-records.js` call and no log line. This is the first check, ahead of every `work-links` branch.
 2. **An unresolved topic name (no record number), or a step list with neither `build` nor `test`** — Step 2.8's own skip conditions (a `review,polish,wrap-up` resume, a `/claude-tweaks:dispatch` second call included, has already built): skip with no call and no log line.
-3. **Read `work-links`** (`node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values work-links`). Under `body-text`, when Step 1 item 5's `materialize.js --check` envelope reported `bodyBlockedBy: []`, the substep is a no-op — no `preflight-records.js` call. Under `native` the call always runs: it is how native links are read.
+3. **Read `work-links`** (`node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values work-links`). Under `body-text`, when Step 1 item 5's `materialize.js --check` envelope reported `bodyBlockedBy: []`, the substep is a no-op — no `preflight-records.js` call. A symbolic `Blocked by: {part} (left for owner/name)` line lands in `bodyBlockedBy`, so the call runs. Under `native` the call always runs: it is how native links are read.
 4. **Call.** Resolve `$INTEGRATION_BRANCH` per `_shared/integration-branch.md`, then run:
    ```
    node "${CLAUDE_PLUGIN_ROOT}/bin/preflight-records.js" {n} --blocker-landing --integration-branch "$INTEGRATION_BRANCH"

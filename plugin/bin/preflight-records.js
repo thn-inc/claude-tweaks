@@ -65,6 +65,10 @@
 // cross-repository-state-unreadable for any other state (fail closed) — each
 // with an extra `repository` (owner/name) key. --records-json degrades native to
 // body-text, so it never carries a native one.
+// A `Blocked by: {part} (left for owner/name)` body line (#6374) names a blocker that has no issue
+// yet: --blocker-landing appends one {blocker: '{part} (left for owner/name)', verdict: 'open',
+// commit: null, via: 'symbolic-blocker', repository} entry for it, last, under either work-links
+// value and under --records-json, with no state lookup.
 // A blocker declared only in a record body (`Blocked by owner/name#N`, #4793) is
 // foreign under either work-links value: --blocker-landing appends it to the
 // record's crossRepoBlockers (after the native ones; one already linked natively
@@ -105,6 +109,7 @@ const { fetchCrossRepoStates, suppliedStates } = require('./lib/issues/cross-rep
 const {
   parseCrossRepoDependencies, parseCrossRepoRef, crossRepoKey, distinctCrossRepoRefs, foreignEntries, mergeForeignBlockers,
 } = require('./lib/issues/cross-repo-refs');
+const { symbolicBlockers, symbolicBlockerRef } = require('./lib/issues/blocker-lines');
 const { planMergeGateSplit } = require('./lib/preflight-records/merge-gate');
 const { planParallelWaves } = require('./lib/preflight-records/waves');
 const { resolvePolicyKeys } = require('./lib/policy-schema');
@@ -482,6 +487,15 @@ function addBodyForeignBlockers(records, issues, numbers, opts, loaded, deps, su
   }
 }
 
+// #6374: a symbolic `Blocked by: {part} (left for owner/name)` line names a blocker that has no
+// issue yet, so it reads open by construction — appended here at the verdict layer, never handed
+// to crossRepoKey, foreignEntries or any state lookup, and under every work-links value and input path.
+function symbolicLandingEntries(issue) {
+  return symbolicBlockers(issue && issue.body).map((entry) => ({
+    blocker: symbolicBlockerRef(entry), verdict: 'open', commit: null, via: 'symbolic-blocker', repository: entry.repository,
+  }));
+}
+
 // argv -> exit code. All I/O through deps so tests never touch gh or git.
 function run(argv, deps = realDeps) {
   const opts = parseArgs(argv);
@@ -539,6 +553,7 @@ function run(argv, deps = realDeps) {
       records[String(n)].blockerLanding = [
         ...byRecord.get(n).map((b) => landing.results.get(b)),
         ...(records[String(n)].crossRepoBlockers || []).map(classifyCrossRepository),
+        ...symbolicLandingEntries(issues.get(n)),
       ];
     }
   }

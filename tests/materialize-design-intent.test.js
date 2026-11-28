@@ -15,6 +15,8 @@ const wtDetect = require('../plugin/bin/lib/hooks/worktree-detect');
 const { run } = require('../plugin/bin/materialize');
 const { DESIGN_INTENT_VALUES } = require('../plugin/bin/lib/issues/materialize-format');
 
+const { SYMBOLIC_REF, symbolicBody } = require('./helpers/symbolic-blocker-fixture');
+
 const N = 3018;
 
 function shapedBody(designIntentLine) {
@@ -164,6 +166,17 @@ test('Plan Review Clarifications: --check lists a body-declared foreign blocker 
   const { exitCode, deps } = checkWithBody(shapedBody('Design-intent: quiet') + '\nBlocked by other/repo#5\n');
   assert.strictEqual(exitCode, 0, deps.calls.stderr.join(''));
   assert.deepStrictEqual(JSON.parse(deps.calls.stdout.join('')).bodyBlockedBy, ['other/repo#5']);
+});
+
+test('AC2.5: --check reports a symbolic-only body\'s blocker in bodyBlockedBy, and the header lists it after this repository\'s numbers and foreign refs', () => {
+  const only = checkWithBody(symbolicBody());
+  assert.strictEqual(only.exitCode, 0, only.deps.calls.stderr.join(''));
+  assert.deepStrictEqual(JSON.parse(only.deps.calls.stdout.join('')).bodyBlockedBy, [SYMBOLIC_REF]);
+
+  const { exitCode, deps } = materializeWithBody(symbolicBody(['Blocked by #12', 'Blocked by a/b#3']));
+  assert.strictEqual(exitCode, 0, deps.calls.stderr.join(''));
+  const written = fs.readFileSync(JSON.parse(deps.calls.stdout.join('')).file, 'utf8');
+  assert.match(written, /^blocked-by: \[12, a\/b#3, Skill steps \(left for thn-inc\/other\)\]$/m);
 });
 
 test('--check reports ceremony null for an unlabeled record instead of the missing-ceremony exit 2 (#4027)', () => {

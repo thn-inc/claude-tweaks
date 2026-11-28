@@ -6,7 +6,7 @@ A target may declare prerequisite records — `blocked-by:` on the record (mater
 
 ## Procedure
 
-1. **Build the DAG** — for each target in the list, add edges from each prerequisite to the target itself, from its `blocked-by:` entries — a `blocked-by:` entry written `owner/name#N` names another repository's issue and never adds an edge, whatever its number: `preflight-records.js` builds the DAG from each record's `blockedBy`, which carries this repository's numbers only (#4793)
+1. **Build the DAG** — for each target in the list, add edges from each prerequisite to the target itself, from its `blocked-by:` entries — a `blocked-by:` entry written `owner/name#N` names another repository's issue and never adds an edge, whatever its number: `preflight-records.js` builds the DAG from each record's `blockedBy`, which carries this repository's numbers only (#4793). A `{part} (left for owner/name)` entry names a blocker with no issue yet and adds no edge either; pre-flight reads it as an `open` out-of-run blocker, a STOP (#6374)
 2. **Detect cycles** — if any cycle exists across the listed specs, **hard fail**:
    ```
    Cycle detected in dependency graph:

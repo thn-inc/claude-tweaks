@@ -235,6 +235,7 @@ test('buildOverlapGroups: records sharing a key file union into one group; items
 // --- CLI ----------------------------------------------------------------
 
 const { run } = require('../../../plugin/bin/preflight-records');
+const { SYMBOLIC_REF, symbolicBody } = require('../../helpers/symbolic-blocker-fixture');
 
 function cliDeps({
   runner, workLinks = 'body-text', remoteUrl = 'https://github.com/acme/w.git', files = {}, stdin,
@@ -1006,6 +1007,44 @@ test('under --records-json a body-declared foreign blocker reads state unreadabl
   const env = JSON.parse(d.out.join(''));
   assert.deepEqual(env.records['11'].blockerLanding, [{ blocker: 5, verdict: 'open', commit: null, via: 'cross-repository-state-unreadable', repository: 'other/repo' }]);
   assert.match(d.err.join(''), /foreign blocker state lookup skipped under --records-json — other\/repo#5 read as state unreadable \(fail closed\)/);
+});
+
+// #6374: a symbolic `Blocked by: {part} (left for owner/name)` line names a blocker that does not
+// exist yet, so it is open by construction — appended at the verdict layer, never looked up.
+const SYMBOLIC_ENTRY = { blocker: SYMBOLIC_REF, verdict: 'open', commit: null, via: 'symbolic-blocker', repository: 'thn-inc/other' };
+const touchesSymbolic = (calls) => calls.filter((a) => a.some((x) => /Skill steps/.test(String(x))) && !isIssueView(a, 11));
+
+test('AC2.5: a symbolic blocker reads open in blockerLanding under body-text, native and --records-json, with no state lookup for it', () => {
+  const body = symbolicBody();
+  for (const workLinks of ['body-text', 'native']) {
+    const { runner, calls } = nativeLandingFixture({ 11: [] }, { bodies: { 11: body } });
+    const d = cliDeps({ runner, workLinks });
+    assert.equal(run(nativeArgs('11'), d.deps), 0, `${workLinks}: ${d.err.join('')}`);
+    const env = JSON.parse(d.out.join(''));
+    assert.deepEqual(env.records['11'].blockerLanding, [SYMBOLIC_ENTRY], workLinks);
+    assert.deepEqual(touchesSymbolic(calls), [], workLinks);
+    assert.equal(stateQueries(calls).length, 0, workLinks);
+    assert.equal(landingQueries(calls).length, 0, workLinks);
+  }
+  const d = cliDeps({
+    runner: () => { throw new Error('must not call gh'); },
+    workLinks: 'body-text',
+    files: { '/r.json': JSON.stringify([issue({ number: 11, title: 'Eleven', body })]) },
+  });
+  assert.equal(run(['11', '--blocker-landing', '--records-json', '/r.json'], d.deps), 0, d.err.join(''));
+  assert.deepEqual(JSON.parse(d.out.join('')).records['11'].blockerLanding, [SYMBOLIC_ENTRY]);
+});
+
+test('AC2.5: a symbolic blocker follows this repository\'s and a foreign blocker, and a record with no symbolic line gains no entry', () => {
+  const { runner } = bodyForeignFixture({ 11: symbolicBody(['Blocked by other/repo#5']), 12: 'Surface: infra' }, { states: { 'other/repo#5': 'OPEN' } });
+  const d = cliDeps({ runner, workLinks: 'body-text' });
+  assert.equal(run(bodyArgs('11', '12'), d.deps), 0, d.err.join(''));
+  const env = JSON.parse(d.out.join(''));
+  assert.deepEqual(env.records['11'].blockerLanding, [
+    { blocker: 5, verdict: 'open', commit: null, via: 'cross-repository', repository: 'other/repo' },
+    SYMBOLIC_ENTRY,
+  ]);
+  assert.deepEqual(env.records['12'].blockerLanding, []);
 });
 
 test('under --records-json an owner/name#N key in --blocker-states-json supplies a body-declared foreign blocker\'s state with no gh call', () => {
