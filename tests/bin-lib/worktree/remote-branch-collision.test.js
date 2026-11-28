@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { originWithTwoClones } = require('../../helpers/git-fixtures');
 const { warmCallStartsNoGit } = require('../../helpers/git-trace');
+const { readText } = require('../../helpers/read-skill');
 const { isValidBranchName } = require('../../../plugin/bin/lib/branch-name');
 const {
   checkAdoptedBranch,
@@ -276,7 +277,7 @@ test('AC4.2 (#4792): the pointer\'s inclusive window edge counts, and the marker
 });
 
 test('AC4.2 (#4792): the marker and sentence are the producer\'s text in dispatch/settle-and-merge.md', () => {
-  const settle = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'dispatch', 'settle-and-merge.md'), 'utf8');
+  const settle = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'dispatch', 'settle-and-merge.md'));
   assert.ok(settle.includes(BLOCKER_STOP_SENTENCE), 'the blocker-landing sentence drifted from the producer');
   assert.ok(settle.includes(BLOCKER_STOP_MARKER), 'the failure run-comment marker drifted from the producer');
 });
