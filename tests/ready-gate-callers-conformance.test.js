@@ -66,9 +66,13 @@ const REGIONS = [
   ['shaping-mode-stamping local-files write', region(STAMPING, '**`work-backend: local-files`:** write'), [
     [/setting `facets.stage: 'ready'` \(only on `ready-gate\.js` exit 0, above;/, 'the local-files write conditions stage ready on the gate'],
   ]],
+  ['record-creation-subissues github-issues create', region(SUB, '**`work-backend: github-issues`** — same Type expression branch'), [
+    [/The `--label` flags below are that set, with `ready` added only on `ready-gate\.js` exit 0 \(the fence's `SUB_ISSUE_READY` array\)/, 'the github-issues flags carry ready only on gate exit 0'],
+  ]],
   ['record-creation-subissues symbolic blocker', region(SUB, '**No `ready` on a symbolic blocker.**'), [
-    [/`recordPayload` withholds `ready` from a body that carries such a line and returns `readyWithheld`, and `compose-record\.js` prints one `Warning: ready withheld` line, so under `github-issues` a missed drop still files the sub-issue without `ready`/, 'recordPayload withholds ready and compose-record warns, scoped to github-issues'],
-    [/Under `local-files`, `createRecord` never goes through `recordPayload`: run `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/ready-gate\.js" "\$SPECIFY_SUB_ISSUE_BODY"` and set `stage: 'ready'` only on exit 0/, 'local-files sub-issue stage ready only on gate exit 0'],
+    [/`recordPayload` withholds `ready` from a body that carries such a line and `compose-record\.js` prints one `Warning: ready withheld` line, but neither create call below reads that payload's printed `labels`/, 'the payload withhold exists, and neither create reads its labels'],
+    [/each runs `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/ready-gate\.js" "\$SPECIFY_SUB_ISSUE_BODY"` and adds `ready` \(the `--label ready` flag under `github-issues`, `stage: 'ready'` under `local-files`\) only on exit 0/, 'both creates add ready only on gate exit 0'],
+    [/on exit 1 it files the sub-issue without `ready` and names the printed `reasons` in the run's summary, on exit 2 the create fails and files nothing/, 'exit 1 files without ready and names the reasons, exit 2 files nothing'],
     [/the line names no issue and no resolvable state, so `ready` stays off until a later run rewrites it to `owner\/name#N`/, 'the lasting reason ready stays off'],
   ]],
 ];
@@ -136,6 +140,33 @@ test('the local-files createRecord fence takes stage from the gate exit code (by
   assert.equal(unconditional.test(collapse(OLD_FENCE_FACETS)), true, 'control: the old facets are matched');
 });
 
+// The github-issues create fence takes the `ready` label from the gate's exit code. Same shape as above.
+function ghCreateFence(text) {
+  const at = text.indexOf('**`work-backend: github-issues`** — same Type expression branch');
+  assert.notEqual(at, -1, 'the github-issues create paragraph is missing');
+  const m = FENCE.exec(text.slice(at));
+  assert.ok(m, 'no bash fence follows the github-issues create paragraph');
+  return m[1];
+}
+const GH_FENCE_FACTS = [
+  [/node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/ready-gate\.js" "\$SPECIFY_SUB_ISSUE_BODY" SUB_ISSUE_GATE=\$\?/, 'the fence runs ready-gate.js on the body file and keeps its exit code'],
+  [/if \[ "\$SUB_ISSUE_GATE" = "2" \]; then SUB_ISSUE_NUM="" echo "ready-gate\.js exited 2: the create fails" >&2 else/, 'gate exit 2 clears the number, says so, and skips the create'],
+  [/SUB_ISSUE_READY=\(\) if \[ "\$SUB_ISSUE_GATE" = "0" \]; then SUB_ISSUE_READY=\(--label ready\); fi/, 'the ready flag is set only on gate exit 0'],
+  [/--label "ceremony:\$SUB_ISSUE_CEREMONY" "\$\{SUB_ISSUE_READY\[@\]\}"\)/, 'the work-types: native create passes the gated flag'],
+  [/--label "ceremony:\$SUB_ISSUE_CEREMONY" "\$\{SUB_ISSUE_READY\[@\]\}" \\ --label "type:\$SUB_ISSUE_TYPE"\)/, 'the work-types: labels create passes the gated flag'],
+];
+const OLD_GH_CREATE = '--label "risk:$SUB_ISSUE_RISK" --label "size:$SUB_ISSUE_SIZE" --label "ceremony:$SUB_ISSUE_CEREMONY" --label ready)';
+test('the github-issues create fence takes the ready label from the gate exit code (byte pins)', () => {
+  const fence = collapse(ghCreateFence(SUB));
+  const missing = missingFactsOf(GH_FENCE_FACTS);
+  assert.deepEqual(missing(fence), []);
+  assertEachPatternGoesRed(fence, GH_FENCE_FACTS, missing);
+  const unconditional = /"ceremony:\$SUB_ISSUE_CEREMONY" --label ready/;
+  assert.equal(unconditional.test(fence), false, 'a hard-coded --label ready is back in a create call');
+  assert.equal(unconditional.test(collapse(OLD_GH_CREATE)), true, 'control: the old create call is matched');
+  assert.equal(fence.split('gh issue create').length - 1, 2, 'one create call per work-types branch');
+});
+
 const SKIP_RUN = process.platform === 'win32' ? 'bash fence' : false;
 function runFence(body) {
   const dir = scratchDir('ready-gate-fence-');
@@ -169,3 +200,63 @@ test('run: the fence files a ready stage only when the gate exits 0', { skip: SK
   assert.equal(broken.files.length, 0, 'gate exit 2 creates nothing');
   assert.match(broken.r.stderr, /ready-gate\.js exited 2: the create fails/);
 });
+
+// The github-issues fence run under bash with a fake `gh` on PATH that logs each call's arguments.
+// The fence holds both work-types alternatives (the reader keeps one), so a run keeps one.
+const NATIVE_CALL = /^ *# work-types: native\n[\s\S]*?\n\n/m;
+const LABELS_CALL = /^ *# work-types: labels\n[\s\S]*?\n\n/m;
+function ghVariant(fence, workTypes) {
+  const out = fence.replace(workTypes === 'native' ? LABELS_CALL : NATIVE_CALL, '');
+  assert.notEqual(out, fence, `the ${workTypes} variant drops the other branch's create call`);
+  return out;
+}
+function runGhFence(body, workTypes) {
+  const dir = scratchDir('ready-gate-gh-fence-');
+  const sessionId = 'ready-gate-gh-fence-test';
+  const bodyPath = sessionTmpPath(sessionId, 'specify-sub-issue-body.md', { tmpdir: dir });
+  if (body !== null) fs.writeFileSync(bodyPath, body);
+  const fingerprints = path.join(dir, 'fingerprints.json');
+  fs.writeFileSync(fingerprints, '{}');
+  const bin = path.join(dir, 'bin');
+  fs.mkdirSync(bin);
+  const log = path.join(dir, 'gh.log');
+  fs.writeFileSync(path.join(bin, 'gh'), '#!/bin/sh\nfor a in "$@"; do printf \'%s\\n\' "$a" >> "$GH_LOG"; done\nprintf \'%s\\n\' "--end-of-call" >> "$GH_LOG"\necho https://github.com/o/r/issues/42\n', { mode: 0o755 });
+  const env = {
+    ...process.env, PATH: bin + path.delimiter + process.env.PATH, GH_LOG: log, TMPDIR: dir, TMP: dir, TEMP: dir, CLAUDE_CODE_SESSION_ID: sessionId,
+    CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, DESIGN_DOC_SLUG: 'doc', UNIT_SLUG: 'unit-a', SUB_ISSUE_TITLE: 'Unit A',
+    SUB_ISSUE_TYPE: 'task', SUB_ISSUE_RISK: 'low', SUB_ISSUE_SIZE: 'small', SUB_ISSUE_CEREMONY: 'standard',
+    SPECIFY_SUB_ISSUE_EXISTING: '', SPECIFY_EXISTING_FINGERPRINTS: fingerprints, SUB_ISSUE_NUM: 'stale-from-the-previous-unit',
+  };
+  const script = ghVariant(ghCreateFence(SUB), workTypes) + '\necho "NUM=[$SUB_ISSUE_NUM]"\n';
+  const r = spawnSync('bash', ['-c', script], { cwd: dir, env, encoding: 'utf8' });
+  const calls = fs.existsSync(log)
+    ? fs.readFileSync(log, 'utf8').split('--end-of-call\n').filter(Boolean).map((c) => c.split('\n').filter(Boolean))
+    : [];
+  return { r, calls, fingerprints: JSON.parse(fs.readFileSync(fingerprints, 'utf8')) };
+}
+const hasLabel = (args, value) => args.some((a, i) => a === '--label' && args[i + 1] === value);
+
+for (const workTypes of ['native', 'labels']) {
+  test(`run: the github-issues fence (work-types: ${workTypes}) files the ready label only when the gate exits 0`, { skip: SKIP_RUN }, () => {
+    const ok = runGhFence(symbolicBody().replace(SYMBOLIC_LINE, 'Blocked by thn-inc/other#7004'), workTypes);
+    assert.equal(ok.calls.length, 1, ok.r.stderr);
+    assert.equal(hasLabel(ok.calls[0], 'ready'), true, 'gate exit 0 files the ready label');
+    assert.equal(hasLabel(ok.calls[0], 'ceremony:standard'), true, 'the scoring labels are untouched');
+    assert.match(ok.r.stdout, /NUM=\[42\]/);
+    assert.deepEqual(ok.fingerprints, { 'doc:unit-a': 42 }, 'the created number is recorded');
+
+    const held = runGhFence(symbolicBody(), workTypes);
+    assert.equal(held.calls.length, 1, held.r.stderr);
+    assert.equal(hasLabel(held.calls[0], 'ready'), false, 'gate exit 1 files the sub-issue without the ready label');
+    assert.equal(hasLabel(held.calls[0], 'risk:low'), true, 'the other labels are still filed');
+    assert.equal(held.calls[0].includes('ready'), false, 'no stray ready argument either');
+    assert.match(held.r.stdout, /symbolic-blocker: /, 'the gate prints its reasons');
+    assert.match(held.r.stdout, /NUM=\[42\]/);
+
+    const broken = runGhFence(null, workTypes);
+    assert.equal(broken.calls.length, 0, 'gate exit 2 runs no gh call');
+    assert.match(broken.r.stderr, /ready-gate\.js exited 2: the create fails/);
+    assert.match(broken.r.stdout, /NUM=\[\]/, 'a stale number from the previous unit is cleared');
+    assert.deepEqual(broken.fingerprints, {}, 'nothing is recorded for a create that did not happen');
+  });
+}

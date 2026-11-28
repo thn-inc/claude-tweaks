@@ -396,7 +396,7 @@ test('a local-files slug collision keeps the part slug in the fingerprint', () =
 const READY_REGION = (text) => between(text, '**Only sub-issues get `ready`**', '**Fresh manifest for this invocation.**', 'ready region');
 const READY_FACTS = [
   [/\*\*No `ready` on a symbolic blocker\.\*\* On an approved parts list \(`decomposition-mode\.md` Step 2\), a sub-issue whose blockers include a `symbolic` one, a part left for another repository and written `Blocked by: \{ref\}`, is created without `ready`/, 'Y1 a symbolic blocker creates the sub-issue without ready'],
-  [/Drop `--label ready` from its create call and pass `ready: false` in its payload\./, 'Y2 no ready label or payload flag'],
+  [/each runs `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/ready-gate\.js" "\$SPECIFY_SUB_ISSUE_BODY"` and adds `ready` \(the `--label ready` flag under `github-issues`, `stage: 'ready'` under `local-files`\) only on exit 0/, 'Y2 the ready label or stage follows the gate'],
   [/The later repository's run restores `ready` when it writes the `owner\/name#N` form \(`decomposition-mode-closeout\.md` Step 4\)\./, 'Y3 the later run restores ready'],
 ];
 const missingReady = missingFactsOf(READY_FACTS);
