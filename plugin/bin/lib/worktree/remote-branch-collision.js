@@ -166,17 +166,21 @@ function readIssueComments({ number, repo, gh = defaultGh }) {
   }
 }
 
+// True when `comment` is an object with a string body, trusted, and created in
+// [closedMs - TOMBSTONE_CLOSE_WINDOW_MS, closedMs]. An unparseable time compares false.
+function isTrustedCommentInCloseWindow(comment, closedMs, bodyMatches) {
+  if (!comment || typeof comment !== 'object' || typeof comment.body !== 'string') return false;
+  if (!bodyMatches(comment.body) || !isTrustedComment(comment)) return false;
+  const created = Date.parse(comment.createdAt);
+  return created <= closedMs && closedMs - created <= TOMBSTONE_CLOSE_WINDOW_MS;
+}
+
 // True when `lookup` is a complete read holding a trusted `Attempt N failed` comment created
 // in [closedAt - TOMBSTONE_CLOSE_WINDOW_MS, closedAt]. An unparseable time compares false.
 function hasTombstoneEvidence(closedAt, lookup) {
   if (!lookup || typeof lookup !== 'object' || lookup.ok !== true || !Array.isArray(lookup.comments)) return false;
   const closed = Date.parse(closedAt);
-  return lookup.comments.some((comment) => {
-    if (!comment || typeof comment !== 'object' || typeof comment.body !== 'string') return false;
-    if (!ATTEMPT_RE.test(comment.body) || !isTrustedComment(comment)) return false;
-    const created = Date.parse(comment.createdAt);
-    return created <= closed && closed - created <= TOMBSTONE_CLOSE_WINDOW_MS;
-  });
+  return lookup.comments.some((comment) => isTrustedCommentInCloseWindow(comment, closed, (body) => ATTEMPT_RE.test(body)));
 }
 
 // #4792: the blocker-landing stop closes its PR as a tombstone with a `failure`-kind pointer
@@ -188,13 +192,9 @@ const BLOCKER_STOP_SENTENCE = 'Stopped: an out-of-run blocker has not landed.';
 function hasBlockerLandingEvidence(pr) {
   if (!Array.isArray(pr.comments)) return false;
   const closed = Date.parse(pr.closedAt);
-  return pr.comments.some((comment) => {
-    if (!comment || typeof comment !== 'object' || typeof comment.body !== 'string') return false;
-    if (!comment.body.includes(BLOCKER_STOP_MARKER) || !comment.body.includes(BLOCKER_STOP_SENTENCE)) return false;
-    if (!isTrustedComment(comment)) return false;
-    const created = Date.parse(comment.createdAt);
-    return created <= closed && closed - created <= TOMBSTONE_CLOSE_WINDOW_MS;
-  });
+  return pr.comments.some((comment) => isTrustedCommentInCloseWindow(
+    comment, closed, (body) => body.includes(BLOCKER_STOP_MARKER) && body.includes(BLOCKER_STOP_SENTENCE),
+  ));
 }
 
 // The one closed same-repo PR with the greatest `closedAt` (Reading A), or null when there is
