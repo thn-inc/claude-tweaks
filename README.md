@@ -154,9 +154,8 @@ behind CLAUDE.md's `## Don'ts` rules.
 /claude-tweaks:specify meal planning
 /claude-tweaks:flow 73
 
-# An order (a parent with parts) — design session first
+# An order (a parent with parts) — design session first; its last step files the approved parts through specify
 /claude-tweaks:design meal planning
-/claude-tweaks:specify docs/superpowers/specs/{date}-meal-planning/design.md
 /claude-tweaks:flow 73
 
 # Fast — spec already exists

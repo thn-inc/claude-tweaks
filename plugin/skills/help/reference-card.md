@@ -127,8 +127,7 @@ or standalone:
 
 ### Order from scratch (a parent with parts)
 ```
-/claude-tweaks:design meal planning                   → session folder under docs/superpowers/specs/
-/claude-tweaks:specify docs/superpowers/specs/{date}-meal-planning/design.md
+/claude-tweaks:design meal planning                   → session folder under docs/superpowers/specs/; its last step files the approved parts through specify
 /claude-tweaks:flow 73
 ```
 
