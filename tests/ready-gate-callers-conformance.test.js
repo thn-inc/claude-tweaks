@@ -141,6 +141,87 @@ test('no born-ready path types a ready label by hand', () => {
   assert.equal(typedReady.test('gh issue edit 1 --add-label "ready"'), true, 'control: a typed --add-label ready is matched');
 });
 
+// Rule 7's enumeration, run as a test. The terms are read out of the rule's own `git grep` line,
+// so the rule and this roster cannot name different sets. Each file the terms match under plugin/
+// must sit in READY_PATH_ROSTER with its classification, and each roster entry must still match,
+// so a new ready path fails here until someone classifies it in rule 7 and below. The review of
+// #6374 found three ready paths (bundle.js, capture's shaped create, review's Defer create) that
+// the hand-listed regions above had missed. The match is raw text, as `git grep` reads it, so a
+// term inside a comment counts. Recall limit: a spelling the terms do not name (`LABELS['READY']`,
+// a `ready` label built from a variable) is not seen.
+const READY_PATH_ROSTER = {
+  'bin/lib/ci-audit/issue-payload.js': 'covered by recordPayload: passes ready: true',
+  'bin/lib/code-health/issue-payload.js': 'covered by recordPayload: passes ready: true',
+  'bin/lib/docs-health/issue-payload.js': 'covered by recordPayload: passes ready: true',
+  'bin/lib/harness-health/issue-payload.js': 'covered by recordPayload: passes ready: true',
+  'bin/lib/journey-health/issue-payload.js': 'covered by recordPayload: passes ready: true',
+  'bin/lib/console/bundle.js': 'gated in code: composeBundle withholds ready for a symbolic member',
+  'bin/lib/issues/record-payload.js': 'defines the gate: withholds ready',
+  'bin/lib/issues/ambiguity-resolve.js': 'defines the gate: readyRestorable',
+  'bin/resolve-ambiguity.js': 'reports the gate: prints readyRestorable',
+  'bin/lib/issues/blocker-lines.js': 'not a ready path: a comment names readyRestorable',
+  'bin/lib/issues/build-authority.js': 'not a ready path: reads the label',
+  'bin/lib/issues/record-vocabulary.js': 'not a ready path: names the label',
+  'bin/lib/station-events/stations.js': 'not a ready path: names the label',
+  'bin/lib/issues/link.js': 'not a ready path: already: true is a link result',
+  'bin/lib/issues/pending-authorization.js': 'not a ready path: a comment names a --label ready list',
+  'skills/_shared/github-pr-scan-triage.md': 'not a ready path: gh issue list --label ready',
+  'skills/_shared/record-queue-fetch.md': 'not a ready path: a --label ready filtered fetch',
+  'skills/_shared/ledger-format.md': 'covered by staged Labels: header (Keep row)',
+  'skills/backlog/attention-mode.md': 'not a ready path: gh issue list --label ready',
+  'skills/backlog/refine-mode.md': 'not a ready path: lists and clears the label',
+  'skills/backlog/refine-record.md': 'not a ready path: clears the label',
+  'skills/help/status-scan.md': "not a ready path: queries stage: 'ready'",
+  'skills/capture/SKILL.md': 'covered: applies the labels compose-record.js prints (BORN_READY_PATHS)',
+  'skills/review/step3-routing.md': 'covered: applies payload.labels (BORN_READY_PATHS)',
+  'skills/wrap-up/leftover-routing.md': 'covered by staged Labels: header (BORN_READY_PATHS)',
+  'skills/specify/shaping-mode-stamping.md': 'gated by ready-gate.js (AC5.1)',
+  'skills/specify/planning-answer.md': 'gated by ready-gate.js (AC5.1)',
+  'skills/specify/decomposition-mode-closeout.md': 'gated by ready-gate.js and readyRestorable (AC5.1)',
+  'skills/specify/record-creation-subissues.md': 'gated by ready-gate.js (AC5.1)',
+  'skills/specify/next-mode-shape.md': "not a ready path: names shaping-mode-stamping's gated call",
+  'skills/specify/planning.md': 'not a ready path: omits or clears the label',
+  'skills/specify/red-team.md': 'not a ready path: clears the label; the restore cites readyRestorable',
+  'skills/specify/record-creation-linking.md': 'not a ready path: already: true is a link result',
+};
+
+function rule7Terms(parity) {
+  const cmd = /git grep -n -l ((?:-e (?:"[^"]*"|\S+) )+)-- plugin/.exec(parity);
+  assert.ok(cmd, "rule 7's `git grep -n -l -e … -- plugin` line is not found -- the parser is out of sync with the rule");
+  return [...cmd[1].matchAll(/-e ("[^"]*"|\S+)/g)].map((m) => m[1].replace(/^"|"$/g, ''));
+}
+
+function listPluginText(dir, out = []) {
+  for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+    const abs = path.join(dir, ent.name);
+    if (ent.isDirectory()) listPluginText(abs, out);
+    else if (/\.(?:js|md)$/.test(ent.name)) out.push(abs);
+  }
+  return out;
+}
+
+function rosterDrift(texts, terms, roster) {
+  const hits = Object.keys(texts).filter((rel) => terms.some((t) => texts[rel].includes(t))).sort();
+  return {
+    unclassified: hits.filter((rel) => !(rel in roster)),
+    stale: Object.keys(roster).filter((rel) => !hits.includes(rel)).sort(),
+  };
+}
+
+test("every file rule 7's grep finds is classified, and every classified file still matches", () => {
+  const terms = rule7Terms(PARITY);
+  assert.deepEqual(terms, ['add-label ready', 'label ready', 'readyRestorable', 'ready: true', 'LABELS.READY', "stage: 'ready'"]);
+  const files = listPluginText(PLUGIN_ROOT);
+  assert.ok(files.length > 500, `walked ${files.length} plugin files -- a short walk means the tree walk broke, not that files went away`);
+  const texts = Object.fromEntries(files.map((abs) => [path.relative(PLUGIN_ROOT, abs).split(path.sep).join('/'), readText(abs)]));
+  assert.deepEqual(rosterDrift(texts, terms, READY_PATH_ROSTER), { unclassified: [], stale: [] });
+  // Go red: a new file that adds ready, and a roster entry whose file no longer matches.
+  const planted = { ...texts, 'skills/new/SKILL.md': 'gh issue edit 1 --add-label ready' };
+  assert.deepEqual(rosterDrift(planted, terms, READY_PATH_ROSTER).unclassified, ['skills/new/SKILL.md']);
+  const dropped = { ...texts, 'bin/lib/console/bundle.js': 'module.exports = {};' };
+  assert.deepEqual(rosterDrift(dropped, terms, READY_PATH_ROSTER).stale, ['bin/lib/console/bundle.js']);
+});
+
 test('no prose still says a blocker surface cannot read the symbolic line', () => {
   const stale = /No blocker surface reads|no blocker surface reads that line/;
   const DECOMP = readText(path.join(SPECIFY_DIR, 'decomposition-mode.md'));
