@@ -59,7 +59,8 @@ const CLI_CALL = /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/design-session\.js" check
 
 const FACTS = {
   check: [
-    [/When the design doc is a `design\.md` that holds a `## Parts` section, run this before anything else in Step 1/, 'F1 run check-approval first'],
+    [/When the design doc is a file named exactly `design\.md` inside a design session folder, `docs\/superpowers\/specs\/\{YYYY-MM-DD\}-\{slug\}\/`, run this before anything else in Step 1/, 'F1 run check-approval first'],
+    [/Any other design doc, a brainstorming `\*-design\.md` with a `## Parts` heading included, skips this check and runs Steps 1 and 2 as today\./, 'F1b any other design doc runs today\'s path'],
     [CLI_CALL, 'CLI check-approval call'],
     [/`no-parts` → Steps 1 and 2 run as today/, 'F5a no-parts falls through'],
     [/when the session knows this checkout's `owner\/name` \(`gh repo view --json nameWithOwner -q \.nameWithOwner`, or the cloud session's repository\), run `check-approval` again with `--repository \{owner\/name\}`/, 'F5b no-repository reruns with --repository'],
@@ -71,6 +72,7 @@ const FACTS = {
     [/an overlap resolution \(`overlap-resolution\.md`\), an implicit-dependency link, a red-team resolution, a scoring judgment/, 'F4b the gates named'],
     [/Before that part's record is created, the step stops and asks with one `AskUserQuestion`: `Keep the part as approved \(Recommended\)` \/ `Change it — the design goes back for a new approval`/, 'F4c the question'],
     [/Choosing the change stops decomposition and names `\/claude-tweaks:design \{argument\}`/, 'F4d change stops decomposition'],
+    [/Records this run already created stay, with `ready` cleared; the stop message lists them and says that after the new approval a renamed part's old record must be closed or reused, since its fingerprint no longer matches\./, 'F4j a change keeps created records, ready cleared, and names renamed parts'],
     [/With no human reachable it stops all the same, before that part's record is written, and stages the question/, 'F4e headless stops before the write and stages'],
     [/it never keeps going on its own/, 'F4f never keeps going'],
     [/At Steps 4 and 5, once the record exists, the part's name, size and blockers stay as approved and the record's `ready` is cleared/, 'F4g after the create the part stays and ready clears'],
@@ -81,7 +83,8 @@ const FACTS = {
     [/When `### Approved parts list \(checked first\)` \(Step 1\) exited 0, its JSON decides the work units/, 'U0 Step 2 consumes the check'],
     [/The parts in `filing\.file` are the work units, in table order/, 'F2a filing.file parts are the units, in order'],
     [/each unit's title is the part's `name`, its `size:` label the part's `size`, its unit slug the part's `slug`, and its blockers the part's resolved `blockers`/, 'F2b name, size, slug, blockers taken'],
-    [/`sibling` → that sibling sub-issue's link in Step 4, `issue` → the `owner\/name#N` ref as written, `symbolic` → the line `Blocked by: \{part name\} \(left for \{owner\/name\}\)`/, 'F2c blocker kinds'],
+    [/`sibling` → that sibling sub-issue's link in Step 4, `issue` → the `owner\/name#N` ref as written, `symbolic` → the line `Blocked by: \{ref\}`, its printed `ref` \(`\{part name\} \(left for \{owner\/name\}\)`\) as is/, 'F2c blocker kinds'],
+    [/No blocker surface reads a `symbolic` line, so a sub-issue carrying one is created without `ready`; the later repository's run restores it when it writes the `owner\/name#N` form/, 'F2f a symbolic blocker means no ready'],
     [/Skip `### Sizing Guidelines`, `### Decomposition Heuristics` \(its rewrite-signal check included\) and `--granularity`/, 'F2d skips sizing, heuristics, granularity'],
     [/Implicit Dependency Detection with its file-overlap check, Step 2\.6 and Steps 3 to 9 still run, each under Step 1's no-gate rule/, 'F2e the rest runs under the rule'],
     [/Parts in `filing\.leftFor` are not filed: Step 9's summary lists each as left for that repository's run/, 'F3a leftFor not filed'],
@@ -125,6 +128,33 @@ test('AC2.2: no gate changes an approved part\'s name, size or blockers without 
 
 test('a headless gate still stops', () => {
   pinFacts('check', 'F4e', 'F4f', 'F4h');
+});
+
+test('a change chosen after records exist keeps them, with ready cleared, and names the renamed parts', () => {
+  pinFacts('check', 'F4j');
+  // Move-out control: the sentence moved out of the no-gate bullet, still in the check region, goes red on the bullet.
+  const check = REGIONS.check(DM);
+  const sentence = check.match(FACTS.check.find(([, f]) => f.startsWith('F4j'))[0])[0];
+  const noGate = (text) => text.split('\n').find((l) => l.startsWith('- **No gate changes an approved part.**')) || '';
+  const rule = (text) => assert.ok(noGate(text).includes(sentence), 'the created-records sentence must sit in the no-gate bullet');
+  rule(check);
+  const moved = check.replace(` ${sentence}`, '').replace('- **Exit 0**', () => `${sentence}\n- **Exit 0**`);
+  assert.notEqual(moved, check);
+  assert.deepEqual(missingIn.check(moved), []);
+  assert.throws(() => rule(moved), { message: /must sit in the no-gate bullet/ });
+});
+
+test('only a design.md in a design session folder takes the approved-parts check', () => {
+  pinFacts('check', 'F1', 'F1b');
+  // Control: the old trigger, any design.md holding a ## Parts section, goes red on F1 alone.
+  const old = DM.replace(/a file named exactly `design\.md` inside a design session folder, `docs\/superpowers\/specs\/\{YYYY-MM-DD\}-\{slug\}\/`, run this before anything else in Step 1, `\{folder\}` being that folder/,
+    'a `design.md` that holds a `## Parts` section, run this before anything else in Step 1, `{folder}` being the folder that holds that `design.md`');
+  assert.notEqual(old, DM);
+  assert.deepEqual(missingIn.check(REGIONS.check(old)), ['F1 run check-approval first']);
+});
+
+test('a sub-issue with a symbolic blocker is created without ready (decomposition-mode.md)', () => {
+  pinFacts('units', 'F2f');
 });
 
 test('AC3.1: an unapproved parts section is refused with the not-approved message', () => {
@@ -363,6 +393,27 @@ test('a local-files slug collision keeps the part slug in the fingerprint', () =
   assertEachPatternGoesRed(region, SUB_FACTS.slice(2), missingSub);
 });
 
+const READY_REGION = (text) => between(text, '**Only sub-issues get `ready`**', '**Fresh manifest for this invocation.**', 'ready region');
+const READY_FACTS = [
+  [/\*\*No `ready` on a symbolic blocker\.\*\* On an approved parts list \(`decomposition-mode\.md` Step 2\), a sub-issue whose blockers include a `symbolic` one, a part left for another repository and written `Blocked by: \{ref\}`, is created without `ready`/, 'Y1 a symbolic blocker creates the sub-issue without ready'],
+  [/Drop `--label ready` from its create call and pass `ready: false` in its payload; under `local-files`, leave `stage: 'ready'` out of its facets\./, 'Y2 no ready label, payload flag or local stage'],
+  [/The later repository's run restores `ready` when it writes the `owner\/name#N` form \(`decomposition-mode-closeout\.md` Step 4\)\./, 'Y3 the later run restores ready'],
+];
+const missingReady = missingFactsOf(READY_FACTS);
+
+test('record-creation-subissues.md: a symbolic blocker is created without ready, restored by the later run', () => {
+  const region = READY_REGION(SUB);
+  assert.deepEqual(missingReady(region), []);
+  assertEachPatternGoesRed(region, READY_FACTS, missingReady);
+  // Move-out control: the paragraph moved below the Fingerprint heading stays in the file but leaves the region red.
+  const para = SUB.split('\n').find((l) => l.startsWith('**No `ready` on a symbolic blocker.**'));
+  assert.ok(para, 'the paragraph must be one line');
+  const moved = SUB.replace(`${para}\n\n`, '').replace('**Fingerprint**', () => `${para}\n\n**Fingerprint**`);
+  assert.notEqual(moved, SUB);
+  assert.deepEqual(missingReady(moved), [], 'the moved paragraph must still match file-wide');
+  assert.deepEqual(missingReady(READY_REGION(moved)), READY_FACTS.map(([, f]) => f));
+});
+
 // --- red-team.md, decomposition-mode-closeout.md, mechanical-handoff.md (#6353 Task 5) ----------
 
 const RT = read('red-team.md');
@@ -373,6 +424,7 @@ const T5_REGIONS = {
   rt: (text) => between(text, '5. **Decision-worthy findings stage instead', '6. **Compose-then-write-once**', 'red-team write-back step 5'),
   step4: (text) => between(text, '## Step 4: Link and order', '## Step 5: Multi-Persona Red-Team', 'closeout Step 4'),
   step6: (text) => between(text, '3. **Scope check**', '4. **Ambiguity check**', 'closeout Step 6 scope check'),
+  check5: (text) => between(text, '5. **Design-doc coverage**', 'When all five checks come back clean', 'closeout Step 6 check 5'),
   kept: (text) => between(text, '## Step 4: Link and order', '## Step 7: Delete Consumed Artifacts', 'closeout Steps 4-6'),
   step7: (text) => between(text, '## Step 7: Delete Consumed Artifacts', '## Step 9: Summary and Commit', 'closeout Step 7'),
   step9: (text) => between(text, '## Step 9: Summary and Commit', 'By the time Next Actions renders', 'closeout Step 9'),
@@ -386,13 +438,18 @@ const T5_FACTS = {
     [/with neither a run directory nor a human, the marker stays and `ready` stays cleared\. The red-team may still write its marker or Open Questions row\./, 'T2 no run dir and no human keeps the marker'],
   ],
   step4: [
-    [/for each `filing\.writeBack` entry `\{ issue, waitsOn \}`, replace the line `Blocked by: \{waitsOn\} \(left for \{thisRepository\}\)` in that issue's body with `Blocked by \{thisRepository\}#\{N\}`/, 'W1 the symbolic line is replaced by the sibling ref'],
+    [/for each `filing\.writeBack` entry `\{ issue, waitsOn, line \}`, replace the entry's `line`, the exact text the earlier run wrote, in that issue's body with `Blocked by \{thisRepository\}#\{N\}`/, 'W1 the exact symbolic line is replaced by the sibling ref'],
     [/`gh issue view \{n\} --repo \{owner\/name\} --json body` read and one `gh issue edit \{n\} --repo \{owner\/name\} --body-file` write per issue/, 'W2 gh read and write per issue'],
     [/A line that is not there is left alone and named in Step 9's summary\./, 'W3 a missing line is named, not edited'],
-    [/Under `local-files` there is no other repository's store to edit, so each entry is listed in Step 9's summary instead\./, 'W4 local-files lists the entries'],
+    [/Under `local-files` there is no other repository's store to edit, so each entry is listed in Step 9's summary instead, with the `ready` it would restore\./, 'W4 local-files lists the entries'],
+    [/once all its entries are replaced, add `ready` back only when no other `Blocked by: … \(left for …\)` line remains in its body and the body carries no `<!-- ambiguity:` marker or `## Open Questions` heading/, 'W5 ready comes back once no symbolic line or open finding remains'],
+    [/\(with `--add-label ready` when `ready` comes back\)/, 'W6 the gh write adds ready back'],
   ],
   step6: [
     [/On the approved branch this check does not apply to approved parts: a scope concern on a part goes through `decomposition-mode\.md`'s no-gate rule, which the dispatch prompt's `Approved parts` line states, and the part stays as approved\./, 'C1 Step 6 split and merge never touch an approved part'],
+  ],
+  check5: [
+    [/the doc is about to be deleted in Step 7 \(kept on the approved branch\)\./, 'C5 check 5 says the approved branch keeps the doc'],
   ],
   kept: [
     [/before Step 7 \(on the approved branch the design folder is kept, never deleted\)/, 'D1 Step 4 keeps the folder'],
@@ -402,7 +459,7 @@ const T5_FACTS = {
   step7: [
     [/\| Approved parts list \(Step 2's approved branch\) \| \*\*No\*\* — the design folder is kept, since it holds the evidence and the notes\./, 'K1 the folder is kept'],
     [/Mark each part this run filed `\{thisRepository\}#\{N\}` and each part in `filing\.leftFor` `left for \{owner\/name\}` \(never a part in `filing\.skipped`\)/, 'K2 filed, left-for and skipped marks'],
-    [/write the marks to a session temp JSON file with the Write tool, run `mark-filed`, and leave `design\.md` staged for Step 9's commit\./, 'K3 marks file by Write, then mark-filed, design.md left for Step 9'],
+    [/write the marks to a session temp JSON file with the Write tool and run `mark-filed`; Step 9's `git add` stages the marked `design\.md`\./, 'K3 marks file by Write, then mark-filed, Step 9\'s git add stages design.md'],
     [/node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/design-session\.js" mark-filed --folder "\{folder\}" --marks "\{marks file\}"/, 'K4 the mark-filed call'],
     [/The `git rm` block below does not run on this branch, and Step 7 makes no commit of its own: Step 9's commit stages the marked `design\.md`\./, 'K5 git rm does not run, Step 9 commits'],
   ],
@@ -411,21 +468,23 @@ const T5_FACTS = {
     [/docs\/: design-doc removal\/marker, or the marked design\.md on the approved branch/, 'S6 bash comment names the marked design.md'],
     [/Under the approved branch\*\* \(`\{argument\}` is `check-approval`'s `designSlug` with each `-` read as a space, which slugs back to the same design folder\) the summary's Artifacts line reads `Design folder kept: \{path\} \(parts marked filed\)`/, 'S1 Artifacts line'],
     [/### Left for another repository \(optional/, 'S2 the block heading in the template'],
-    [/The `### Left for another repository` block lists each part in `filing\.leftFor` with its repository and the rerun line `\/claude-tweaks:design \{argument\}` \(step 10, in that repository's checkout\)/, 'S3 block content and rerun line'],
+    [/The `### Left for another repository` block lists each part in `filing\.leftFor` with its repository and the rerun line `\/claude-tweaks:design \{argument\}` \(in that repository's checkout, from a copy of the folder as this step commits it; its `status` reads that repository, finds the part marked `left for` it and resumes at step 10\)/, 'S3 block content and rerun line'],
+    [/- \{part name\} — left for \{owner\/name\}; copy the design folder, as this step commits it, into that repository's checkout and rerun `\/claude-tweaks:design \{argument\}` there: it resumes at step 10/, 'S7 the template rerun line copies the committed folder'],
     [/With an empty `filing\.file` the summary says nothing was filed here and lists the left and skipped parts\./, 'S4 empty filing.file'],
   ],
   row: [
     [/\| Approved parts \(omit unless Step 2 took the approved branch\) \| `check-approval`'s JSON \(parts, measure, designSlug, and `filing`'s file, skipped, leftFor and writeBack lists\), the folder path, and the no-gate rule in one sentence, since the subagent never reads `decomposition-mode\.md` \|/, 'H1 row inputs carry the JSON, folder and the no-gate rule'],
-    [/Step 3 titles, sizes and slugs each unit from it and writes the measure on the parent; Step 4 writes `filing\.writeBack` back; Step 5 keeps every part as approved; Step 7 marks and keeps the folder instead of deleting it; Step 9 lists the left-for parts \|/, 'H2 row says why each step needs it'],
+    [/Step 3 titles, sizes and slugs each unit from it, creates a unit with a `symbolic` blocker without `ready`, and writes the measure on the parent; Step 4 writes `filing\.writeBack` back and restores those issues' `ready`; Step 5 keeps every part as approved; Step 7 marks and keeps the folder instead of deleting it; Step 9 lists the left-for parts \|/, 'H2 row says why each step needs it'],
   ],
   prompt: [
     [/\[Approved parts — omit unless Step 2 took the approved branch: check-approval JSON \{the whole\nprinted object\}; design folder \{path\}\./, 'H3 prompt line carries JSON and folder'],
     [/No gate changes an approved part: no step applies an\noutcome that would drop, merge, rename or re-size a part, or add or remove one of its blockers —\nbefore its record exists, stop and ask or stage; once it exists, leave the part as approved, clear\nthe record's ready, and stage or ask the question, never applying the change\./, 'H4 prompt states the no-gate rule itself'],
     [/Keep the design\nfolder; mark it with mark-filed instead of deleting it\]/, 'H5 prompt keeps and marks the folder'],
+    [/A choice to change\nit stops the run: records already created stay, with ready cleared, and the stop message lists\nthem and says that after the new approval a renamed part's old record must be closed or reused,\nsince its fingerprint no longer matches\./, 'H6 prompt: a change keeps created records, ready cleared'],
   ],
 };
 const missingT5 = Object.fromEntries(Object.entries(T5_FACTS).map(([k, f]) => [k, missingFactsOf(f)]));
-const T5_SOURCE = { rt: RT, step4: CLOSE, step6: CLOSE, kept: CLOSE, step7: CLOSE, step9: CLOSE, row: HANDOFF, prompt: HANDOFF };
+const T5_SOURCE = { rt: RT, step4: CLOSE, step6: CLOSE, check5: CLOSE, kept: CLOSE, step7: CLOSE, step9: CLOSE, row: HANDOFF, prompt: HANDOFF };
 const allFacts = (region) => T5_FACTS[region].map(([, f]) => f);
 
 function pinT5(region, ...prefixes) {
@@ -541,9 +600,19 @@ test('Step 6 never splits or merges an approved part, and Steps 4-6 keep the des
   assert.deepEqual(missingT5.kept(T5_REGIONS.kept(stripped)), ['D2 Step 5 keeps the folder']);
 });
 
+test('Step 6 check 5 and Step 7 say the approved branch keeps design.md for Step 9\'s git add', () => {
+  pinT5('check5', 'C5');
+  pinT5('step7', 'K3');
+  // Control: the old Step 7 wording, design.md left staged for Step 9's commit, goes red on K3 alone.
+  const old = CLOSE.replace("write the marks to a session temp JSON file with the Write tool and run `mark-filed`; Step 9's `git add` stages the marked `design.md`.",
+    "write the marks to a session temp JSON file with the Write tool, run `mark-filed`, and leave `design.md` staged for Step 9's commit.");
+  assert.notEqual(old, CLOSE);
+  assert.deepEqual(missingT5.step7(T5_REGIONS.step7(old)), ["K3 marks file by Write, then mark-filed, Step 9's git add stages design.md"]);
+});
+
 test('the mechanical handoff carries the approved parts', () => {
   pinT5('row', 'H1', 'H2');
-  pinT5('prompt', 'H3', 'H4', 'H5');
+  pinT5('prompt', 'H3', 'H4', 'H5', 'H6');
   // Move-out control: the prompt line moved above the dispatch prompt heading leaves the prompt red.
   const start = HANDOFF.indexOf('[Approved parts — omit unless');
   const tail = 'instead of deleting it]';

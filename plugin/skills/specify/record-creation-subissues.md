@@ -12,6 +12,8 @@ session-scoped temp path below resolves per `_shared/session-tmp-root.md` — ci
 
 **Only sub-issues get `ready`** — and only sub-issues carry `risk:*`/`size:*` scoring; a kept parent gets neither. One per work unit from Step 2, in any order — Step 4 does the linking once every number exists, so creation order doesn't matter.
 
+**No `ready` on a symbolic blocker.** On an approved parts list (`decomposition-mode.md` Step 2), a sub-issue whose blockers include a `symbolic` one, a part left for another repository and written `Blocked by: {ref}`, is created without `ready`: no blocker surface reads that line, so `ready` would show the sub-issue unblocked. Drop `--label ready` from its create call and pass `ready: false` in its payload; under `local-files`, leave `stage: 'ready'` out of its facets. The later repository's run restores `ready` when it writes the `owner/name#N` form (`decomposition-mode-closeout.md` Step 4).
+
 **Fresh manifest for this invocation.** Once, before the per-work-unit loop below processes its first unit, reset the batch manifest that Accumulate this unit (below) appends to. That file is session-scoped, so without this reset a second decomposition in the same session — or a resumed one, whose loop re-accumulates every unit including Idempotency-resolved ones — would carry earlier entries into this batch's cross-reference pass (`crossReferenceKeyFiles`) and Ceremony tally, which both read it:
 
 ```bash

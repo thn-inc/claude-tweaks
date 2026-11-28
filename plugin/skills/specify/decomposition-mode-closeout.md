@@ -21,7 +21,7 @@ When Step 2.6 kept the parent, records are created **parent-first**: the parent'
 
 Every record this run is going to create now has a number (a parent's, under a kept parent; every unit's own, under collapse). This pass wires the relationships between them and absorbs the last of the design doc's context, before Step 7 (on the approved branch the design folder is kept, never deleted) deletes it. Read `record-creation-linking.md` in this skill's directory (#1346's split of `record-creation.md`) for the full procedure: Linking (branches on driver and `work-links`), and Decision Rationale / Assumptions / Cross-Spec Promises absorption.
 
-**Approved parts list (Step 2's approved branch) — write back the earlier repositories' symbolic blockers.** After linking, for each `filing.writeBack` entry `{ issue, waitsOn }`, replace the line `Blocked by: {waitsOn} (left for {thisRepository})` in that issue's body with `Blocked by {thisRepository}#{N}` (`{N}` the sub-issue this run filed for `waitsOn`). Under `github-issues` that is one `gh issue view {n} --repo {owner/name} --json body` read and one `gh issue edit {n} --repo {owner/name} --body-file` write per issue, the body composed whole and written once; `{n}` and `{owner/name}` come from the entry's `issue`. A line that is not there is left alone and named in Step 9's summary. Under `local-files` there is no other repository's store to edit, so each entry is listed in Step 9's summary instead.
+**Approved parts list (Step 2's approved branch) — write back the earlier repositories' symbolic blockers.** After linking, for each `filing.writeBack` entry `{ issue, waitsOn, line }`, replace the entry's `line`, the exact text the earlier run wrote, in that issue's body with `Blocked by {thisRepository}#{N}` (`{N}` the sub-issue this run filed for `waitsOn`). That issue was created without `ready` because of its symbolic line: once all its entries are replaced, add `ready` back only when no other `Blocked by: … (left for …)` line remains in its body and the body carries no `<!-- ambiguity:` marker or `## Open Questions` heading. Under `github-issues` that is one `gh issue view {n} --repo {owner/name} --json body` read and one `gh issue edit {n} --repo {owner/name} --body-file` write per issue (with `--add-label ready` when `ready` comes back), the body composed whole and written once; `{n}` and `{owner/name}` come from the entry's `issue`. A line that is not there is left alone and named in Step 9's summary. Under `local-files` there is no other repository's store to edit, so each entry is listed in Step 9's summary instead, with the `ready` it would restore.
 
 ---
 
@@ -51,7 +51,7 @@ Before deleting the design doc (on the approved branch the design folder is kept
 2. **Internal consistency** — across the sub-issues in this decomposition, do referenced types, model names, and endpoint signatures match? A function called `clearLayers()` in sub-issue 42 but `clearFullLayers()` in sub-issue 43 is a bug.
 3. **Scope check** — is each sub-issue genuinely a single work unit (3-8 tasks)? If one is doing two things, split it now. If two are doing the same thing, merge them. On the approved branch this check does not apply to approved parts: a scope concern on a part goes through `decomposition-mode.md`'s no-gate rule, which the dispatch prompt's `Approved parts` line states, and the part stays as approved.
 4. **Ambiguity check** — could any acceptance criterion be interpreted two different ways? Pick one and make it explicit.
-5. **Design-doc coverage** — re-read the design doc with each sub-issue open. If you find a requirement the doc captured but no sub-issue implements, add it to the right sub-issue now — the doc is about to be deleted in Step 7.
+5. **Design-doc coverage** — re-read the design doc with each sub-issue open. If you find a requirement the doc captured but no sub-issue implements, add it to the right sub-issue now — the doc is about to be deleted in Step 7 (kept on the approved branch).
 
 When all five checks come back clean, proceed to Step 7. No need to re-review after fixing.
 
@@ -67,7 +67,7 @@ The design doc has served its purpose **once every phase has been decomposed int
 
 | Decomposition mode | Delete design doc? |
 |---|---|
-| Approved parts list (Step 2's approved branch) | **No** — the design folder is kept, since it holds the evidence and the notes. Mark each part this run filed `{thisRepository}#{N}` and each part in `filing.leftFor` `left for {owner/name}` (never a part in `filing.skipped`): write the marks to a session temp JSON file with the Write tool, run `mark-filed`, and leave `design.md` staged for Step 9's commit. |
+| Approved parts list (Step 2's approved branch) | **No** — the design folder is kept, since it holds the evidence and the notes. Mark each part this run filed `{thisRepository}#{N}` and each part in `filing.leftFor` `left for {owner/name}` (never a part in `filing.skipped`): write the marks to a session temp JSON file with the Write tool and run `mark-filed`; Step 9's `git add` stages the marked `design.md`. |
 | No `phase-N` argument; doc has 0 phase sections (single-phase) | Yes — fully consumed |
 | No `phase-N` argument; doc has N phase sections; all decomposed in this run | Yes — fully consumed |
 | `phase-N` argument; only that phase decomposed | **No** — design doc retained for remaining phases. Add a `## Phase N: Specified` marker after the phase heading instead, listing the record numbers it produced. |
@@ -117,7 +117,7 @@ Present a summary. The `Collapse outcome` line below renders in every decomposit
 - Design doc: `docs/superpowers/specs/{filename}` (absorbed into the records this run produced)
 
 ### Left for another repository (optional — render only on the approved branch, when `filing.leftFor` is not empty)
-- {part name} — left for {owner/name}; rerun `/claude-tweaks:design {argument}` in that repository's checkout
+- {part name} — left for {owner/name}; copy the design folder, as this step commits it, into that repository's checkout and rerun `/claude-tweaks:design {argument}` there: it resumes at step 10
 
 ### Teardown (optional — render only when the check below finds the branch net-empty)
 {one paste-ready line, see below}
@@ -131,7 +131,7 @@ Present a summary. The `Collapse outcome` line below renders in every decomposit
 | {ref} | {the whole `<!-- ambiguity: ... -->` comment, or the whole `## Open Questions` table row, verbatim — never just the flagged sentence, which leaves the marker behind} | {the resolution the red-team persona proposed, or "—" if none was proposed} |
 ```
 
-**Under the approved branch** (`{argument}` is `check-approval`'s `designSlug` with each `-` read as a space, which slugs back to the same design folder) the summary's Artifacts line reads `Design folder kept: {path} (parts marked filed)` in place of `### Artifacts Removed`, and the Actions Performed row `Deleted design doc` reads `Marked design folder`. The `### Left for another repository` block lists each part in `filing.leftFor` with its repository and the rerun line `/claude-tweaks:design {argument}` (step 10, in that repository's checkout), and the summary also names each `filing.writeBack` line Step 4 did not find, and under `local-files` each entry it listed instead of editing. With an empty `filing.file` the summary says nothing was filed here and lists the left and skipped parts.
+**Under the approved branch** (`{argument}` is `check-approval`'s `designSlug` with each `-` read as a space, which slugs back to the same design folder) the summary's Artifacts line reads `Design folder kept: {path} (parts marked filed)` in place of `### Artifacts Removed`, and the Actions Performed row `Deleted design doc` reads `Marked design folder`. The `### Left for another repository` block lists each part in `filing.leftFor` with its repository and the rerun line `/claude-tweaks:design {argument}` (in that repository's checkout, from a copy of the folder as this step commits it; its `status` reads that repository, finds the part marked `left for` it and resumes at step 10), and the summary also names each `filing.writeBack` line Step 4 did not find, and under `local-files` each entry it listed instead of editing. With an empty `filing.file` the summary says nothing was filed here and lists the left and skipped parts.
 
 **Resolving a `### Staged for caller` row.** Decide the resolution (an `AskUserQuestion` call or your own judgment), then apply it with `bin/resolve-ambiguity.js`, one row at a time, since each row re-fetches the body the previous one wrote. `{n}` below is the bare issue number: `#{n}` would start a bash comment.
 

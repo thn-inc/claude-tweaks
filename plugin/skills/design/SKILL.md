@@ -53,13 +53,13 @@ The session's folder is `docs/superpowers/specs/{YYYY-MM-DD}-{slug}/` in the rep
    node "${CLAUDE_PLUGIN_ROOT}/bin/design-session.js" status --folder "{folder}"
    ```
 
-   It prints `steps`, `resumeAt`, `round`, `action` and `openSerious`. Exit 2 → stop and show stderr.
+   It prints `steps`, `resumeAt`, `round`, `action` and `openSerious`. Exit 2 → stop and show stderr. When the session knows this checkout's `owner/name` — the cloud session's repository, or the one step 10 passed to `check-approval` — add `--repository {owner/name}` to this and every later `status` call: a part marked `left for` that repository keeps step 10 open, and without the flag `status` reads the repository from the origin, so an origin that names none counts every `left for …` mark as marked.
 5. **Session model check** (`## Model`, The session) — every start, whatever step `status` resumes at, before going on.
 6. Continue at `resumeAt`, in the mode `action` names, and load only that step's sub-file (`## Steps`). `resumeAt: 'complete'` → say the session is finished and render `## Next Actions`; nothing is rewritten.
 
 Run `status` again after each step finishes, and follow it; never pick the next step by hand.
 
-The folder is uncommitted until the maintainer commits it, and a later session resumes it only from the same checkout. Say both when the session starts and when it ends.
+Until step 10's `/claude-tweaks:specify` run commits it, the folder is uncommitted, and a later session resumes it only from the same checkout. Say both when the session starts, and again when it stops before step 10.
 
 `design.md` opens with `# {topic} — design` and holds its sections in this order: `## Frame`, `## Storyboard`, `## Perspectives`, `## Approaches`, `## Pre-mortem`, `## Builder check`, `## Parts`, `## Approval`, `## Filing`, `## Decisions`. A new section goes in its place in that order, before `## Decisions`, which is created with the first decision and stays last. Each step's section starts with a `Status: in-progress` line right under its heading while the step runs, set to `Status: done` only when the step is finished.
 
@@ -108,7 +108,7 @@ Load only the sub-file of the step `status` resumes at, from this skill's direct
 | 7. Builder check | `step-7-builder-check.md` | `## Builder check` | its `Status: done` |
 | 8. Parts | `step-8-parts.md` | `## Parts` | its `Status: done`, and `parts` exits 0 |
 | 9. Approval | `step-9-approve.md` | `## Approval` | its `Status: done`, and `check-approval` exits 0 |
-| 10. Filing | `step-10-file.md` | `## Filing`, issue marks | its `Status: done`, and every part marked |
+| 10. Filing | `step-10-file.md` | `## Filing`, issue marks | its `Status: done`, and every part marked, none `left for` this repository |
 
 To change an approved frame, approach or part, first run step 9's approval rule (`step-9-approve.md`): set the Approval section back to `Status: in-progress` and remove its `Approved:` line, make the change, then run step 9 again.
 

@@ -615,14 +615,42 @@ test('step 10 files only through /claude-tweaks:specify', () => {
     [/`Parent: none — one part`/, 'step 10: the collapse form of Parent'],
     [/A part marked `left for \{owner\/name\}` belongs to that repository/, 'step 10: parts for another repository are left'],
     [/`\/claude-tweaks:design \{argument\}` there/, 'step 10: the other repository resumes with design there'],
+    [/`\/claude-tweaks:specify`'s Step 9 committed this folder, its marks included; the copy for that repository is taken from that commit\./, 'step 10: specify Step 9 committed the folder, the copy comes from that commit'],
+    [/`status` there reads that repository, so the part marked `left for` it keeps step 10 open: it resumes at step 10/, 'step 10: the other repository\'s status resumes at step 10'],
+    [/Then run `status` \(with `--repository \{owner\/name\}` when section 1 passed it to `check-approval`\)/, 'step 10: the closing status call carries --repository'],
+    [/check every part carries an Issue mark and none is still marked `left for` this checkout's repository/, 'step 10: section 2 checks no part is still left for this repository'],
+    [/A later repository's run keeps the earlier `Parent:` line and adds its own below it as `Parent: \{owner\/name\}#\{N\}`\./, 'step 10: a later run adds its own Parent line'],
   ]);
+});
+
+const assertNoUncommitted = (text) => assert.ok(!/uncommitted/i.test(text), 'step 10 calls the folder uncommitted');
+
+test('step 10 never calls the folder uncommitted: specify\'s Step 9 committed it', () => {
+  assertNoUncommitted(STEP10);
+  assert.throws(() => assertNoUncommitted(`${STEP10}\nRemind the maintainer that the folder is uncommitted.\n`), { message: 'step 10 calls the folder uncommitted' });
+  pinFacts(sectionOf(SKILL, '## Session folder and resume'), [
+    [/Until step 10's `\/claude-tweaks:specify` run commits it, the folder is uncommitted/, 'SKILL: the folder is uncommitted until step 10 commits it'],
+    [/Say both when the session starts, and again when it stops before step 10\./, 'SKILL: say it at the start and at a stop before step 10'],
+  ]);
+});
+
+test('status takes --repository when the session knows this checkout\'s repository', () => {
+  pinFacts(sectionOf(SKILL, '## Session folder and resume'), [
+    [/When the session knows this checkout's `owner\/name` — the cloud session's repository, or the one step 10 passed to `check-approval` — add `--repository \{owner\/name\}` to this and every later `status` call/, 'SKILL: status takes --repository when the session knows it'],
+    [/a part marked `left for` that repository keeps step 10 open/, 'SKILL: a part left for this repository keeps step 10 open'],
+    [/an origin that names none counts every `left for …` mark as marked\./, 'SKILL: with no repository, every left-for mark counts as marked'],
+  ]);
+  const usageHas = (usage) => assert.ok(usage.split('\n').some((l) => l.includes('design-session.js status --folder <dir> [--repository <owner/name>]')), 'status no longer takes --repository');
+  const usage = cliUsage('design-session.js');
+  usageHas(usage);
+  assert.throws(() => usageHas(usage.replace('status --folder <dir> [--repository', 'status --folder <dir> [--repo')), { message: 'status no longer takes --repository' });
 });
 
 test('the Steps table lists steps 8, 9 and 10 in order', () => {
   const rows = [
     '| 8. Parts | `step-8-parts.md` | `## Parts` | its `Status: done`, and `parts` exits 0 |',
     '| 9. Approval | `step-9-approve.md` | `## Approval` | its `Status: done`, and `check-approval` exits 0 |',
-    '| 10. Filing | `step-10-file.md` | `## Filing`, issue marks | its `Status: done`, and every part marked |',
+    '| 10. Filing | `step-10-file.md` | `## Filing`, issue marks | its `Status: done`, and every part marked, none `left for` this repository |',
   ];
   for (const r of rows) assertHas(SKILL, r, `Steps table row missing: ${r.slice(0, 12)}`);
   requireOrder(SKILL, rows[0], rows[1], 'steps 8 before 9');

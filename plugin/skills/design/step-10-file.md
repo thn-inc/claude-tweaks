@@ -16,7 +16,7 @@ Exit 1 → stop and show the `reason` it printed, then run step 9 again (`not-ap
 
 On exit 0, invoke `/claude-tweaks:specify {design.md path}` with the Skill tool, `{design.md path}` being the repository-relative path of `design.md`. Decomposition files the parts as written, marks each part's Issue cell and keeps the folder.
 
-Then run `parts --folder "{folder}"` and check every part carries an Issue mark. A part without one → say which, and run section 2 again.
+Then run `parts --folder "{folder}"` and check every part carries an Issue mark and none is still marked `left for` this checkout's repository. A part that fails → say which, and run section 2 again.
 
 ## 3. Write
 
@@ -26,10 +26,10 @@ Status: done
 Parent: {record ref}
 ```
 
-`{record ref}` is in the backend's own form: `#{N}` under `github-issues`, the record id under `local-files`. A collapse to one part writes `Parent: none — one part`. Append the filing to `## Decisions` (`by: model`).
+`{record ref}` is in the backend's own form: `#{N}` under `github-issues`, the record id under `local-files`. A collapse to one part writes `Parent: none — one part`. A later repository's run keeps the earlier `Parent:` line and adds its own below it as `Parent: {owner/name}#{N}`. Append the filing to `## Decisions` (`by: model`).
 
 ## 4. Parts for another repository
 
-A part marked `left for {owner/name}` belongs to that repository. Tell the maintainer to commit this folder, copy it as committed into the same path of that repository's checkout, and run `/claude-tweaks:design {argument}` there. `status` resumes at step 10, which files only that repository's parts, skips the parts already marked `owner/name#N`, and rewrites the symbolic blockers in the earlier repository's issues.
+A part marked `left for {owner/name}` belongs to that repository. `/claude-tweaks:specify`'s Step 9 committed this folder, its marks included; the copy for that repository is taken from that commit. Tell the maintainer to copy the folder as committed into the same path of that repository's checkout and run `/claude-tweaks:design {argument}` there. `status` there reads that repository, so the part marked `left for` it keeps step 10 open: it resumes at step 10, which files only that repository's parts, skips the parts already marked `owner/name#N`, and rewrites the symbolic blockers in the earlier repository's issues.
 
-Then run `status`, remind the maintainer that the folder is uncommitted, and render SKILL.md's `## Next Actions`.
+Then run `status` (with `--repository {owner/name}` when section 1 passed it to `check-approval`) and render SKILL.md's `## Next Actions`.
