@@ -14,6 +14,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { parseCrossRepoDependencies, stripCrossRepoRefs } = require('../plugin/bin/lib/issues/cross-repo-refs');
+const { symbolicBlockers } = require('../plugin/bin/lib/issues/blocker-lines');
 
 const INPUTS = [
   ['a long token with no slash', `Blocked by ${'a'.repeat(200000)}`],
@@ -36,6 +37,14 @@ test('parseCrossRepoDependencies stays linear on adversarial bodies and finds no
     assert.deepStrictEqual(out, [], `${name}: no qualified ref is present`);
     assert.ok(elapsed < 200, `${name}: parsing took ${elapsed.toFixed(0)}ms — the line regex must not backtrack within a token`);
   }
+});
+
+test('symbolicBlockers stays linear on one 60 KB line of unterminated (left for a/a and finds nothing', () => {
+  const input = `Blocked by: x${' (left for a/a'.repeat(4800)}`;
+  assert.ok(input.length >= 60000);
+  const { out, elapsed } = timed(symbolicBlockers, input);
+  assert.deepStrictEqual(out, [], 'no closing parenthesis, so no symbolic blocker is present');
+  assert.ok(elapsed < 200, `symbolic parsing took ${elapsed.toFixed(0)}ms — the line regex must not backtrack quadratically`);
 });
 
 test('stripCrossRepoRefs stays linear on adversarial text and leaves it unchanged', () => {

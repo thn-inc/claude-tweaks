@@ -8,8 +8,9 @@
 // run the built queries themselves.
 'use strict';
 
-// Line-anchored 'Blocked by #N' dependency declarations (multiline).
-const DEP_RE = /^Blocked by #(\d+)\b/gm;
+// Line-anchored 'Blocked by #N' dependency declarations and their ': {text}' assumption
+// variant (multiline); both regexes are defined in blocker-lines.js.
+const { LOCAL_BLOCKER_LINE_RE: DEP_RE, LOCAL_BLOCKER_ASSUMPTION_RE: DEP_ASSUMPTION_RE } = require('./blocker-lines');
 
 // Parent task-list entries (work-links: body-text), written by /specify as
 // '- [ ] #{subIssueNum}' and checked off over time — both box states count.
@@ -18,13 +19,6 @@ const SUB_ISSUE_RE = /^- \[[ xX]\] #(\d+)\b/gm;
 // Line-anchored 'Parent: #N' back-link (work-links: body-text), written by
 // /specify as a metadata line in a sub-issue's body. Non-global: first match wins.
 const PARENT_RE = /^Parent: #(\d+)\b/m;
-
-// Line-anchored 'Blocked by #N: {text}' assumption declarations (multiline) —
-// a separate, additive sibling to DEP_RE/parseDependencies below, never a
-// modification of either. DEP_RE already stops matching at the number, so a
-// trailing ': {text}' parses under it with zero changes; this regex only
-// exists to capture that trailing text when a caller wants it.
-const DEP_ASSUMPTION_RE = /^Blocked by #(\d+):[ \t]*(.+)$/gm;
 
 // (body, lineRe) -> deduped array of the numbers lineRe's first capture group
 // matches, in order of first appearance; [] for a null/undefined/empty body.

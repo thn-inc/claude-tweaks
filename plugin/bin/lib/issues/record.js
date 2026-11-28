@@ -18,6 +18,7 @@
 //   - record-acceptance-target.js — the `Acceptance-target:` body line: parseAcceptanceTarget
 //                             and itemOverrideOf (#4615)
 //   - plan-line.js          — the `Plan:` body line (#6052): parsePlanLine, composePlanLine and specHash
+//   - blocker-lines.js      — the three `Blocked by` line forms (#6374): their regexes, isBlockerLine and the symbolic-blocker readers
 // It also re-exports fenceFor/fencedBlock/extractSection, the fence and section
 // primitives that live in ../markdown-blocks.js.
 // New code that only needs one boundary's exports may require that
@@ -56,6 +57,8 @@ const { parseAcceptanceTarget, itemOverrideOf } = require('./record-acceptance-t
 
 const { parsePlanLine, composePlanLine, specHash } = require('./plan-line');
 
+const blockerLines = require('./blocker-lines');
+
 module.exports = {
   ORIGINS, TYPES, TIERS, PRIORITIES, DEFER_REASONS, LABELS, TYPE_LABELS, recordPayload, specShapedBody, isRepoRelativeKeyFilePath,
   FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, extractFingerprints, defuse, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, ownOriginLine, normalizeLabelNames, parseRecordFacets,
@@ -67,5 +70,6 @@ module.exports = {
   parseTripwireFlags, addTripwireRiskFlags, carryTripwireFlags,
   parseAcceptanceTarget, itemOverrideOf,
   parsePlanLine, composePlanLine, specHash,
+  ...blockerLines,
   crossRepositoryBlockers, withoutCrossRepoBlockers, foreignBlockerBlocks, foreignBlockerRef, withoutUnreadableSuffix, openBlockerRefs, openNativeBlockerRefs,
 };

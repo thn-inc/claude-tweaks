@@ -5,9 +5,9 @@
 'use strict';
 
 const {
-  shapeGate, stripCodeSpans, originalRequestOffset,
+  shapeGate, authoredText,
 } = require('./materialize-format');
-const { SYMBOLIC_LINE_RE } = require('../design-session/parts');
+const { hasSymbolicBlocker } = require('./blocker-lines');
 
 // The opening of a red-team marker (specify/red-team.md's write-back). Same
 // pattern the spec-shaped gate uses (materialize-format.js's
@@ -19,15 +19,6 @@ const AMBIGUITY_OPEN_RE = /<!--\s*ambiguity:/g;
 // closed: a surviving variant heading keeps `ready` off rather than letting it
 // back on.
 const OPEN_QUESTIONS_HEADING_RE = /^(#{2,4})[ \t]+open questions\b.*$/im;
-
-// The authored part of a body — everything before `## Original request`, with
-// fenced blocks and inline code spans stripped — exactly the text
-// materialize-format.js's shapeGate tests for placeholders. A marker quoted
-// in a code span or inherited in the original request is not an open one.
-function authoredText(body) {
-  const at = originalRequestOffset(body);
-  return stripCodeSpans(at === -1 ? body : body.slice(0, at));
-}
 
 function countAmbiguityMarkers(body) {
   if (typeof body !== 'string') return 0;
@@ -49,7 +40,7 @@ function hasOpenQuestionsSection(body) {
 // unblocked until the later repository's run rewrites it (design-session/parts.js).
 function readyRestorable(body) {
   if (typeof body !== 'string') return false;
-  return shapeGate(body).ok && !hasOpenQuestionsSection(body) && !SYMBOLIC_LINE_RE.test(authoredText(body));
+  return shapeGate(body).ok && !hasOpenQuestionsSection(body) && !hasSymbolicBlocker(body);
 }
 
 // Deletes an Open Questions section whose table has no data rows left (only

@@ -26,6 +26,7 @@ const { PLAN_REF_PREFIX, planRefName, parsePlanRefName } = require('../plan-stor
 const { fencedLineMask } = require('../markdown-blocks');
 const { FP_RE_WORK, FP_RE_WORK_PLAIN } = require('./record-fingerprint');
 const { RISK_FLAG_LINE_KEYS } = require('./record-risk-flags');
+const { isBlockerLine } = require('./blocker-lines');
 
 // The ten prefixes, the preamble metadata lines spec #6052 Deliverable 3 enumerates: lines other
 // pipeline steps write or rewrite on the record (facets, cross-links, risk flags, acceptance target)
@@ -43,8 +44,6 @@ const SPEC_HASH_EXCLUDED_PREFIXES = [
 const COMMIT_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const HASH_RE = /^[0-9a-f]{64}$/;
 const HASH_TOKEN_PREFIX = 'spec-sha256:';
-// record-dependencies DEP_RE ∪ cross-repo-refs CROSS_REPO_DEP_RE, well-formed only.
-const BLOCKED_BY_RE = /^Blocked by (?:[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9._-]+)?#\d+\b/;
 
 function composePlanLine({ record, commit, specHash: hash } = {}) {
   const ref = planRefName(record); // TypeError on a bad record
@@ -76,7 +75,7 @@ function parsePlanLine(line) {
 
 function excluded(line) {
   return SPEC_HASH_EXCLUDED_PREFIXES.some((p) => line.startsWith(p))
-    || BLOCKED_BY_RE.test(line)
+    || isBlockerLine(line)
     || parsePlanLine(line).ok
     || FP_RE_WORK.test(line)
     || FP_RE_WORK_PLAIN.test(line);

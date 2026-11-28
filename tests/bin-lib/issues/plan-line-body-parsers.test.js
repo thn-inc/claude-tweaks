@@ -15,6 +15,8 @@ const { liftMetadata } = require('../../../plugin/bin/lib/issues/materialize-for
 const { validateShaped } = require('../../../plugin/bin/lib/compose-record/compose.js');
 const { extractAcceptanceClauses, extractSpecPaths } = require('../../../plugin/bin/lib/plan-audit/parser.js');
 
+const { SYMBOLIC_LINE } = require('../../helpers/symbolic-blocker-fixture.js');
+
 const LINE = composePlanLine({ record: 6056, commit: 'a'.repeat(40), specHash: 'b'.repeat(64) });
 
 const BODY = [
@@ -86,6 +88,16 @@ test('control: the comparison sees a metadata change a parser reads', () => {
   const changed = BODY.replace('Risk-flags: none', 'Risk-flags: auth');
   assert.notEqual(changed, BODY);
   assert.notDeepEqual(parseRiskFlags(changed), parseRiskFlags(BODY));
+});
+
+test('a symbolic Blocked-by line rewritten to owner/name#N leaves the spec hash unchanged', () => {
+  const withLine = BODY.replace('1. A step.\n', `1. A step.\n${SYMBOLIC_LINE}\n`);
+  assert.notEqual(withLine, BODY);
+  const rewritten = withLine.replace(SYMBOLIC_LINE, 'Blocked by thn-inc/other#7004');
+  assert.equal(specHash(rewritten), specHash(withLine));
+  assert.equal(specHash(withLine), specHash(BODY));
+  // control: a changed Deliverables sentence changes the hash
+  assert.notEqual(specHash(withLine.replace('1. A step.', '1. Another step.')), specHash(withLine));
 });
 
 test('planning inserts ## Overview because specHash refuses a body without one', () => {
