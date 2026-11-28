@@ -18,7 +18,8 @@
 //     mark is `owner/name#N` (N the issue number, or the record id under
 //     `work-backend: local-files`); a part this run did not file is marked
 //     `left for owner/name`. A part marked `owner/name#N` is filed and is never
-//     filed or re-marked again; `left for …` counts as marked, not as filed.
+//     filed or re-marked again; `left for …` counts as marked, not as filed,
+//     except in the run of the repository it names, where it is still to file.
 //     The cell is empty, `—`, or a mark naming the row's own Repository
 //     (`{Repository}#N` or `left for {Repository}`); anything else (`#7001`,
 //     `TBD`, a mark naming another repository) is a row error, so no part ever
@@ -137,6 +138,12 @@ function issueProblem(issue, repository) {
 // The `owner/name` an `owner/name#N` or `left for owner/name` mark names; null for anything else.
 function markRepository(mark) {
   const m = FILED_RE.exec(mark) || LEFT_RE.exec(mark);
+  return m ? m[1] : null;
+}
+
+// The `owner/name` a `left for owner/name` mark names; null for anything else.
+function leftForRepository(mark) {
+  const m = LEFT_RE.exec(mark);
   return m ? m[1] : null;
 }
 
@@ -281,8 +288,12 @@ function markFiled(designText, marks) {
     }
     const segs = lines[i].split('|');
     const current = (segs[ISSUE_COL + 1] || '').trim();
+    if (!sameRepository(markRepo, cellsOf(lines[i])[3])) {
+      conflicts.push(name);
+      continue;
+    }
     if (sameRepository(current, mark)) continue;
-    if ((!noneValue(current) && !LEFT_RE.test(current)) || !sameRepository(markRepo, cellsOf(lines[i])[3])) {
+    if (!noneValue(current) && !LEFT_RE.test(current)) {
       conflicts.push(name);
       continue;
     }
@@ -292,6 +303,11 @@ function markFiled(designText, marks) {
   }
   return { text: lines.join(eol), marked, unknown, conflicts };
 }
+
+// A blocker on a part left for another repository: its name and that part's
+// Repository cell, spelled as the table spells it. The earlier run writes it as
+// `Blocked by: {ref}`; the later run's writeBack `line` is that same text.
+const symbolicRef = (name, repository) => `${name} (left for ${repository})`;
 
 // What one filing run from `thisRepository` does with the parts table. Takes
 // parts from a parse with no errors; a Waits for name matching no part, or a
@@ -313,12 +329,14 @@ function planFiling(parts, thisRepository) {
     const p = byName.get(w);
     if (!p) throw new Error(`planFiling: Waits for names unknown part '${w}'`);
     if (filed(p)) return { kind: 'issue', ref: p.issue };
-    return { kind: 'symbolic', ref: `${w} (left for ${p.repository})` };
+    return { kind: 'symbolic', ref: symbolicRef(w, p.repository) };
   };
   const writeBack = [];
   for (const p of parts) {
     if (sameRepository(p.repository, thisRepository) || !filed(p)) continue;
-    for (const w of p.waitsFor) if (fileNames.has(w)) writeBack.push({ issue: p.issue, waitsOn: w });
+    for (const w of p.waitsFor) {
+      if (fileNames.has(w)) writeBack.push({ issue: p.issue, waitsOn: w, line: `Blocked by: ${symbolicRef(w, byName.get(w).repository)}` });
+    }
   }
   return {
     file: file.map((p) => ({ ...p, blockers: p.waitsFor.map(blocker) })),
@@ -332,6 +350,6 @@ function planFiling(parts, thisRepository) {
 module.exports = {
   PARTS_HEADING, APPROVAL_HEADING, FILING_HEADING, FRAME_HEADING, APPROACHES_HEADING, WORTH_IT_HEADING,
   MEASURE_KEY, TABLE_HEADER, SIZES, REPO_RE, sameRepository,
-  markRepository, parseParts, partsDigest, approvalLine, checkApproval, estimate, measure, unitSlug, designSlug, markFiled,
+  markRepository, leftForRepository, parseParts, partsDigest, approvalLine, checkApproval, estimate, measure, unitSlug, designSlug, markFiled,
   planFiling,
 };

@@ -12,8 +12,12 @@
 //   design-session.js folder --topic <text> --root <repo> [--create]
 //       Prints the absolute session folder (docs/superpowers/specs/{date}-{slug}
 //       under --root; an existing folder for the slug is reused). --create makes it.
-//   design-session.js status --folder <dir>
-//       Prints { steps, resumeAt, round, action, openSerious } as JSON.
+//   design-session.js status --folder <dir> [--repository <owner/name>]
+//       Prints { steps, resumeAt, round, action, openSerious } as JSON. A part marked
+//       `left for` this checkout's repository leaves step 10 not done; that
+//       repository is --repository, else the origin read as check-approval reads it,
+//       and only when a part is marked `left for …`. When neither resolves, every
+//       `left for …` mark counts as marked.
 //   design-session.js check-evidence --folder <dir>
 //       Prints { done, unsourced, unclosedFence } as JSON.
 //   design-session.js check-notes --folder <dir> --round <N>
@@ -77,7 +81,7 @@ const BRIEFS_FILE = path.join(__dirname, '..', 'skills', 'design', 'reader-brief
 const USAGE = [
   'Usage:',
   '  design-session.js folder --topic <text> --root <repo> [--create]',
-  '  design-session.js status --folder <dir>',
+  '  design-session.js status --folder <dir> [--repository <owner/name>]',
   '  design-session.js check-evidence --folder <dir>',
   '  design-session.js check-notes --folder <dir> --round <N>',
   '  design-session.js brief --folder <dir> --reader <name> [--round <N>]',
@@ -94,7 +98,7 @@ const USAGE = [
   '  --folder <dir>    the session folder, relative to the current directory or absolute',
   '  --round <N>       the notes round, 1 to 4',
   '  --reader <name>   user | smallest | ownership | token-cost | introduction | pre-mortem | builder',
-  '  --repository <r>  this checkout owner/name, instead of reading origin (check-approval only)',
+  '  --repository <r>  this checkout owner/name, instead of reading origin (check-approval and status)',
   '  --marks <file>    JSON object of Part name -> "owner/name#N" | "left for owner/name" (mark-filed only)',
   '',
   'Exit: 0 ok / check passed, 1 check failed or brief refused (JSON on stdout), 2 malformed invocation.',
@@ -263,7 +267,7 @@ function runPartsVerb(verb, folder, flags, deps) {
 
 function runVerb(verb, flags, deps) {
   if (flags['--repository'] !== undefined) {
-    if (verb !== 'check-approval') throw new UsageError('--repository applies only to the check-approval verb');
+    if (verb !== 'check-approval' && verb !== 'status') throw new UsageError('--repository applies only to the check-approval and status verbs');
     if (!REPO_RE.test(flags['--repository'])) throw new UsageError('--repository must be owner/name');
   }
   if (flags['--create'] && verb !== 'folder') throw new UsageError('--create applies only to the folder verb');
@@ -286,7 +290,9 @@ function runVerb(verb, flags, deps) {
   const folder = existingFolder(deps, flags);
 
   if (verb === 'status') {
-    json(deps, readStatus(folder, deps.fs));
+    const given = flags['--repository'];
+    const repository = () => (given === undefined ? thisRepositoryOf(deps, folder).repository : given);
+    json(deps, readStatus(folder, deps.fs, { repository }));
     return EXIT_OK;
   }
 

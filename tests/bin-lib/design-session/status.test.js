@@ -295,18 +295,62 @@ function approvedLine() {
 }
 function filingSection(status) { return section('Filing', status); }
 
+const OTHER = 'thn-inc/other';
+// The first repository's run filed Parser and left Skill steps for OTHER: the folder a later run copies.
+const TWO_REPO_ROWS = [
+  `| 1 | Parser | size:low | ${REPO} | — |  |`,
+  `| 2 | Skill steps | size:medium | ${OTHER} | Parser |  |`,
+];
+const TWO_REPO_FILED = [
+  `| 1 | Parser | size:low | ${REPO} | — | ${REPO}#7001 |`,
+  `| 2 | Skill steps | size:medium | ${OTHER} | Parser | left for ${OTHER} |`,
+];
+function twoRepoFolder(t) {
+  const line = approvalLine('2026-11-28', partsDigest(designThrough7(partsSection('done', TWO_REPO_ROWS))));
+  return folderWith(t, {
+    ...BASE,
+    'design.md': designThrough7(partsSection('done', TWO_REPO_FILED), approvalSection('done', line), filingSection('done'),
+      '## Decisions', '', '- 2026-11-27 — keep it small — by: maintainer'),
+  });
+}
+
 test('complete session', (t) => {
-  const dir = folderWith(t, {
+  const dir = twoRepoFolder(t);
+  for (const opts of [undefined, { repository: () => REPO }, { repository: () => null }]) {
+    const s = readStatus(dir, fs, opts);
+    assert.deepStrictEqual(Object.values(s.steps), Array(10).fill('done'), JSON.stringify(opts));
+    assert.deepStrictEqual([s.resumeAt, s.round, s.action], ['complete', null, null]);
+  }
+});
+
+test('the folder copied into the repository a part was left for resumes at step 10 continue', (t) => {
+  const dir = twoRepoFolder(t);
+  for (const here of [OTHER, OTHER.toUpperCase()]) {
+    const s = readStatus(dir, fs, { repository: () => here });
+    assert.strictEqual(s.steps[10], 'partial', here);
+    assert.deepStrictEqual(s.steps[9], 'done');
+    assert.deepStrictEqual(triple(s), [10, null, 'continue'], here);
+  }
+});
+
+test('the repository is read once, and only when Filing is done and a part is left for another', (t) => {
+  let calls = 0;
+  const counted = { repository: () => { calls += 1; return OTHER; } };
+  readStatus(twoRepoFolder(t), fs, counted);
+  assert.strictEqual(calls, 1);
+  // every part filed: nothing is left for anyone, so the origin is never read
+  const allFiled = folderWith(t, {
     ...BASE,
     'design.md': designThrough7(partsSection('done', [
       `| 1 | Parser | size:low | ${REPO} | — | ${REPO}#7001 |`,
-      `| 2 | Skill steps | size:medium | ${REPO} | Parser | left for ${REPO} |`,
-    ]), approvalSection('done', approvedLine()), filingSection('done'),
-    '## Decisions', '', '- 2026-11-27 — keep it small — by: maintainer'),
+      `| 2 | Skill steps | size:medium | ${REPO} | Parser | ${REPO}#7002 |`,
+    ]), approvalSection('done', approvedLine()), filingSection('done')),
   });
-  const s = readStatus(dir);
-  assert.deepStrictEqual(Object.values(s.steps), Array(10).fill('done'));
-  assert.deepStrictEqual([s.resumeAt, s.round, s.action], ['complete', null, null]);
+  const boom = { repository: () => { throw new Error('repository must not be read'); } };
+  assert.strictEqual(readStatus(allFiled, fs, boom).resumeAt, 'complete');
+  // Filing not yet written: step 10 is open whatever the repository
+  const dir = folderWith(t, { ...BASE, 'design.md': designThrough7(partsSection('done', TWO_REPO_FILED), approvalSection('done', approvalLine('2026-11-28', partsDigest(designThrough7(partsSection('done', TWO_REPO_ROWS)))))) });
+  assert.deepStrictEqual(triple(readStatus(dir, fs, boom)), [10, null, 'start']);
 });
 
 test('steps 1-7 done and no Parts section resumes at 8 start', (t) => {

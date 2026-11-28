@@ -211,7 +211,20 @@ test('planFiling', () => {
   assert.deepEqual(second.file[0].blockers, [{ kind: 'issue', ref: `${REPO}#7001` }]);
   assert.deepEqual(second.skipped, ['Parser', 'Docs and help']);
   assert.deepEqual(second.leftFor, []);
-  assert.deepEqual(second.writeBack, [{ issue: `${REPO}#7004`, waitsOn: 'Skill steps' }]);
+  assert.deepEqual(second.writeBack, [{ issue: `${REPO}#7004`, waitsOn: 'Skill steps', line: `Blocked by: Skill steps (left for ${OTHER})` }]);
+});
+
+test('the write-back line is the symbolic line the earlier run wrote, in the table\'s spelling', () => {
+  const CELL = 'Thn-Inc/Other';
+  const rows = (marks = {}) => TWO_REPO_ROWS(marks).map((r) => r.replace(`| ${OTHER} |`, `| ${CELL} |`));
+  const first = planFiling(parseParts(designWith(rows())).parts, REPO);
+  const symbolic = first.file[1].blockers.find((b) => b.kind === 'symbolic');
+  assert.equal(symbolic.ref, `Skill steps (left for ${CELL})`);
+  const marked = designWith(rows({ Parser: `${REPO}#7001`, 'Docs and help': `${REPO}#7004`, 'Skill steps': `left for ${CELL}` }));
+  // the later run's origin spells the repository in lower case; the line keeps the cell's spelling
+  const second = planFiling(parseParts(marked).parts, OTHER);
+  assert.deepEqual(second.writeBack.map((w) => w.line), [`Blocked by: ${symbolic.ref}`]);
+  assert.notEqual(second.writeBack[0].line, `Blocked by: Skill steps (left for ${OTHER})`);
 });
 
 test('planFiling keeps external blockers as written', () => {
@@ -356,6 +369,13 @@ test('a filed mark must name the row own repository', () => {
   const r = markFiled(clean, { A: `${OTHER}#5` });
   assert.deepEqual(r.conflicts, ['A']);
   assert.equal(r.text, clean);
+  // the repository check comes before the already-marked check: a cell already holding the
+  // same foreign mark is a conflict, never a silent no-op
+  const same = markFiled(text, { A: `${OTHER}#5` });
+  assert.deepEqual([same.marked, same.conflicts], [[], ['A']]);
+  assert.equal(same.text, text);
+  const sameLeft = designWith([row(1, 'A', 'size:low', REPO, '—', `left for ${OTHER}`)]);
+  assert.deepEqual(markFiled(sameLeft, { A: `left for ${OTHER}` }).conflicts, ['A']);
 });
 
 test('fenced Approved: and Measure: lines are not read', () => {

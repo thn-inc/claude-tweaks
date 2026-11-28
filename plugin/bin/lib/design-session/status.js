@@ -7,7 +7,9 @@ const path = require('path');
 const { checkEvidence } = require('./evidence');
 const { MAX_ROUNDS, STATUS_RE, roundSettled, lastNotesRound } = require('./notes');
 const { sectionLines, sectionField } = require('./design-md');
-const { parseParts, checkApproval, PARTS_HEADING, APPROVAL_HEADING, FILING_HEADING } = require('./parts');
+const {
+  parseParts, checkApproval, leftForRepository, sameRepository, PARTS_HEADING, APPROVAL_HEADING, FILING_HEADING,
+} = require('./parts');
 
 // design.md section headings by step number; step 1 is evidence.md. Adding a
 // step is one row here: STEPS and the per-step loop below derive from it. Steps
@@ -69,7 +71,12 @@ function plain(step, state) {
 }
 
 // -> { steps: {1..10}, resumeAt: 1..10|'complete', round, action, openSerious }
-function readStatus(folder, fsImpl = fs) {
+// `repository` is `() => 'owner/name' | null`, this checkout's repository. It is
+// called at most once, and only when `## Filing` is done and a part is marked
+// `left for …`: a part marked `left for` that repository is still to file here,
+// so step 10 is not done. With no resolver, or one that returns null, every
+// `left for …` mark counts as marked.
+function readStatus(folder, fsImpl = fs, { repository } = {}) {
   const steps = {};
 
   const evidence = readOrNull(path.join(folder, 'evidence.md'), fsImpl);
@@ -93,7 +100,8 @@ function readStatus(folder, fsImpl = fs) {
   }
 
   // Steps 8-10 count only when the table parses clean, the approval's digest
-  // matches it, and every part carries an Issue mark (`left for …` counts).
+  // matches it, and every part carries an Issue mark (`left for …` counts,
+  // unless it names this checkout's repository).
   let reapprove = false;
   if (designText !== null) {
     const parsed = parseParts(designText);
@@ -107,6 +115,11 @@ function readStatus(folder, fsImpl = fs) {
     }
     if (steps[FILING_STEP] === 'done' && (!parsed.parts.length || parsed.parts.some((p) => p.issue === null))) {
       steps[FILING_STEP] = 'partial';
+    }
+    const leftFor = parsed.parts.map((p) => p.issue && leftForRepository(p.issue)).filter(Boolean);
+    if (steps[FILING_STEP] === 'done' && leftFor.length && typeof repository === 'function') {
+      const here = repository();
+      if (here && leftFor.some((r) => sameRepository(r, here))) steps[FILING_STEP] = 'partial';
     }
   }
 

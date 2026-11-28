@@ -426,7 +426,7 @@ test('check-approval --repository is thisRepository and skips the origin read', 
 test('--repository: a malformed value or another verb is exit 2', (t) => {
   const dir = orderFolder(t);
   for (const argv of [['check-approval', '--folder', dir, '--repository', 'nope'], ['check-approval', '--folder', dir, '--repository', 'a/b/c'],
-    ['parts', '--folder', dir, '--repository', REPO], ['status', '--folder', dir, '--repository', REPO]]) {
+    ['parts', '--folder', dir, '--repository', REPO], ['status', '--folder', dir, '--repository', 'nope']]) {
     const r = call(argv, '/', withRemote(REMOTE));
     assert.strictEqual(r.code, 2, JSON.stringify(argv));
     assert.ok(r.stderr.includes('--repository'), JSON.stringify(argv));
@@ -461,4 +461,43 @@ test('a symlinked design.md is exit 2 for every parts verb, and nothing is writt
     assert.ok(r.stderr.includes('design.md') && r.stderr.includes('symlink'), argv[0]);
   }
   assert.strictEqual(fs.readFileSync(outside, 'utf8'), APPROVED);
+});
+
+// --- status in the repository a part was left for (#6353 final review) ---
+const OTHER = 'thn-inc/other';
+const OTHER_REMOTE = 'git@github.com:thn-inc/other.git';
+
+// A whole session through step 10 in REPO: Parser filed there, Skill steps left for OTHER.
+function filedSession(t) {
+  const done = (h, extra = []) => [`## ${h}`, '', 'Status: done', '', ...extra, 'body', ''].join('\n');
+  const head = [`| ${TABLE_HEADER.join(' | ')} |`, `|${TABLE_HEADER.map(() => '---').join('|')}|`];
+  const parts = (issues) => ['## Parts', '', 'Status: done', '', ...head,
+    `| 1 | Parser | size:low | ${REPO} | — | ${issues[0]} |`,
+    `| 2 | Skill steps | size:medium | ${OTHER} | Parser | ${issues[1]} |`, '', 'Estimate: 2 parts', ''].join('\n');
+  const before = ['# T — design', '', done('Frame', ['Measure: fewer stops']), done('Storyboard', ['Round: 1', 'File: storyboard.md']),
+    done('Perspectives'), done('Approaches'), done('Pre-mortem'), done('Builder check')];
+  const digest = partsDigest([...before, parts(['', ''])].join('\n'));
+  const design = [...before, parts([`${REPO}#7001`, `left for ${OTHER}`]),
+    ['## Approval', '', 'Status: done', '', approvalLine('2026-11-28', digest), ''].join('\n'), done('Filing', ['Parent: #7000'])].join('\n');
+  return session(t, { 'design.md': design, 'notes-round-1.md': notes(1).replace(/ — serious$/m, ' — minor') });
+}
+const statusOf = (r) => { assert.strictEqual(r.code, 0, r.stderr); const s = JSON.parse(r.stdout); return [s.resumeAt, s.action]; };
+
+test('status --repository: the folder copied into the left-for repository resumes at step 10, skipping the origin read', (t) => {
+  const dir = filedSession(t);
+  const boom = { remoteUrl: () => { throw new Error('origin must not be read'); }, gateDeps: GATE };
+  assert.deepStrictEqual(statusOf(call(['status', '--folder', dir, '--repository', OTHER], '/', boom)), [10, 'continue']);
+  assert.deepStrictEqual(statusOf(call(['status', '--folder', dir, '--repository', REPO], '/', boom)), ['complete', null]);
+});
+
+test('status reads the origin through the gate: the left-for repository resumes at 10; a gated or absent origin keeps today\'s reading', (t) => {
+  const dir = filedSession(t);
+  const seen = [];
+  const r = call(['status', '--folder', dir], '/', { remoteUrl: (d) => { seen.push(d); return OTHER_REMOTE; }, gateDeps: GATE });
+  assert.deepStrictEqual(statusOf(r), [10, 'continue']);
+  assert.deepStrictEqual(seen, [dir]);
+  assert.deepStrictEqual(statusOf(call(['status', '--folder', dir], '/', withRemote(REMOTE))), ['complete', null]);
+  for (const remote of ['git@git.corp.invalid:thn-inc/other.git', new Error('fatal: not a git repository'), '']) {
+    assert.deepStrictEqual(statusOf(call(['status', '--folder', dir], '/', withRemote(remote))), ['complete', null], String(remote));
+  }
 });
