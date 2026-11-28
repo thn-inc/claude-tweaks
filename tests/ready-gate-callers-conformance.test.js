@@ -69,6 +69,10 @@ const REGIONS = [
   ['record-creation-subissues github-issues create', region(SUB, '**`work-backend: github-issues`** — same Type expression branch'), [
     [/The `--label` flags below are that set, with `ready` added only on `ready-gate\.js` exit 0 \(the fence's `SUB_ISSUE_READY` array\)/, 'the github-issues flags carry ready only on gate exit 0'],
   ]],
+  ['record-creation-subissues no-number unit', region(SUB, '**A unit with no record number is not accumulated.**'), [
+    [/A unit whose create failed on `ready-gate\.js\` exit 2 has no \`\$SUB_ISSUE_NUM\`\/\`\$SUB_ISSUE_ID\`, under either backend, and is not accumulated/, 'a unit with no number is not accumulated, under either backend'],
+    [/Report it as a failed create with the gate's stderr verbatim and continue with the next unit, as a \`classify\`, \`settle\` or \`confirm\` that exits non-zero is reported/, 'it is reported as a failed create with stderr verbatim and the loop continues'],
+  ]],
   ['record-creation-subissues symbolic blocker', region(SUB, '**No `ready` on a symbolic blocker.**'), [
     [/`recordPayload` withholds `ready` from a body that carries such a line and `compose-record\.js` prints one `Warning: ready withheld` line, but neither create call below reads that payload's printed `labels`/, 'the payload withhold exists, and neither create reads its labels'],
     [/each runs `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/ready-gate\.js" "\$SPECIFY_SUB_ISSUE_BODY"` and adds `ready` \(the `--label ready` flag under `github-issues`, `stage: 'ready'` under `local-files`\) only on exit 0/, 'both creates add ready only on gate exit 0'],
@@ -183,7 +187,7 @@ function runFence(body) {
   const r = spawnSync('bash', ['-c', createFence(SUB)], { cwd: dir, env, encoding: 'utf8' });
   const specs = path.join(dir, 'specs');
   const files = fs.existsSync(specs) ? fs.readdirSync(specs).filter((f) => f.endsWith('.md')) : [];
-  return { r, files, text: files.map((f) => fs.readFileSync(path.join(specs, f), 'utf8')).join('\n') };
+  return { r, files, text: files.map((f) => fs.readFileSync(path.join(specs, f), 'utf8')).join('\n'), fingerprints: JSON.parse(fs.readFileSync(path.join(dir, 'fingerprints.json'), 'utf8')) };
 }
 
 test('run: the fence files a ready stage only when the gate exits 0', { skip: SKIP_RUN }, () => {
@@ -199,6 +203,8 @@ test('run: the fence files a ready stage only when the gate exits 0', { skip: SK
   const broken = runFence(null);
   assert.equal(broken.files.length, 0, 'gate exit 2 creates nothing');
   assert.match(broken.r.stderr, /ready-gate\.js exited 2: the create fails/);
+  assert.deepEqual(broken.fingerprints, {}, 'a create that did not happen records no fingerprint');
+  assert.doesNotMatch(broken.r.stderr, /recordFingerprint/, 'and does not try to: no TypeError for a record number that is not a positive integer');
 });
 
 // The github-issues fence run under bash with a fake `gh` on PATH that logs each call's arguments.
@@ -260,3 +266,40 @@ for (const workTypes of ['native', 'labels']) {
     assert.deepEqual(broken.fingerprints, {}, 'nothing is recorded for a create that did not happen');
   });
 }
+
+// The Accumulate fence, run under bash: a unit with no number appends nothing and says so; a unit with one appends.
+function accumulateFence(text) {
+  const at = text.indexOf('**Accumulate this unit for the cross-reference pass below.**');
+  assert.notEqual(at, -1, 'the Accumulate paragraph is missing');
+  const m = FENCE.exec(text.slice(at));
+  assert.ok(m, 'no bash fence follows the Accumulate paragraph');
+  return m[1];
+}
+function runAccumulate(env) {
+  const dir = scratchDir('ready-gate-accumulate-');
+  const sessionId = 'ready-gate-accumulate-test';
+  const manifest = sessionTmpPath(sessionId, 'specify-decomp-manifest.json', { tmpdir: dir });
+  fs.writeFileSync(manifest, '[]');
+  const bodyPath = sessionTmpPath(sessionId, 'specify-sub-issue-body.md', { tmpdir: dir });
+  fs.writeFileSync(bodyPath, symbolicBody());
+  const full = {
+    ...process.env, TMPDIR: dir, TMP: dir, TEMP: dir, CLAUDE_CODE_SESSION_ID: sessionId, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT,
+    SPECIFY_SUB_ISSUE_BODY: bodyPath, SUB_ISSUE_TITLE: 'Unit A', SUB_ISSUE_CEREMONY: 'standard', SUB_ISSUE_NUM: '', SUB_ISSUE_ID: '', ...env,
+  };
+  const r = spawnSync('bash', ['-c', accumulateFence(SUB)], { cwd: dir, env: full, encoding: 'utf8' });
+  return { r, manifest: JSON.parse(fs.readFileSync(manifest, 'utf8')) };
+}
+
+test('run: the Accumulate fence appends a unit that has a number and skips one that has none', { skip: SKIP_RUN }, () => {
+  const created = runAccumulate({ SUB_ISSUE_NUM: '42' });
+  assert.equal(created.r.status, 0, created.r.stderr);
+  assert.deepEqual(created.manifest.map((e) => [e.title, e.num]), [['Unit A', '42']]);
+  const local = runAccumulate({ SUB_ISSUE_ID: '7' });
+  assert.deepEqual(local.manifest.map((e) => [e.title, e.num]), [['Unit A', '7']], 'the local-files id is accumulated too');
+
+  for (const none of [{}, { SUB_ISSUE_NUM: '', SUB_ISSUE_ID: '' }]) {
+    const failed = runAccumulate(none);
+    assert.deepEqual(failed.manifest, [], 'a unit with no number is not appended with an empty num');
+    assert.match(failed.r.stderr, /create failed for "Unit A": no record number, not accumulated/);
+  }
+});

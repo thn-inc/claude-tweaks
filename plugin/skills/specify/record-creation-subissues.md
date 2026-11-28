@@ -175,13 +175,15 @@ else
     });
     console.log(record.id)" -- "$UNIT_SLUG" "$SUB_ISSUE_TITLE" "$SUB_ISSUE_TYPE" "$SUB_ISSUE_RISK" "$SUB_ISSUE_SIZE" "$SUB_ISSUE_CEREMONY" "$SPECIFY_SUB_ISSUE_BODY" "$SUB_ISSUE_GATE")
 
-  node -e "
-    const fs = require('fs');
-    const { recordFingerprint } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
-    const map = require('$SPECIFY_EXISTING_FINGERPRINTS');
-    recordFingerprint(map, process.argv[1], Number(process.argv[2]));
-    fs.writeFileSync('$SPECIFY_EXISTING_FINGERPRINTS', JSON.stringify(map));
-  " -- "${DESIGN_DOC_SLUG}:${UNIT_SLUG}" "$SUB_ISSUE_ID"
+  if [ -n "$SUB_ISSUE_ID" ]; then
+    node -e "
+      const fs = require('fs');
+      const { recordFingerprint } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
+      const map = require('$SPECIFY_EXISTING_FINGERPRINTS');
+      recordFingerprint(map, process.argv[1], Number(process.argv[2]));
+      fs.writeFileSync('$SPECIFY_EXISTING_FINGERPRINTS', JSON.stringify(map));
+    " -- "${DESIGN_DOC_SLUG}:${UNIT_SLUG}" "$SUB_ISSUE_ID"
+  fi
 fi
 ```
 
@@ -196,13 +198,19 @@ SPECIFY_DECOMP_MANIFEST=$(node -e "
   const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
   console.log(sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, 'specify-decomp-manifest.json') || require('path').join(require('os').tmpdir(), 'specify-decomp-manifest.json'))
 ")
-node -e "const fs=require('fs');
-  const path=process.argv[1];
-  const entry={title:process.argv[2], num:process.argv[3], body:fs.readFileSync(process.argv[4],'utf8'), ceremony:process.argv[5]};
-  const list=fs.existsSync(path)?JSON.parse(fs.readFileSync(path,'utf8')):[];
-  list.push(entry);
-  fs.writeFileSync(path, JSON.stringify(list))" -- "$SPECIFY_DECOMP_MANIFEST" "$SUB_ISSUE_TITLE" "${SUB_ISSUE_NUM:-$SUB_ISSUE_ID}" "$SPECIFY_SUB_ISSUE_BODY" "$SUB_ISSUE_CEREMONY"
+if [ -n "${SUB_ISSUE_NUM:-$SUB_ISSUE_ID}" ]; then
+  node -e "const fs=require('fs');
+    const path=process.argv[1];
+    const entry={title:process.argv[2], num:process.argv[3], body:fs.readFileSync(process.argv[4],'utf8'), ceremony:process.argv[5]};
+    const list=fs.existsSync(path)?JSON.parse(fs.readFileSync(path,'utf8')):[];
+    list.push(entry);
+    fs.writeFileSync(path, JSON.stringify(list))" -- "$SPECIFY_DECOMP_MANIFEST" "$SUB_ISSUE_TITLE" "${SUB_ISSUE_NUM:-$SUB_ISSUE_ID}" "$SPECIFY_SUB_ISSUE_BODY" "$SUB_ISSUE_CEREMONY"
+else
+  echo "create failed for \"$SUB_ISSUE_TITLE\": no record number, not accumulated" >&2
+fi
 ```
+
+**A unit with no record number is not accumulated.** A unit whose create failed on `ready-gate.js` exit 2 has no `$SUB_ISSUE_NUM`/`$SUB_ISSUE_ID`, under either backend, and is not accumulated: an entry with an empty number would reach the cross-reference pass and the Ceremony tally as a record that does not exist. Report it as a failed create with the gate's stderr verbatim and continue with the next unit, as a `classify`, `settle` or `confirm` that exits non-zero is reported (Risk flags, above).
 
 **Write-path resilience.** A `gh` create failure for one sub-issue (any kept parent already exists on GitHub by this point) falls back to `local-store.js` for that sub-issue only — write it locally with `unsynced: true` (fingerprint preserved, so a later sync still dedups correctly) and continue with the rest of the batch rather than aborting the whole decomposition over one failure. `/tidy`'s Sync finding reconciles it onto GitHub on a later pass. The same rule applies to Step 4's linking edits below — a failed link is noted and the pass continues; nothing already created rolls back.
 
