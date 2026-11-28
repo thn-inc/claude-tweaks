@@ -7,6 +7,7 @@ const os = require('os');
 const path = require('path');
 const { sectionStatus, readStatus } = require('../../../plugin/bin/lib/design-session/status');
 const { PERSPECTIVES } = require('../../../plugin/bin/lib/design-session/notes');
+const { TABLE_HEADER, approvalLine, partsDigest } = require('../../../plugin/bin/lib/design-session/parts');
 
 const EVIDENCE = '# Evidence\n\nStatus: done\n\n- a claim — source: #6352\n';
 
@@ -58,7 +59,10 @@ test('AC6.1: evidence and frame present resumes at step 3 and repeats nothing', 
 test('empty or absent folder starts at step 1', (t) => {
   const empty = folderWith(t, {});
   assert.deepStrictEqual(readStatus(empty), {
-    steps: { 1: 'missing', 2: 'missing', 3: 'missing', 4: 'missing', 5: 'missing', 6: 'missing', 7: 'missing' },
+    steps: {
+      1: 'missing', 2: 'missing', 3: 'missing', 4: 'missing', 5: 'missing', 6: 'missing', 7: 'missing',
+      8: 'missing', 9: 'missing', 10: 'missing',
+    },
     resumeAt: 1, round: null, action: 'start', openSerious: [],
   });
   assert.strictEqual(readStatus(path.join(empty, 'nope')).resumeAt, 1);
@@ -268,15 +272,100 @@ test('resumes at step 7', (t) => {
   assert.deepStrictEqual([s.resumeAt, s.action], [7, 'start']);
 });
 
+const REPO = 'thn-inc/claude-tweaks';
+const PART_ROWS = [
+  `| 1 | Parser | size:low | ${REPO} | — |  |`,
+  `| 2 | Skill steps | size:medium | ${REPO} | Parser |  |`,
+];
+const TABLE = [`| ${TABLE_HEADER.join(' | ')} |`, `|${TABLE_HEADER.map(() => '---').join('|')}|`];
+
+// Frame, storyboard, perspectives, approaches, pre-mortem and builder check, all done.
+const THROUGH_STEP_7 = [...THROUGH_PERSPECTIVES, section('Approaches', 'done'), section('Pre-mortem', 'done'), section('Builder check', 'done')];
+
+function partsSection(status, rows = PART_ROWS) {
+  return ['## Parts', '', `Status: ${status}`, '', ...TABLE, ...rows, '', 'Estimate: 2 parts', ''].join('\n');
+}
+function approvalSection(status, line) {
+  return ['## Approval', '', `Status: ${status}`, '', ...(line ? [line] : []), ''].join('\n');
+}
+// design.md text through step 7 plus the given later sections.
+function designThrough7(...later) { return design(...THROUGH_STEP_7, ...later); }
+function approvedLine() {
+  return approvalLine('2026-11-28', partsDigest(designThrough7(partsSection('done'))));
+}
+function filingSection(status) { return section('Filing', status); }
+
 test('complete session', (t) => {
   const dir = folderWith(t, {
     ...BASE,
-    'design.md': design(...THROUGH_PERSPECTIVES, section('Approaches', 'done'), section('Pre-mortem', 'done'),
-      section('Builder check', 'done'), '## Decisions', '', '- 2026-11-27 — keep it small — by: maintainer'),
+    'design.md': designThrough7(partsSection('done', [
+      `| 1 | Parser | size:low | ${REPO} | — | ${REPO}#7001 |`,
+      `| 2 | Skill steps | size:medium | ${REPO} | Parser | left for ${REPO} |`,
+    ]), approvalSection('done', approvedLine()), filingSection('done'),
+    '## Decisions', '', '- 2026-11-27 — keep it small — by: maintainer'),
   });
   const s = readStatus(dir);
-  assert.deepStrictEqual(Object.values(s.steps), ['done', 'done', 'done', 'done', 'done', 'done', 'done']);
+  assert.deepStrictEqual(Object.values(s.steps), Array(10).fill('done'));
   assert.deepStrictEqual([s.resumeAt, s.round, s.action], ['complete', null, null]);
+});
+
+test('steps 1-7 done and no Parts section resumes at 8 start', (t) => {
+  const dir = folderWith(t, { ...BASE, 'design.md': designThrough7() });
+  const s = readStatus(dir);
+  assert.strictEqual(s.steps[8], 'missing');
+  assert.deepStrictEqual([s.resumeAt, s.round, s.action, s.openSerious], [8, null, 'start', []]);
+});
+
+test('Parts done with an invalid row resumes at 8 continue', (t) => {
+  const bad = [`| 1 | Parser | size:huge | ${REPO} | — |  |`];
+  const dir = folderWith(t, { ...BASE, 'design.md': designThrough7(partsSection('done', bad)) });
+  const s = readStatus(dir);
+  assert.strictEqual(s.steps[8], 'partial');
+  assert.deepStrictEqual(triple(s), [8, null, 'continue']);
+});
+
+test('Parts done and valid but no Approval section resumes at 9 start', (t) => {
+  const dir = folderWith(t, { ...BASE, 'design.md': designThrough7(partsSection('done')) });
+  const s = readStatus(dir);
+  assert.strictEqual(s.steps[8], 'done');
+  assert.deepStrictEqual(triple(s), [9, null, 'start']);
+});
+
+test('Approval Status done without an Approved: line resumes at 9 continue', (t) => {
+  const dir = folderWith(t, { ...BASE, 'design.md': designThrough7(partsSection('done'), approvalSection('done', '')) });
+  const s = readStatus(dir);
+  assert.strictEqual(s.steps[9], 'partial');
+  assert.deepStrictEqual(triple(s), [9, null, 'continue']);
+});
+
+test('AC6.1: an edit to the parts table after approval asks for a new approval first', (t) => {
+  const line = approvedLine();
+  const edited = PART_ROWS.map((r) => r.replace('size:medium', 'size:high'));
+  assert.notDeepStrictEqual(edited, PART_ROWS);
+  const dir = folderWith(t, {
+    ...BASE, 'design.md': designThrough7(partsSection('done', edited), approvalSection('done', line)),
+  });
+  const s = readStatus(dir);
+  assert.strictEqual(s.steps[9], 'partial');
+  assert.deepStrictEqual(s, { steps: s.steps, resumeAt: 9, round: null, action: 'reapprove', openSerious: [] });
+});
+
+test('Approved and Filing not started resumes at 10 start', (t) => {
+  const dir = folderWith(t, {
+    ...BASE, 'design.md': designThrough7(partsSection('done'), approvalSection('done', approvedLine())),
+  });
+  assert.deepStrictEqual(triple(readStatus(dir)), [10, null, 'start']);
+});
+
+test('Filing done but one part unmarked resumes at 10 continue', (t) => {
+  const rows = [`| 1 | Parser | size:low | ${REPO} | — | ${REPO}#7001 |`, PART_ROWS[1]];
+  const dir = folderWith(t, {
+    ...BASE,
+    'design.md': designThrough7(partsSection('done', rows), approvalSection('done', approvedLine()), filingSection('done')),
+  });
+  const s = readStatus(dir);
+  assert.strictEqual(s.steps[10], 'partial');
+  assert.deepStrictEqual(triple(s), [10, null, 'continue']);
 });
 
 test('status line is whitespace- and case-tolerant', () => {

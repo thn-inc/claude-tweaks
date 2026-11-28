@@ -22,6 +22,18 @@
 //       Prints the reader's prompt text. --round is required for a perspective
 //       reader (user, smallest, ownership, token-cost, introduction) and ignored
 //       for pre-mortem and builder.
+//   design-session.js parts --folder <dir>
+//       Prints { present, parts, errors, estimate } for design.md's ## Parts table.
+//   design-session.js digest --folder <dir>
+//       Prints { ok: true, digest } (the approval digest), or { ok: false,
+//       reason: 'missing-sections' } when Frame, Approaches or Parts is absent.
+//   design-session.js check-approval --folder <dir>
+//       Prints checkApproval's verdict plus designSlug, thisRepository (the origin
+//       remote of the checkout holding --folder) and, when approved, the filing plan.
+//   design-session.js mark-filed --folder <dir> --marks <file>
+//       Writes the Issue marks in the JSON object at --marks ({ "Part": "owner/name#N"
+//       | "left for owner/name" }) into design.md in place; prints
+//       { marked, unknown, conflicts }, writing nothing when any is non-empty.
 //   design-session.js --help
 //
 // Exit codes: 0/1/2, shaped like the Payload-1/Invocation-2 family but not a
@@ -31,7 +43,8 @@
 //   1  a check failed or a brief was refused — stdout carries the JSON naming why
 //      (brief: { ok: false, reason, detail }, reason one of round-cap,
 //      pending-outcomes, no-frame, no-storyboard, stale-storyboard, symlink,
-//      unknown-reader)
+//      unknown-reader; check-approval: reason one of no-parts, invalid-parts,
+//      not-approved, digest-mismatch, no-repository)
 //   2  malformed invocation, or a folder or file the caller named that cannot be
 //      read (stderr says which). A missing evidence.md or notes-round-N.md is 2,
 //      not 1: the calling step has just written it, so absence means a wrong
@@ -47,6 +60,10 @@ const { readStatus } = require('./lib/design-session/status');
 const { checkEvidence } = require('./lib/design-session/evidence');
 const { PERSPECTIVES, checkNotes } = require('./lib/design-session/notes');
 const { composeBrief } = require('./lib/design-session/brief');
+const {
+  parseParts, partsDigest, checkApproval, estimate, markFiled, planFiling, designSlug,
+} = require('./lib/design-session/parts');
+const { remoteUrl, gateOriginRepo } = require('./lib/repo-resolve');
 
 const EXIT_OK = 0;
 const EXIT_REFUSED = 1;
@@ -62,6 +79,10 @@ const USAGE = [
   '  design-session.js check-evidence --folder <dir>',
   '  design-session.js check-notes --folder <dir> --round <N>',
   '  design-session.js brief --folder <dir> --reader <name> [--round <N>]',
+  '  design-session.js parts --folder <dir>',
+  '  design-session.js digest --folder <dir>',
+  '  design-session.js check-approval --folder <dir>',
+  '  design-session.js mark-filed --folder <dir> --marks <file>',
   '  design-session.js --help',
   '',
   'Flags:',
@@ -71,14 +92,16 @@ const USAGE = [
   '  --folder <dir>    the session folder, relative to the current directory or absolute',
   '  --round <N>       the notes round, 1 to 4',
   '  --reader <name>   user | smallest | ownership | token-cost | introduction | pre-mortem | builder',
+  '  --marks <file>    JSON object of Part name -> "owner/name#N" | "left for owner/name" (mark-filed only)',
   '',
   'Exit: 0 ok / check passed, 1 check failed or brief refused (JSON on stdout), 2 malformed invocation.',
   '',
 ].join('\n');
 
-const VALUE_FLAGS = new Set(['--topic', '--root', '--folder', '--round', '--reader']);
+const VALUE_FLAGS = new Set(['--topic', '--root', '--folder', '--round', '--reader', '--marks']);
 const BOOL_FLAGS = new Set(['--create']);
-const VERBS = new Set(['folder', 'status', 'check-evidence', 'check-notes', 'brief']);
+const VERBS = new Set(['folder', 'status', 'check-evidence', 'check-notes', 'brief', 'parts', 'digest', 'check-approval', 'mark-filed']);
+const MARK_RE = /^(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#\d+|left for [A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)$/;
 
 class UsageError extends Error {}
 
@@ -148,6 +171,91 @@ function json(deps, value) {
   deps.stdout(`${JSON.stringify(value)}\n`);
 }
 
+// `owner/name` of the origin remote of the checkout holding `folder`, judged by
+// the one origin gate (an unknown host is refused, never sent to gh); null when
+// there is no origin, it does not parse, or the gate refuses it (any throw from
+// the seam reads as no origin). -> { repository, refusal }.
+function thisRepositoryOf(deps, folder) {
+  let remote = null;
+  try {
+    remote = deps.remoteUrl(folder);
+  } catch {
+    remote = null;
+  }
+  const gated = gateOriginRepo(remote, deps.gateDeps);
+  return { repository: gated.spec ? `${gated.spec.owner}/${gated.spec.repo}` : null, refusal: gated.refusal };
+}
+
+// The marks file's JSON object; a missing, unreadable or non-object file is a usage error.
+function readMarks(deps, flags) {
+  const file = resolveIn(deps, flags['--marks']);
+  const text = readFileOrUsage(deps, file, '--marks file');
+  let marks;
+  try {
+    marks = JSON.parse(text);
+  } catch (err) {
+    throw new UsageError(`--marks is not valid JSON: ${file} (${err.message})`);
+  }
+  if (marks === null || typeof marks !== 'object' || Array.isArray(marks)) {
+    throw new UsageError(`--marks must hold a JSON object of part name to mark: ${file}`);
+  }
+  return marks;
+}
+
+function runPartsVerb(verb, folder, flags, deps) {
+  if (verb === 'mark-filed') need(flags, ['--marks']);
+  else if (flags['--marks'] !== undefined) throw new UsageError('--marks applies only to the mark-filed verb');
+  const designFile = path.join(folder, 'design.md');
+  const designText = readFileOrUsage(deps, designFile, 'design.md');
+
+  if (verb === 'parts') {
+    const { present, parts, errors } = parseParts(designText);
+    json(deps, { present, parts, errors, estimate: estimate(parts) });
+    return present && errors.length === 0 ? EXIT_OK : EXIT_REFUSED;
+  }
+
+  if (verb === 'digest') {
+    const digest = partsDigest(designText);
+    if (digest === null) {
+      json(deps, { ok: false, reason: 'missing-sections' });
+      return EXIT_REFUSED;
+    }
+    json(deps, { ok: true, digest });
+    return EXIT_OK;
+  }
+
+  if (verb === 'check-approval') {
+    const verdict = checkApproval(designText);
+    const { repository: thisRepository, refusal } = thisRepositoryOf(deps, folder);
+    const out = { ...verdict, designSlug: designSlug(path.basename(folder)), thisRepository };
+    if (refusal) out.repositoryRefusal = refusal;
+    if (verdict.approved && thisRepository === null) {
+      out.approved = false;
+      out.reason = 'no-repository';
+    } else if (verdict.approved) {
+      out.filing = planFiling(verdict.parts, thisRepository);
+    }
+    json(deps, out);
+    return out.approved ? EXIT_OK : EXIT_REFUSED;
+  }
+
+  // mark-filed
+  const marks = readMarks(deps, flags);
+  const invalid = Object.keys(marks).filter((name) => typeof marks[name] !== 'string' || !MARK_RE.test(marks[name]));
+  if (invalid.length) {
+    json(deps, { ok: false, reason: 'invalid-marks', invalid });
+    return EXIT_REFUSED;
+  }
+  const r = markFiled(designText, marks);
+  if (r.unknown.length || r.conflicts.length) {
+    json(deps, { marked: [], unknown: r.unknown, conflicts: r.conflicts });
+    return EXIT_REFUSED;
+  }
+  deps.fs.writeFileSync(designFile, r.text);
+  json(deps, { marked: Object.keys(marks), unknown: [], conflicts: [] });
+  return EXIT_OK;
+}
+
 function runVerb(verb, flags, deps) {
   if (flags['--create'] && verb !== 'folder') throw new UsageError('--create applies only to the folder verb');
   if (verb === 'folder') {
@@ -186,6 +294,10 @@ function runVerb(verb, flags, deps) {
     const r = checkNotes(readFileOrUsage(deps, path.join(folder, file), file), round);
     json(deps, r);
     return r.ok ? EXIT_OK : EXIT_REFUSED;
+  }
+
+  if (verb === 'parts' || verb === 'digest' || verb === 'check-approval' || verb === 'mark-filed') {
+    return runPartsVerb(verb, folder, flags, deps);
   }
 
   // brief
@@ -237,6 +349,7 @@ const realDeps = {
   now: () => new Date(),
   fs,
   briefsFile: BRIEFS_FILE,
+  remoteUrl: (dir) => remoteUrl({ cwd: dir }),
 };
 
 module.exports = { run, realDeps, parseArgs, USAGE, EXIT_OK, EXIT_REFUSED, EXIT_INVOCATION };

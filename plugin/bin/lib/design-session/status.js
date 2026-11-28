@@ -7,15 +7,23 @@ const path = require('path');
 const { checkEvidence } = require('./evidence');
 const { MAX_ROUNDS, STATUS_RE, roundSettled, lastNotesRound } = require('./notes');
 const { sectionLines, sectionField } = require('./design-md');
+const { parseParts, checkApproval, PARTS_HEADING, APPROVAL_HEADING, FILING_HEADING } = require('./parts');
 
 // design.md section headings by step number; step 1 is evidence.md. Adding a
-// step is one row here: STEPS and the per-step loop below derive from it.
-const SECTIONS = { 2: 'Frame', 3: 'Storyboard', 4: 'Perspectives', 5: 'Approaches', 6: 'Pre-mortem', 7: 'Builder check' };
+// step is one row here: STEPS and the per-step loop below derive from it. Steps
+// 8-10 also carry a content check, applied after the loop (like the storyboard file).
+const SECTIONS = {
+  2: 'Frame', 3: 'Storyboard', 4: 'Perspectives', 5: 'Approaches', 6: 'Pre-mortem', 7: 'Builder check',
+  8: PARTS_HEADING, 9: APPROVAL_HEADING, 10: FILING_HEADING,
+};
 const EVIDENCE_STEP = 1;
 const STEPS = [EVIDENCE_STEP, ...Object.keys(SECTIONS).map(Number)];
 // The two steps of the storyboard <-> perspectives loop.
 const STORYBOARD_STEP = 3;
 const PERSPECTIVES_STEP = 4;
+const PARTS_STEP = 8;
+const APPROVAL_STEP = 9;
+const FILING_STEP = 10;
 
 // 'done' | 'partial' (in-progress, or no status line) | 'missing'.
 function sectionStatus(designText, heading) {
@@ -60,7 +68,7 @@ function plain(step, state) {
   return { resumeAt: step, round: null, action: state === 'partial' ? 'continue' : 'start', openSerious: [] };
 }
 
-// -> { steps: {1..7}, resumeAt: 1..7|'complete', round, action, openSerious }
+// -> { steps: {1..10}, resumeAt: 1..10|'complete', round, action, openSerious }
 function readStatus(folder, fsImpl = fs) {
   const steps = {};
 
@@ -84,6 +92,24 @@ function readStatus(folder, fsImpl = fs) {
     if (!present) steps[STORYBOARD_STEP] = 'partial';
   }
 
+  // Steps 8-10 count only when the table parses clean, the approval's digest
+  // matches it, and every part carries an Issue mark (`left for …` counts).
+  let reapprove = false;
+  if (designText !== null) {
+    const parsed = parseParts(designText);
+    if (steps[PARTS_STEP] === 'done' && (!parsed.present || parsed.errors.length)) steps[PARTS_STEP] = 'partial';
+    if (steps[APPROVAL_STEP] === 'done' || steps[FILING_STEP] === 'done') {
+      const verdict = checkApproval(designText);
+      if (!verdict.approved) {
+        reapprove = verdict.reason === 'digest-mismatch';
+        if (steps[APPROVAL_STEP] === 'done') steps[APPROVAL_STEP] = 'partial';
+      }
+    }
+    if (steps[FILING_STEP] === 'done' && (!parsed.parts.length || parsed.parts.some((p) => p.issue === null))) {
+      steps[FILING_STEP] = 'partial';
+    }
+  }
+
   // R = highest notes round within the cap; a file past the cap is never a
   // round to resume.
   const R = lastNotesRound(listOrEmpty(folder, fsImpl));
@@ -99,6 +125,10 @@ function readStatus(folder, fsImpl = fs) {
 
   const first = STEPS.find((n) => steps[n] !== 'done');
   if (first === undefined) return { steps, resumeAt: 'complete', round: null, action: null, openSerious: [] };
+  // An approval whose digest no longer matches the table is asked for again.
+  if (first === APPROVAL_STEP && reapprove) {
+    return { steps, resumeAt: APPROVAL_STEP, round: null, action: 'reapprove', openSerious: [] };
+  }
   // Loop-exit guard: outside the storyboard/perspectives pair, or once Perspectives
   // is really closed, resume is a plain start/continue of the first open step.
   if (first > PERSPECTIVES_STEP || first < STORYBOARD_STEP || steps[PERSPECTIVES_STEP] === 'done') {

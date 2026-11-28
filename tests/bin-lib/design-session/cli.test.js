@@ -211,3 +211,191 @@ test('fix1: a symlinked storyboard refuses through the CLI with exit 1', (t) => 
   assert.strictEqual(JSON.parse(r.stdout).reason, 'symlink');
   assert.ok(!r.stdout.includes('OUTSIDE'));
 });
+
+// --- parts, digest, check-approval, mark-filed (#6353) ---
+const { TABLE_HEADER, approvalLine, partsDigest, estimate, parseParts } = require('../../../plugin/bin/lib/design-session/parts');
+
+const REPO = 'thn-inc/claude-tweaks';
+const REMOTE = 'git@github.com:thn-inc/claude-tweaks.git';
+const partRow = (n, name, size, waits, issue = '') => `| ${n} | ${name} | ${size} | ${REPO} | ${waits} | ${issue} |`;
+const FOUR_ROWS = [
+  partRow(1, 'Parser', 'size:low', '—'),
+  partRow(2, 'Decomposition branch', 'size:medium', 'Parser'),
+  partRow(3, 'Skill steps', 'size:medium', 'Parser'),
+  partRow(4, 'Docs and help', 'size:low', 'Decomposition branch, Skill steps'),
+];
+
+function orderDesign(approval) {
+  return [
+    '# Design', '',
+    '## Frame', '', 'Status: done', '', 'Measure: weekly orders filed — for 4 weeks', '',
+    '## Approaches', '', 'Status: done', '', 'Chosen: A', '',
+    '## Parts', '', 'Status: done', '', `| ${TABLE_HEADER.join(' | ')} |`, `|${TABLE_HEADER.map(() => '---').join('|')}|`,
+    ...FOUR_ROWS, '',
+    ...(approval === undefined ? [] : ['## Approval', '', 'Status: done', '', ...(approval ? [approval] : []), '']),
+  ].join('\n');
+}
+const UNAPPROVED = orderDesign(null);
+const APPROVED_LINE = approvalLine('2026-11-28', partsDigest(UNAPPROVED));
+const APPROVED = orderDesign(APPROVED_LINE);
+
+function orderFolder(t, text = APPROVED, name = '2026-11-27-factory-v7-slice1') {
+  const dir = path.join(scratch(t), name);
+  fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(dir, 'design.md'), text);
+  return dir;
+}
+const withRemote = (url) => ({ remoteUrl: () => { if (url instanceof Error) throw url; return url; } });
+const writeMarks = (t, value) => {
+  const file = path.join(scratch(t), 'marks.json');
+  fs.writeFileSync(file, typeof value === 'string' ? value : JSON.stringify(value));
+  return file;
+};
+
+test('parts prints the table, its errors and the estimate; exit 0 only when present and clean', (t) => {
+  const r = call(['parts', '--folder', orderFolder(t)], '/');
+  assert.strictEqual(r.code, 0);
+  const out = JSON.parse(r.stdout);
+  assert.strictEqual(out.present, true);
+  assert.deepStrictEqual(out.errors, []);
+  assert.strictEqual(out.parts.length, 4);
+  assert.strictEqual(out.estimate.line, estimate(out.parts).line);
+  assert.match(out.estimate.line, /^Estimate: 4 parts/);
+
+  const bad = call(['parts', '--folder', orderFolder(t, APPROVED.replace('size:low', 'size:huge'))], '/');
+  assert.strictEqual(bad.code, 1);
+  assert.ok(JSON.parse(bad.stdout).errors.length > 0);
+
+  const none = call(['parts', '--folder', orderFolder(t, '# Design\n')], '/');
+  assert.strictEqual(none.code, 1);
+  assert.strictEqual(JSON.parse(none.stdout).present, false);
+});
+
+test('digest prints the 64-hex digest, or exit 1 missing-sections', (t) => {
+  const r = call(['digest', '--folder', orderFolder(t)], '/');
+  assert.strictEqual(r.code, 0);
+  const out = JSON.parse(r.stdout);
+  assert.strictEqual(out.ok, true);
+  assert.match(out.digest, /^[0-9a-f]{64}$/);
+  assert.strictEqual(out.digest, partsDigest(APPROVED));
+
+  const missing = call(['digest', '--folder', orderFolder(t, '# Design\n\n## Frame\n\nx\n')], '/');
+  assert.strictEqual(missing.code, 1);
+  assert.deepStrictEqual(JSON.parse(missing.stdout), { ok: false, reason: 'missing-sections' });
+});
+
+test('check-approval: approved fixture passes with the filing plan, slug and repository', (t) => {
+  const r = call(['check-approval', '--folder', orderFolder(t)], '/', withRemote(REMOTE));
+  assert.strictEqual(r.code, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.strictEqual(out.approved, true);
+  assert.strictEqual(out.designSlug, 'factory-v7-slice1');
+  assert.strictEqual(out.thisRepository, 'thn-inc/claude-tweaks');
+  assert.deepStrictEqual(out.filing.file.map((p) => p.name), ['Parser', 'Decomposition branch', 'Skill steps', 'Docs and help']);
+});
+
+test('AC3.1: check-approval refuses with not-approved once the Approved: line is removed', (t) => {
+  const r = call(['check-approval', '--folder', orderFolder(t, UNAPPROVED)], '/', withRemote(REMOTE));
+  assert.strictEqual(r.code, 1);
+  const out = JSON.parse(r.stdout);
+  assert.strictEqual(out.reason, 'not-approved');
+  assert.strictEqual(out.filing, undefined);
+});
+
+test('check-approval: an unresolved remote is no-repository, exit 1, however it fails', (t) => {
+  for (const remote of [new Error('fatal: not a git repository'), 'not a url', '']) {
+    const r = call(['check-approval', '--folder', orderFolder(t)], '/', withRemote(remote));
+    assert.strictEqual(r.code, 1, String(remote));
+    const out = JSON.parse(r.stdout);
+    assert.strictEqual(out.reason, 'no-repository');
+    assert.strictEqual(out.thisRepository, null);
+    assert.strictEqual(out.filing, undefined);
+  }
+});
+
+test('check-approval: an origin on an unknown host is refused as no-repository, with the gate\'s reason', (t) => {
+  const r = call(['check-approval', '--folder', orderFolder(t)], '/', withRemote('git@git.corp.invalid:thn-inc/claude-tweaks.git'));
+  assert.strictEqual(r.code, 1);
+  const out = JSON.parse(r.stdout);
+  assert.strictEqual(out.reason, 'no-repository');
+  assert.strictEqual(out.thisRepository, null);
+  assert.match(out.repositoryRefusal, /git\.corp\.invalid/);
+});
+
+test('check-approval hands the folder to the remote seam', (t) => {
+  const dir = orderFolder(t);
+  const seen = [];
+  const r = call(['check-approval', '--folder', dir], '/', { remoteUrl: (d) => { seen.push(d); return REMOTE; } });
+  assert.strictEqual(r.code, 0);
+  assert.deepStrictEqual(seen, [dir]);
+});
+
+test('mark-filed writes the mark in place, keeps the approval, and reports marked names (AC7.3)', (t) => {
+  const dir = orderFolder(t);
+  const r = call(['mark-filed', '--folder', dir, '--marks', writeMarks(t, { Parser: `${REPO}#7001` })], '/');
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.deepStrictEqual(JSON.parse(r.stdout), { marked: ['Parser'], unknown: [], conflicts: [] });
+  const text = fs.readFileSync(path.join(dir, 'design.md'), 'utf8');
+  assert.ok(text.includes(`| 1 | Parser | size:low | ${REPO} | — | ${REPO}#7001 |`));
+  assert.strictEqual(parseParts(text).parts[0].issue, `${REPO}#7001`);
+  const again = call(['check-approval', '--folder', dir], '/', withRemote(REMOTE));
+  assert.strictEqual(again.code, 0);
+});
+
+test('mark-filed resolves a relative --marks against the injected cwd', (t) => {
+  const dir = orderFolder(t);
+  const marks = writeMarks(t, { Parser: `${REPO}#7001` });
+  const r = call(['mark-filed', '--folder', dir, '--marks', path.basename(marks)], path.dirname(marks));
+  assert.strictEqual(r.code, 0, r.stderr);
+});
+
+test('mark-filed refuses unknown names and conflicts, writing nothing', (t) => {
+  const dir = orderFolder(t);
+  const unknown = call(['mark-filed', '--folder', dir, '--marks', writeMarks(t, { Nope: `${REPO}#7001`, Parser: `${REPO}#7002` })], '/');
+  assert.strictEqual(unknown.code, 1);
+  assert.deepStrictEqual(JSON.parse(unknown.stdout).unknown, ['Nope']);
+  assert.strictEqual(fs.readFileSync(path.join(dir, 'design.md'), 'utf8'), APPROVED);
+
+  const marked = call(['mark-filed', '--folder', dir, '--marks', writeMarks(t, { Parser: `${REPO}#7001` })], '/');
+  assert.strictEqual(marked.code, 0);
+  const after = fs.readFileSync(path.join(dir, 'design.md'), 'utf8');
+  const conflict = call(['mark-filed', '--folder', dir, '--marks', writeMarks(t, { Parser: `${REPO}#7002`, 'Skill steps': `${REPO}#7003` })], '/');
+  assert.strictEqual(conflict.code, 1);
+  assert.deepStrictEqual(JSON.parse(conflict.stdout).conflicts, ['Parser']);
+  assert.strictEqual(fs.readFileSync(path.join(dir, 'design.md'), 'utf8'), after);
+});
+
+test('mark-filed exits 1 on a value that is not a repository-qualified mark, writing nothing', (t) => {
+  const dir = orderFolder(t);
+  for (const value of ['#7001', 'TBD', 'left for nowhere', 7001, null]) {
+    const r = call(['mark-filed', '--folder', dir, '--marks', writeMarks(t, { Parser: value })], '/');
+    assert.strictEqual(r.code, 1, String(value));
+  }
+  assert.strictEqual(fs.readFileSync(path.join(dir, 'design.md'), 'utf8'), APPROVED);
+});
+
+test('mark-filed: an unreadable or malformed --marks file is exit 2', (t) => {
+  const dir = orderFolder(t);
+  for (const marks of [writeMarks(t, 'not json'), writeMarks(t, '[1]'), writeMarks(t, 'null'), path.join(scratch(t), 'absent.json')]) {
+    const r = call(['mark-filed', '--folder', dir, '--marks', marks], '/');
+    assert.strictEqual(r.code, 2, marks);
+    assert.ok(r.stderr.includes('design-session.js:'));
+  }
+  const missingFlag = call(['mark-filed', '--folder', dir], '/');
+  assert.strictEqual(missingFlag.code, 2);
+});
+
+test('a missing design.md is exit 2 for parts, digest, check-approval and mark-filed', (t) => {
+  const dir = scratch(t);
+  const marks = writeMarks(t, { Parser: `${REPO}#7001` });
+  for (const argv of [['parts'], ['digest'], ['check-approval'], ['mark-filed', '--marks', marks]]) {
+    const r = call([argv[0], '--folder', dir, ...argv.slice(1)], '/', withRemote(REMOTE));
+    assert.strictEqual(r.code, 2, argv[0]);
+    assert.ok(r.stderr.includes('design.md'), argv[0]);
+  }
+});
+
+test('--help names the four new verbs and --marks', (t) => {
+  const r = call(['--help'], scratch(t));
+  for (const word of ['parts', 'digest', 'check-approval', 'mark-filed', '--marks']) assert.ok(r.stdout.includes(word), word);
+});
