@@ -308,6 +308,9 @@ function markFiled(designText, marks) {
 // Repository cell, spelled as the table spells it. The earlier run writes it as
 // `Blocked by: {ref}`; the later run's writeBack `line` is that same text.
 const symbolicRef = (name, repository) => `${name} (left for ${repository})`;
+// A body line holding a symbolic blocker, `Blocked by: {symbolicRef}` (a list
+// bullet allowed). While one remains, the record's `ready` stays off.
+const SYMBOLIC_LINE_RE = new RegExp(`^[ \\t]*(?:[-*][ \\t]+)?Blocked by: .+ \\(left for ${REPO}\\)[ \\t]*$`, 'm');
 
 // What one filing run from `thisRepository` does with the parts table. Takes
 // parts from a parse with no errors; a Waits for name matching no part, or a
@@ -349,7 +352,7 @@ function planFiling(parts, thisRepository) {
 
 module.exports = {
   PARTS_HEADING, APPROVAL_HEADING, FILING_HEADING, FRAME_HEADING, APPROACHES_HEADING, WORTH_IT_HEADING,
-  MEASURE_KEY, TABLE_HEADER, SIZES, REPO_RE, sameRepository,
+  MEASURE_KEY, TABLE_HEADER, SIZES, REPO_RE, SYMBOLIC_LINE_RE, sameRepository,
   markRepository, leftForRepository, parseParts, partsDigest, approvalLine, checkApproval, estimate, measure, unitSlug, designSlug, markFiled,
   planFiling,
 };

@@ -323,6 +323,34 @@ test('complete session', (t) => {
   }
 });
 
+test('a complete session read with no repository names the left-for repositories; a resolved one does not', (t) => {
+  const dir = twoRepoFolder(t);
+  for (const opts of [undefined, { repository: () => null }]) {
+    assert.deepStrictEqual(readStatus(dir, fs, opts).unresolvedLeftFor, [OTHER], JSON.stringify(opts));
+  }
+  assert.ok(!('unresolvedLeftFor' in readStatus(dir, fs, { repository: () => REPO })));
+  // distinct repositories, case-insensitively, in the table's spelling
+  const twice = twoRepoFolder(t);
+  const text = fs.readFileSync(path.join(twice, 'design.md'), 'utf8');
+  const rows3 = [...TWO_REPO_ROWS, `| 3 | Docs | size:low | Thn-Inc/Other | Parser |  |`];
+  const filed3 = [...TWO_REPO_FILED, '| 3 | Docs | size:low | Thn-Inc/Other | Parser | left for Thn-Inc/Other |'];
+  const line = approvalLine('2026-11-28', partsDigest(designThrough7(partsSection('done', rows3))));
+  fs.writeFileSync(path.join(twice, 'design.md'), designThrough7(partsSection('done', filed3), approvalSection('done', line), filingSection('done')));
+  assert.notStrictEqual(fs.readFileSync(path.join(twice, 'design.md'), 'utf8'), text);
+  assert.deepStrictEqual(readStatus(twice).unresolvedLeftFor, [OTHER]);
+  // no left-for mark: nothing to name
+  const allFiled = folderWith(t, {
+    ...BASE,
+    'design.md': designThrough7(partsSection('done', [
+      `| 1 | Parser | size:low | ${REPO} | — | ${REPO}#7001 |`,
+      `| 2 | Skill steps | size:medium | ${REPO} | Parser | ${REPO}#7002 |`,
+    ]), approvalSection('done', approvedLine()), filingSection('done')),
+  });
+  const s = readStatus(allFiled);
+  assert.strictEqual(s.resumeAt, 'complete');
+  assert.ok(!('unresolvedLeftFor' in s));
+});
+
 test('the folder copied into the repository a part was left for resumes at step 10 continue', (t) => {
   const dir = twoRepoFolder(t);
   for (const here of [OTHER, OTHER.toUpperCase()]) {

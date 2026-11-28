@@ -70,12 +70,14 @@ function plain(step, state) {
   return { resumeAt: step, round: null, action: state === 'partial' ? 'continue' : 'start', openSerious: [] };
 }
 
-// -> { steps: {1..10}, resumeAt: 1..10|'complete', round, action, openSerious }
+// -> { steps: {1..10}, resumeAt: 1..10|'complete', round, action, openSerious[, unresolvedLeftFor] }
 // `repository` is `() => 'owner/name' | null`, this checkout's repository. It is
 // called at most once, and only when `## Filing` is done and a part is marked
 // `left for …`: a part marked `left for` that repository is still to file here,
 // so step 10 is not done. With no resolver, or one that returns null, every
-// `left for …` mark counts as marked.
+// `left for …` mark counts as marked, and a complete session says so: it
+// carries `unresolvedLeftFor`, the distinct repositories those marks name, in
+// the table's spelling, so the caller can ask again with a repository.
 function readStatus(folder, fsImpl = fs, { repository } = {}) {
   const steps = {};
 
@@ -103,6 +105,7 @@ function readStatus(folder, fsImpl = fs, { repository } = {}) {
   // matches it, and every part carries an Issue mark (`left for …` counts,
   // unless it names this checkout's repository).
   let reapprove = false;
+  let unresolvedLeftFor = [];
   if (designText !== null) {
     const parsed = parseParts(designText);
     if (steps[PARTS_STEP] === 'done' && (!parsed.present || parsed.errors.length)) steps[PARTS_STEP] = 'partial';
@@ -117,9 +120,10 @@ function readStatus(folder, fsImpl = fs, { repository } = {}) {
       steps[FILING_STEP] = 'partial';
     }
     const leftFor = parsed.parts.map((p) => p.issue && leftForRepository(p.issue)).filter(Boolean);
-    if (steps[FILING_STEP] === 'done' && leftFor.length && typeof repository === 'function') {
-      const here = repository();
+    if (steps[FILING_STEP] === 'done' && leftFor.length) {
+      const here = typeof repository === 'function' ? repository() : null;
       if (here && leftFor.some((r) => sameRepository(r, here))) steps[FILING_STEP] = 'partial';
+      if (!here) unresolvedLeftFor = leftFor.filter((r, i) => leftFor.findIndex((s) => sameRepository(s, r)) === i);
     }
   }
 
@@ -137,7 +141,10 @@ function readStatus(folder, fsImpl = fs, { repository } = {}) {
   }
 
   const first = STEPS.find((n) => steps[n] !== 'done');
-  if (first === undefined) return { steps, resumeAt: 'complete', round: null, action: null, openSerious: [] };
+  if (first === undefined) {
+    const complete = { steps, resumeAt: 'complete', round: null, action: null, openSerious: [] };
+    return unresolvedLeftFor.length ? { ...complete, unresolvedLeftFor } : complete;
+  }
   // An approval whose digest no longer matches the table is asked for again.
   if (first === APPROVAL_STEP && reapprove) {
     return { steps, resumeAt: APPROVAL_STEP, round: null, action: 'reapprove', openSerious: [] };

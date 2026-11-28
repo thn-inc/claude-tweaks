@@ -478,7 +478,7 @@ function filedSession(t) {
     done('Perspectives'), done('Approaches'), done('Pre-mortem'), done('Builder check')];
   const digest = partsDigest([...before, parts(['', ''])].join('\n'));
   const design = [...before, parts([`${REPO}#7001`, `left for ${OTHER}`]),
-    ['## Approval', '', 'Status: done', '', approvalLine('2026-11-28', digest), ''].join('\n'), done('Filing', ['Parent: #7000'])].join('\n');
+    ['## Approval', '', 'Status: done', '', approvalLine('2026-11-28', digest), ''].join('\n'), done('Filing', [`Parent: ${REPO}#7000`])].join('\n');
   return session(t, { 'design.md': design, 'notes-round-1.md': notes(1).replace(/ — serious$/m, ' — minor') });
 }
 const statusOf = (r) => { assert.strictEqual(r.code, 0, r.stderr); const s = JSON.parse(r.stdout); return [s.resumeAt, s.action]; };
@@ -500,4 +500,21 @@ test('status reads the origin through the gate: the left-for repository resumes 
   for (const remote of ['git@git.corp.invalid:thn-inc/other.git', new Error('fatal: not a git repository'), '']) {
     assert.deepStrictEqual(statusOf(call(['status', '--folder', dir], '/', withRemote(remote))), ['complete', null], String(remote));
   }
+});
+
+test('status: a gated or absent origin on a complete session prints unresolvedLeftFor; a resolved repository does not', (t) => {
+  const dir = filedSession(t);
+  for (const remote of ['git@github.com-work:thn-inc/other.git', 'git@git.corp.invalid:thn-inc/other.git', new Error('fatal: not a git repository')]) {
+    const out = JSON.parse(call(['status', '--folder', dir], '/', withRemote(remote)).stdout);
+    assert.strictEqual(out.resumeAt, 'complete', String(remote));
+    assert.deepStrictEqual(out.unresolvedLeftFor, [OTHER], String(remote));
+  }
+  for (const argv of [['status', '--folder', dir], ['status', '--folder', dir, '--repository', REPO]]) {
+    const out = JSON.parse(call(argv, '/', withRemote(REMOTE)).stdout);
+    assert.strictEqual(out.resumeAt, 'complete');
+    assert.ok(!('unresolvedLeftFor' in out), JSON.stringify(argv));
+  }
+  // a session with no left-for mark names nothing, whatever the origin
+  const plain = call(['status', '--folder', session(t)], '/', withRemote(new Error('no origin')));
+  assert.ok(!('unresolvedLeftFor' in JSON.parse(plain.stdout)));
 });

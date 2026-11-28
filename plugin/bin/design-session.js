@@ -13,11 +13,12 @@
 //       Prints the absolute session folder (docs/superpowers/specs/{date}-{slug}
 //       under --root; an existing folder for the slug is reused). --create makes it.
 //   design-session.js status --folder <dir> [--repository <owner/name>]
-//       Prints { steps, resumeAt, round, action, openSerious } as JSON. A part marked
+//       Prints { steps, resumeAt, round, action, openSerious[, unresolvedLeftFor] } as JSON. A part marked
 //       `left for` this checkout's repository leaves step 10 not done; that
 //       repository is --repository, else the origin read as check-approval reads it,
 //       and only when a part is marked `left for …`. When neither resolves, every
-//       `left for …` mark counts as marked.
+//       `left for …` mark counts as marked, and a complete session also prints
+//       unresolvedLeftFor, the repositories those marks name.
 //   design-session.js check-evidence --folder <dir>
 //       Prints { done, unsourced, unclosedFence } as JSON.
 //   design-session.js check-notes --folder <dir> --round <N>

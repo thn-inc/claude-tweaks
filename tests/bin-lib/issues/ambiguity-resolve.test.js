@@ -93,6 +93,28 @@ test('readyRestorable: true when the only marker left is quoted in a code span',
   assert.equal(readyRestorable(shaped('Never leave a `<!-- ambiguity: -->` marker.')), true);
 });
 
+// A sub-issue body carrying a /claude-tweaks:design part's blocker line, symbolic or rewritten.
+const blocked = (line) => `Surface: backend\n${line}\n\n${shaped()}`;
+
+test('readyRestorable: false while a symbolic (left for owner/name) blocker line remains', () => {
+  assert.equal(readyRestorable(blocked('Blocked by: Skill steps (left for thn-inc/other)')), false);
+  assert.equal(readyRestorable(blocked('- Blocked by: Skill steps (left for Thn-Inc/Other)')), false);
+  // the same line once the later repository's run rewrote it
+  assert.equal(readyRestorable(blocked('Blocked by thn-inc/other#7004')), true);
+  // quoted in a code span it is prose, not a blocker
+  assert.equal(readyRestorable(blocked('Never keep a `Blocked by: X (left for a/b)` line.')), true);
+});
+
+test('resolveAmbiguityMarker: readyRestorable stays false while a symbolic blocker line remains', () => {
+  const body = blocked('Blocked by: Skill steps (left for thn-inc/other)').replace('Do the thing.', 'Do the thing. <!-- ambiguity: which store? -->');
+  const result = resolveAmbiguityMarker(body, '<!-- ambiguity: which store? -->', 'Uses Redis.');
+  assert.equal(result.markersRemaining, 0);
+  assert.equal(result.readyRestorable, false);
+  const rewritten = resolveAmbiguityMarker(body.replace('Blocked by: Skill steps (left for thn-inc/other)', 'Blocked by thn-inc/other#7004'),
+    '<!-- ambiguity: which store? -->', 'Uses Redis.');
+  assert.equal(rewritten.readyRestorable, true);
+});
+
 // --- resolveAmbiguityMarker ---------------------------------------------------
 
 test('resolveAmbiguityMarker: replaces the marker and reports ready restorable', () => {
