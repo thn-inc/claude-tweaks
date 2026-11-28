@@ -1494,7 +1494,7 @@ test('AC2.6: a dependent whose other blocker is a symbolic line is never reporte
     execFile: async (cmd, args) => {
       if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'list' && args.includes('open')) {
         return { stdout: JSON.stringify([
-          { number: 1600, title: 'Symbolic', body: symbolicBody(['Blocked by #1535']) },
+          { number: 1600, title: 'Symbolic', body: symbolicBody(['Blocked by #1535', 'Blocked by other/repo#9']) },
           { number: 1601, title: 'Sibling', body: 'Blocked by #1535\nBlocked by other/repo#7\n' },
         ]), stderr: '' };
       }
@@ -1518,7 +1518,7 @@ test('AC2.6: a dependent whose other blocker is a symbolic line is never reporte
     execFile: async (cmd, args) => {
       if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'list' && args.includes('open')) {
         return { stdout: JSON.stringify([
-          { number: 1600, title: 'Symbolic', body: symbolicBody() },
+          { number: 1600, title: 'Symbolic', body: symbolicBody(['Blocked by other/repo#9']) },
           { number: 1601, title: 'Sibling', body: 'Blocked by other/repo#7\n' },
         ]), stderr: '' };
       }

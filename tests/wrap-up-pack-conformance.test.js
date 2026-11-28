@@ -193,7 +193,9 @@ test('#6374: all three unblocked-records.md passes drop a dependent with a symbo
   const { pass1 } = bodyTextPassesOf(text);
   assert.match(pass1, /\.filter\(\(r\) => !hasSymbolicBlocker\(r\.body\)\)/, 'body-text pass 1 drops a symbolic-blocked dependent');
   assert.match(nativeBodyOf(text), /byNumber\[r\.number\] && !hasSymbolicBlocker\(r\.body\)/, 'the native snippet drops a symbolic-blocked dependent');
-  assert.match(collapsed(text), /openRecords \.filter\(\(r\) => !hasSymbolicBlocker\(r\.body\)\)/, 'the local-files snippet drops a symbolic-blocked dependent');
+  const localStart = text.indexOf('**`work-backend: local-files`:**');
+  assert.notStrictEqual(localStart, -1, 'the local-files region is present');
+  assert.match(collapsed(text.slice(localStart)), /openRecords \.filter\(\(r\) => !hasSymbolicBlocker\(r\.body\)\)/,'the local-files snippet drops a symbolic-blocked dependent');
   assert.strictEqual((collapsed(text).match(/left for owner\/name\)` line stays blocked/g) || []).length, 3, 'each pass states it in a sentence');
 });
 
