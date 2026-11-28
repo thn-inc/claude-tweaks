@@ -187,6 +187,19 @@ test('labels carry a by:* origin only when every member shares it and never auto
   assert.deepStrictEqual(composeBundle(planBundles(differ, { hubPaths: new Set() }).bundles[0]).labels, ['ready']);
 });
 
+test('a member with a symbolic blocker withholds ready and names the ref; none leaves ready unchanged', () => {
+  const { SYMBOLIC_LINE, SYMBOLIC_REF } = require('../../helpers/symbolic-blocker-fixture');
+  const clean = [prop('a.md', { title: 'A', files: ['src/s.js'] }), prop('b.md', { title: 'B', files: ['src/s.js'] })];
+  const ok = composeBundle(planBundles(clean, { hubPaths: new Set() }).bundles[0]);
+  assert.deepStrictEqual(ok.labels, ['ready']);
+  assert.strictEqual('readyWithheld' in ok, false);
+  const blocked = [clean[0], prop('b.md', { title: 'B', files: ['src/s.js'], extraBody: `\n\n${SYMBOLIC_LINE}` })];
+  const out = composeBundle(planBundles(blocked, { hubPaths: new Set() }).bundles[0]);
+  assert.ok(!out.labels.includes('ready'));
+  assert.doesNotMatch(out.text, /^Labels: .*ready/m);
+  assert.deepStrictEqual(out.readyWithheld, [SYMBOLIC_REF]);
+});
+
 test('the body carries a checklist, per-member criteria, the key-file union and the union of risk flags', () => {
   const ps = [
     prop('a.md', { title: 'A', files: ['src/s.js', 'src/a.js'], riskFlags: 'auth' }),

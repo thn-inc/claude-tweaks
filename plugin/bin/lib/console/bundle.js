@@ -15,6 +15,7 @@ const { groupByFileOverlap, GROUP_SIZE_GUARD_DEFAULT, extractKeyFilesSection } =
 const {
   specShapedBody, extractFingerprints, defuse, DEFER_REASONS, TIERS, TYPES, LABELS,
 } = require('../issues/record');
+const { symbolicBlockerRefs } = require('../issues/blocker-lines');
 const { parseRiskFlags, addRiskFlags } = require('../issues/record-risk-flags');
 const { extractSection, fencedBlock } = require('../markdown-blocks');
 const { findNearDuplicates, isStrongNearDuplicate, isRelatedCandidate } = require('../issues/near-duplicate');
@@ -178,7 +179,8 @@ function perMember(members, render) {
   return members.map((m) => `### ${defuse(m.title)}\n\n${render(m)}`);
 }
 
-// bundle, { openRecords } -> { title, type, labels, deferReason, text }.
+// bundle, { openRecords } -> { title, type, labels, deferReason, text[, readyWithheld] }; readyWithheld
+// lists the symbolic blocker refs that kept `ready` off (recordPayload's field of the same name).
 function composeBundle(bundle, options = {}) {
   const { members } = bundle;
   const n = members.length;
@@ -190,13 +192,18 @@ function composeBundle(bundle, options = {}) {
 
   const origins = members.map((m) => m.labels.find((l) => l.startsWith('by:')));
   const labels = [];
+  let readyWithheld = null;
   if (origins[0] && origins.every((o) => o === origins[0])) labels.push(origins[0]);
   if (!needsDefinition) {
     const risk = maxTier(members, 'risk');
     const size = bundleSize(members, new Set(members.flatMap((m) => m.keyFiles || [])).size);
     if (risk) labels.push(risk);
     if (size) labels.push(size);
-    labels.push(LABELS.READY);
+    // A member's symbolic `Blocked by: … (left for owner/name)` line is read here, from its own
+    // body: once fenced into the bundle, no gate on the composed body can see it (#6374).
+    const symbolicRefs = [...new Set(members.flatMap((m) => symbolicBlockerRefs(m.body)))];
+    if (symbolicRefs.length > 0) readyWithheld = symbolicRefs;
+    else labels.push(LABELS.READY);
   } else labels.push(LABELS.NEEDS_DEFINITION);
 
   const title = `Bundle: ${n} follow-ups touching ${bundle.sharedPaths[0] ?? 'related files'}`;
@@ -240,7 +247,9 @@ function composeBundle(bundle, options = {}) {
     .map((m) => `<!-- work-fingerprint: ${m.fingerprint} -->\nwork-fingerprint: ${m.fingerprint}`);
   const body = [compose(related), ...markers].join('\n\n');
   const text = `Title: ${title}\nType: ${type}\nLabels: ${labels.join(', ') || 'none'}\nDefer-reason: ${deferReason}\n\n${body}`;
-  return { title, type, labels, deferReason, text };
+  return readyWithheld
+    ? { title, type, labels, deferReason, text, readyWithheld }
+    : { title, type, labels, deferReason, text };
 }
 
 module.exports = { parseProposal, classifyLandingClass, planBundles, composeBundle };
