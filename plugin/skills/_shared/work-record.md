@@ -399,6 +399,10 @@ When `/specify` decomposes a design into multiple records:
   `parseDependencies`/`DEP_RE` are unchanged (they already stop matching at the number);
   `parseDependencyAssumptions` (`bin/lib/issues/record.js`) reads the trailing text when present.
   See Cross-Spec Promise Tracking, below.
+- **`Blocked by: {part} (left for owner/name)` names a part filed later in another repository**:
+  the line has no `#N`, so it always holds the record and keeps `ready` off until the later
+  repository's run rewrites it to `Blocked by owner/name#N`. `bin/lib/issues/blocker-lines.js` is the
+  one reader (`symbolicBlockers`, `symbolicBlockerRefs`); `readyGate` consults it.
 - **Tasks never become records.** A sub-issue's internal task breakdown is a checklist inside its
   body, not further issues.
 

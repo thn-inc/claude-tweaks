@@ -89,6 +89,58 @@ test('AC5.1: every prose path that adds ready runs ready-gate.js', () => {
   }
 });
 
+// The born-ready paths that compose with recordPayload({ ..., ready: true }) and file without a
+// ready-gate.js call are covered only while the create applies the payload's labels. Each region's
+// facts go red when that application is removed; the absence test goes red when a typed ready
+// label returns (rule 7 of .claude/skills/blocker-surface-parity).
+const SKILLS_DIR = path.join(PLUGIN_ROOT, 'skills');
+const CAPTURE = readText(path.join(SKILLS_DIR, 'capture', 'SKILL.md'));
+const REVIEW_ROUTING = readText(path.join(SKILLS_DIR, 'review', 'step3-routing.md'));
+const REFLECT = readText(path.join(SKILLS_DIR, 'reflect', 'full-mode.md'));
+const LEFTOVER = readText(path.join(SKILLS_DIR, 'wrap-up', 'leftover-routing.md'));
+const PARITY = readText(path.join(__dirname, '..', '.claude', 'skills', 'blocker-surface-parity', 'SKILL.md'));
+
+const BORN_READY_PATHS = [
+  ['capture shaped branch create', region(CAPTURE, '3. **Score, judge ceremony, and file born-ready.**'), [
+    [/`recordPayload\(\{ …, origin: 'capture', risk, size, ready: true, deferReason \}\)`/, 'the shaped branch composes a born-ready payload'],
+    [/The create call applies every label in the `labels` that `compose-record\.js` prints, in place of its typed `--label by:capture`/, 'the create applies the printed labels in place of the typed origin label'],
+    [/`ready` unless `recordPayload` withheld it for a symbolic `Blocked by: … \(left for …\)` line/, 'the printed labels carry ready only when recordPayload did not withhold it'],
+    [/never types a `ready` label by hand/, 'ready is never typed by hand'],
+  ]],
+  ['review Step 3 Defer create', region(REVIEW_ROUTING, '- **Defer** (new work record'), [
+    [/`recordPayload\(\{ …, risk, size, ready: true \}\)`/, 'the Defer composes a born-ready payload'],
+    [/the create applies every label in `payload\.labels`, so `recordPayload`'s ready withhold decides and no `ready` label is ever typed by hand/, 'the create applies payload.labels so the withhold decides'],
+  ]],
+  ['reflect Defer is parked, not ready', region(REFLECT, '- **Defer** (new work record, `parked`)'), [
+    [/`recordPayload\(\{ …, type: 'task', risk, size, parked: true \}\)`/, 'the Defer passes parked: true'],
+  ]],
+  ['wrap-up leftover staging', collapse(LEFTOVER), [
+    [/Labels: ' \+ \(\(p\.labels\.concat\(process\.argv\[3\]==='true'\?\['needs:definition'\]:\[\]\)\.join\(', '\)\) \|\| 'none'\)/, 'the staged Labels: header is the payload labels plus needs:definition'],
+    [/the record is created via: `gh issue create` \(`work-backend: github-issues`\) or `local-store\.js`'s `writeRecord` \(`work-backend: local-files`\), reading the `Title:`\/`Type:`\/`Labels:` header and the body back out of the staged file/, 'the console creates from the staged Labels: header'],
+  ]],
+  ['blocker-surface-parity rule 7 grep', region(PARITY, '7. **The symbolic blocker is held'), [
+    [/-e LABELS\.READY -e "stage: 'ready'" -- plugin/, 'the enumeration grep names the constant and the local-files stage forms'],
+    [/-e "add-label ready" -e "label ready" -e readyRestorable -e "ready: true"/, 'the enumeration grep keeps the typed-label and payload forms'],
+  ]],
+];
+
+test('every born-ready path without a ready-gate.js call applies the payload labels', () => {
+  for (const [name, text, facts] of BORN_READY_PATHS) {
+    const missing = missingFactsOf(facts);
+    assert.deepEqual(missing(text), [], `${name} states every fact`);
+    assertEachPatternGoesRed(text, facts, missing);
+  }
+});
+
+test('no born-ready path types a ready label by hand', () => {
+  const typedReady = /--(?:add-)?label[= "]+ready\b/;
+  for (const [name, text] of BORN_READY_PATHS.slice(0, 4)) {
+    assert.equal(typedReady.test(text), false, `${name} types a ready label`);
+  }
+  assert.equal(typedReady.test('gh issue create --label by:capture --label ready'), true, 'control: a typed --label ready is matched');
+  assert.equal(typedReady.test('gh issue edit 1 --add-label "ready"'), true, 'control: a typed --add-label ready is matched');
+});
+
 test('no prose still says a blocker surface cannot read the symbolic line', () => {
   const stale = /No blocker surface reads|no blocker surface reads that line/;
   const DECOMP = readText(path.join(SPECIFY_DIR, 'decomposition-mode.md'));
