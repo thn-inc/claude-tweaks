@@ -56,8 +56,7 @@ function withoutForeignBlockers(candidates, foreignByRecord) {
 // claimed, no open 'Blocked by #N', and no open-or-unreadable body-declared
 // foreign blocker ('Blocked by owner/name#N'), and no symbolic blocker
 // ('Blocked by: {part} (left for owner/name)', #6374 — always holds, no state to
-// look up). `foreignByRecord` is the
-// precomputed Map<number, [{number, repository, state}]> from
+// look up). `foreignByRecord` is the precomputed Map<number, [{number, repository, state}]> from
 // bodyForeignBlockers (computeOutlook builds it, keeping this function pure).
 // It is required (pass `new Map()` for "no foreign refs yet"): a default of "no rule"
 // would fail open for a caller that forgot it, so a missing or non-Map value throws.

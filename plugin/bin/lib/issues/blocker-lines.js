@@ -48,7 +48,9 @@ function isBlockerLine(line) {
 
 // A symbolic blocker's name: the text after `Blocked by: `. The one producer;
 // design-session/parts.js's symbolicRef delegates here.
-const symbolicBlockerRef = ({ part, repository }) => `${part} (left for ${repository})`;
+function symbolicBlockerRef({ part, repository }) {
+  return `${part} (left for ${repository})`;
+}
 
 // The symbolic blockers of a body, read from its authored text only (before
 // `## Original request`, code spans and fences stripped), in first-appearance

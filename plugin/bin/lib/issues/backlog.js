@@ -185,7 +185,8 @@ function foreignLookupSet(records) {
 // `blockedBy: [...parseDependencies(body), ...refs]`, so `blockersOf`'s body-text
 // fallback result survives. An `unsynced` record, and a record absent from the map, is
 // returned as is. A symbolic `Blocked by: {part} (left for owner/name)` line (#6374) is appended,
-// once, to either tier or the fallback of any other record, absent from the map or not. Returns a new array of shallow copies; never mutates its input.
+// once, to either tier or the fallback of any other record, absent from the map or not.
+// Returns a new array of shallow copies; never mutates its input.
 function attachBodyForeignBlockers(records, foreignByRecord) {
   return records.map((r) => {
     if (r.facets && r.facets.unsynced === true) return r;

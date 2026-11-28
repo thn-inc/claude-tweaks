@@ -130,14 +130,15 @@ function recordPayload({ title, body, type, origin, risk, size, ceremony, soluti
 
   // A symbolic `Blocked by: … (left for owner/name)` line names no issue and no resolvable
   // state (no native or `#N` blocker exists yet), so `ready` stays off until a later run
-  // rewrites it to `owner/name#N` (#6374): withhold the label and say
-  // so in `readyWithheld` rather than throw. Lazy require: materialize-format.js loads this
-  // file, via policy-schema.js, at load time, so a top-level require of blocker-lines.js would
-  // hand it a partial export through the load cycle.
+  // rewrites it to `owner/name#N` (#6374): withhold the label and say so in `readyWithheld`
+  // rather than throw. Lazy require: materialize-format.js loads this file, via
+  // policy-schema.js, at load time, so a top-level require of blocker-lines.js would hand it
+  // a partial export through the load cycle.
   let readyWithheld = null;
   if (ready) {
-    const { hasSymbolicBlocker, symbolicBlockerRefs } = require('./blocker-lines');
-    if (hasSymbolicBlocker(body)) readyWithheld = symbolicBlockerRefs(body);
+    const { symbolicBlockerRefs } = require('./blocker-lines');
+    const symbolicRefs = symbolicBlockerRefs(body);
+    if (symbolicRefs.length > 0) readyWithheld = symbolicRefs;
   }
 
   // Deterministic emission order: by:*, risk:*, size:*, ceremony:*, solution:unjustified, ready, parked, priority:*.
