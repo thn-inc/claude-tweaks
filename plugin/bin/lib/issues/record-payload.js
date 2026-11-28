@@ -135,7 +135,7 @@ function recordPayload({ title, body, type, origin, risk, size, ceremony, soluti
   // file, via policy-schema.js, at load time, so a top-level require of blocker-lines.js would
   // hand it a partial export through the load cycle.
   let readyWithheld = null;
-  if (ready === true) {
+  if (ready) {
     const { hasSymbolicBlocker, symbolicBlockerRefs } = require('./blocker-lines');
     if (hasSymbolicBlocker(body)) readyWithheld = symbolicBlockerRefs(body);
   }

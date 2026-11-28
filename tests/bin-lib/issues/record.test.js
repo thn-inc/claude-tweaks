@@ -37,6 +37,18 @@ test('AC2.1: recordPayload withholds ready from a body with a symbolic blocker a
   assert.ok(!('readyWithheld' in notReady));
 });
 
+test('AC2.1: the withhold tests ready the way the label does, so a truthy non-true ready is withheld too', () => {
+  for (const ready of [1, 'true']) {
+    const withheld = recordPayload({ title: 't', body: symbolicBody(), type: 'task', ready });
+    assert.ok(!withheld.labels.includes('ready'), `ready: ${JSON.stringify(ready)} must not reach the label`);
+    assert.deepStrictEqual(withheld.readyWithheld, [SYMBOLIC_REF], `ready: ${JSON.stringify(ready)}`);
+  }
+  // control: the same truthy values still earn the label on a body with no symbolic line
+  for (const ready of [1, 'true']) {
+    assert.ok(recordPayload({ title: 't', body: 'b', type: 'task', ready }).labels.includes('ready'), `ready: ${JSON.stringify(ready)}`);
+  }
+});
+
 test('recordPayload assembles a plain capture record', () => {
   const result = recordPayload({ title: 't', body: 'b', type: 'feature', origin: 'capture' });
   assert.deepStrictEqual(result.labels, ['by:capture']);
