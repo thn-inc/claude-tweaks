@@ -25,9 +25,11 @@ const { readyRestorable } = require('../../../plugin/bin/lib/issues/ambiguity-re
 // pieces split before `Blocked by` is not seen.
 const REGEX_LITERAL = /(?:^|[=>(:,[!&|?{};]|\breturn)\s*\/(?![/*])(?:[^/\n\\[]|\\.|\[(?:[^\]\\\n]|\\.)*\])*[Bb]locked by/;
 const REGEXP_CALL = /(?:new\s+)?RegExp\(\s*[`'"][^\n]*?[Bb]locked by/;
+// `sites` are the stripped source lines that define one (each shape matches within one line).
 const blockedByRegexScan = (raw) => {
   const code = stripComments(raw);
-  return { verdict: stripperVerdict(raw, code), defines: REGEX_LITERAL.test(code) || REGEXP_CALL.test(code) };
+  const sites = code.split('\n').filter((line) => REGEX_LITERAL.test(line) || REGEXP_CALL.test(line));
+  return { verdict: stripperVerdict(raw, code), defines: sites.length > 0, sites: sites.map((s) => s.trim()) };
 };
 const definesBlockedByRegex = (raw) => blockedByRegexScan(raw).defines;
 
@@ -67,7 +69,16 @@ test('a comment-stripper mis-parse is a verdict, never a clean scan', () => {
 // defines the line grammar; ranking.js's PROSE_DEP_RE is the one classified exception (the unwired-prose
 // detector, deliberately wider than the grammar, not a grammar of a `Blocked by` line).
 const BIN = path.join(__dirname, '../../../plugin/bin');
-const BLOCKED_BY_REGEX_FILES = ['lib/issues/blocker-lines.js', 'lib/issues/ranking.js'];
+const BLOCKER_LINES_FILE = 'lib/issues/blocker-lines.js';
+const RANKING_FILE = 'lib/issues/ranking.js';
+const PROSE_DEP_RE_SITE = 'const PROSE_DEP_RE = /blocked by\\b[^\\n#]*#\\d+/i;';
+// ranking.js is excluded for that one line, never as a file: a second grammar planted beside it, or
+// an edit to the regex itself, is a problem even though the file stays on the list.
+const rankingExceptionProblems = (raw) => {
+  const { sites } = blockedByRegexScan(raw);
+  if (sites.length !== 1) return [`expected exactly one Blocked by regex site, found ${sites.length}: ${JSON.stringify(sites)}`];
+  return sites[0] === PROSE_DEP_RE_SITE ? [] : [`the one site is not PROSE_DEP_RE: ${sites[0]}`];
+};
 function binSources(dir = BIN, out = []) {
   for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
     const abs = path.join(dir, ent.name);
@@ -82,14 +93,36 @@ test('AC1.2: only blocker-lines.js and ranking.js\'s PROSE_DEP_RE define a Block
   assert.ok(files.length > 150, `only ${files.length} plugin/bin files walked: the walk stopped seeing the tree`);
   const defining = [];
   const offenders = [];
+  const problems = [];
   for (const abs of files) {
     const rel = path.relative(BIN, abs).split(path.sep).join('/');
-    const r = blockedByRegexScan(readText(abs));
+    const raw = readText(abs);
+    const r = blockedByRegexScan(raw);
     if (r.verdict !== 'ok') offenders.push(`${rel}: ${STRIPPER_VERDICT_MESSAGES[r.verdict]}`);
     if (r.defines) defining.push(rel);
+    if (rel === RANKING_FILE) problems.push(...rankingExceptionProblems(raw));
   }
   assert.deepEqual(offenders, []);
-  assert.deepEqual(defining.sort(), BLOCKED_BY_REGEX_FILES, 'a new Blocked by regex belongs in blocker-lines.js; a listed file that no longer defines one leaves this list');
+  assert.deepEqual(defining.sort(), [BLOCKER_LINES_FILE, RANKING_FILE], 'a new Blocked by regex belongs in blocker-lines.js; a listed file that no longer defines one leaves this list');
+  assert.deepEqual(problems, [], "ranking.js defines PROSE_DEP_RE and nothing else");
+});
+
+test('AC1.2: the ranking.js exception covers PROSE_DEP_RE alone, so a second grammar beside it goes red', () => {
+  const real = readText(path.join(BIN, RANKING_FILE));
+  assert.deepEqual(rankingExceptionProblems(real), [], 'control: the live file passes');
+  assert.ok(real.includes(PROSE_DEP_RE_SITE), 'the pinned site is the live line');
+  // The file-level exception this replaces classified by path, so each planted file still "defines one".
+  const second = real + '\nconst SECOND = /^Blocked by #(\\d+)\\b/gm;\n';
+  assert.equal(blockedByRegexScan(second).defines, true, 'the old file-level check could not tell the difference');
+  assert.match(rankingExceptionProblems(second)[0], /found 2/);
+  const viaCtor = real + "\nconst THIRD = new RegExp('^Blocked by: ' + x);\n";
+  assert.match(rankingExceptionProblems(viaCtor)[0], /found 2/);
+  const edited = real.replace(PROSE_DEP_RE_SITE, () => 'const PROSE_DEP_RE = /^Blocked by #(\\d+)/im;');
+  assert.notEqual(edited, real);
+  assert.match(rankingExceptionProblems(edited)[0], /not PROSE_DEP_RE/);
+  const gone = real.replace(PROSE_DEP_RE_SITE, () => '');
+  assert.notEqual(gone, real);
+  assert.match(rankingExceptionProblems(gone)[0], /found 0/, 'a removed exception leaves the list too');
 });
 
 test('AC1.1: the three line regexes equal the ones they replace, and the old modules import them', () => {
