@@ -102,7 +102,8 @@ test('the adopted-branch collision stop is registered in auto-mode-contract.md\'
 // trusted `Attempt {N} failed` issue comment just before the PR's closedAt.
 function assertTombstoneEvidence(text) {
   const t = norm(text);
-  const item5 = t.slice(t.indexOf('5. `prior-attempt`'));
+  const start5 = t.indexOf('5. `prior-attempt`');
+  const item5 = t.slice(start5, t.indexOf('**Out of scope:**', start5));
   assert.match(item5, /`Attempt \{N\} failed`/);
   assert.match(item5, /isTrustedComment/);
   assert.match(item5, /closedAt/);
@@ -114,6 +115,7 @@ function assertTombstoneEvidence(text) {
   assert.match(item5, /newest closed PR/);
   assert.match(item5, /open, draft or merged/);
   assert.match(item5, /never re-runs/);
+  assert.match(item5, /second blocker stop/);
 }
 test('#4058: item 5 states the tombstone-evidence condition', () => assertTombstoneEvidence(CHECK));
 test('#4058 go-red: the assertion throws once the evidence clause is removed', () => {

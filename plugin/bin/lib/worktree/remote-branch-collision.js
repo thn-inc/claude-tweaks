@@ -27,12 +27,14 @@
 //
 // #4058: PR identity alone also matched a PR a human closed to reject the branch, so a
 // retry silently merged the rejected commits. A closed PR is now this record's own
-// tombstone only with evidence: a trusted `Attempt N failed` issue comment within
-// TOMBSTONE_CLOSE_WINDOW_MS before its `closedAt` (what settle-and-merge.md Step 6 step 5
-// leaves). Reading A: only the newest closed same-repo PR on the branch is judged, so
-// an older tombstone never legitimizes a newer human close. Reading B: a newer
-// same-repo OPEN/draft/MERGED PR blocks adoption, so live or merged work is never
-// merged into a retry.
+// tombstone only with evidence, from either of dispatch's two producers of that shape: a
+// trusted `Attempt N failed` issue comment within TOMBSTONE_CLOSE_WINDOW_MS before its
+// `closedAt` (what settle-and-merge.md Step 6 step 5 leaves), or, for the blocker-landing
+// stop (#4792), which posts no issue comment, the trusted failure pointer comment on the PR
+// itself in the same window (`hasBlockerLandingEvidence`). Newest-closed-PR rule ("Reading A" in
+// the plan review): only the newest closed same-repo PR on the branch is judged, so an older
+// tombstone never legitimizes a newer human close. Live-PR rule ("Reading B"): a newer same-repo
+// OPEN/draft/MERGED PR blocks adoption, so live or merged work is never merged into a retry.
 // #5589: `checkAdoptedBranch` composes the whole check — classify, PR lookup,
 // prior-attempt recognition, stop card — into one call, so the build skill's
 // collision check is one CLI invocation instead of an inline script.
@@ -187,17 +189,21 @@ function hasTombstoneEvidence(closedAt, lookup) {
 // comment ON THE PR and posts no `Attempt N failed` comment on the issue, so that pointer is
 // this producer's evidence: a trusted comment carrying the run-comment failure marker and the
 // stop sentence, created in the same window before `closedAt`. A read without `comments` is no evidence.
+// The marker and sentence are the producer's text, `dispatch/settle-and-merge.md`'s "Blocker-landing
+// special case"; tests/bin-lib/worktree/remote-branch-collision.test.js pins both against that file.
+// The pointer is updated in place, so its `createdAt` is its first stop's: a second blocker stop on the
+// same PR falls outside the window and stops as `foreign` (fail closed; a human adopts or renames).
 const BLOCKER_STOP_MARKER = '<!-- run-comment: failure -->';
 const BLOCKER_STOP_SENTENCE = 'Stopped: an out-of-run blocker has not landed.';
 function hasBlockerLandingEvidence(pr) {
   if (!Array.isArray(pr.comments)) return false;
   const closed = Date.parse(pr.closedAt);
   return pr.comments.some((comment) => isTrustedCommentInCloseWindow(
-    comment, closed, (body) => body.includes(BLOCKER_STOP_MARKER) && body.includes(BLOCKER_STOP_SENTENCE),
+    comment, closed, (body) => body.startsWith(BLOCKER_STOP_MARKER) && body.includes(BLOCKER_STOP_SENTENCE),
   ));
 }
 
-// The one closed same-repo PR with the greatest `closedAt` (Reading A), or null when there is
+// The one closed same-repo PR with the greatest `closedAt` (newest-closed-PR rule), or null when there is
 // none, any candidate's `closedAt` is unparseable, or the greatest is shared (newest unknown).
 function newestClosedPr(prs) {
   let newest = null;
@@ -212,7 +218,7 @@ function newestClosedPr(prs) {
   return tied ? null : newest;
 }
 
-// Reading B: true when a same-repo PR that is not CLOSED is OPEN (draft included), or else
+// Live-PR rule: true when a same-repo PR that is not CLOSED is OPEN (draft included), or else
 // lacks a `closedAt` strictly before the newest closed PR's (a NaN compares false, so an
 // unknown time blocks). Such a PR is live or merged work the retry must not merge in.
 function newerLivePr(prs, closedMs) {
@@ -222,14 +228,14 @@ function newerLivePr(prs, closedMs) {
   });
 }
 
-// The newest CLOSED same-repo PR on the branch (Reading A, by `closedAt`) when it is a
+// The newest CLOSED same-repo PR on the branch (newest-closed-PR rule, by `closedAt`) when it is a
 // claude-tweaks PR (run marker on its body's first line) that closes one of `records`
 // in `repo` (`owner/name`), whose head is an ancestor of `remoteSha`, and that carries
 // tombstone evidence (a trusted `Attempt N failed` comment on a record it closes, or the
 // blocker-landing stop's pointer comment on the PR itself, in the window before its `closedAt`) — the record's own failed earlier attempt — as
 // `{ number, url }`, else null. Only the newest closed PR is judged: failing any check, it
 // is null, never a fallback to an older PR, so commits a human rejected are not adopted.
-// A newer same-repo OPEN, draft or MERGED PR (Reading B) also yields null, before any check
+// A newer same-repo OPEN, draft or MERGED PR (live-PR rule) also yields null, before any check
 // or comment read. "Closes" is `prClosesIssue`'s three-valued verdict (closing references
 // matched on number and repository, else a closing-keyword line of the PR body);
 // only `true` links, so a PR read without `closingIssuesReferences` stays foreign.
@@ -317,5 +323,7 @@ module.exports = {
   findPriorAttemptPr,
   readIssueComments,
   TOMBSTONE_CLOSE_WINDOW_MS,
+  BLOCKER_STOP_MARKER,
+  BLOCKER_STOP_SENTENCE,
   formatStopCard,
 };

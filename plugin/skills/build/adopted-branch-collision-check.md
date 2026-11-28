@@ -111,7 +111,8 @@ then treat it as `unreachable` with reason `no-output` (item 3). Branch on `stat
    path, and the blocker-landing stop (#4792), which posts no issue comment — its evidence is the
    trusted `failure`-kind pointer comment on the PR itself (the `<!-- run-comment: failure -->` marker
    and the `Stopped: an out-of-run blocker has not landed.` sentence), created in the same window
-   before `closedAt`. The comment is the discriminator because a PR a human closed to reject the approach has
+   before `closedAt` (the pointer is updated in place, so a second blocker stop on the same PR is
+   outside the window and stops as `foreign`). The comment is the discriminator because a PR a human closed to reject the approach has
    every other property: only a failure that posts its comment just before closing the PR passes the
    timing test. Only the newest closed PR on the branch is judged, so a newer PR a human closed stops
    as `foreign` even when an older PR on the branch is a genuine tombstone — rejected commits are

@@ -16,7 +16,7 @@
 
 - Evidence is an `ATTEMPT_RE` match on a comment `isTrustedComment` accepts, with `createdAt` in `[closedAt - TOMBSTONE_CLOSE_WINDOW_MS, closedAt]`. Not after `closedAt`.
 - `TOMBSTONE_CLOSE_WINDOW_MS` = 15 minutes, an exported module constant, not a policy key.
-- Issue comments only. Do not widen evidence to PR comments (the PR's `run-comment: failure` pointer is updated in place; its timestamp is unreliable).
+- Issue comments only. Do not widen evidence to PR comments (the PR's `run-comment: failure` pointer is updated in place; its timestamp is unreliable). Amended in session (#4792, user ruling "Widen the evidence"): the blocker-landing stop posts no issue comment, so its own PR pointer comment (first-line `run-comment: failure` marker plus the stop sentence, trusted, in the window before `closedAt`) is evidence for that one producer; a second blocker stop on the same PR is outside the window and stays `foreign`.
 - A failed or partial lookup yields no match. The evidence lookup reads a record's comments at most once per record per check.
 - Export `ATTEMPT_RE` from `retry.js`; never copy the regex.
 - Reading A (spec, Acceptance Criteria): only the newest closed PR on the branch is judged. The candidates are the lookup's `CLOSED` PRs whose `isCrossRepository` is not `true` (a fork PR's head is the fork's branch, not this one; an unknown value stays a candidate and then fails the existing same-repo check). Newest is the latest parseable `closedAt`. Any candidate with an unparseable `closedAt`, or two candidates sharing the newest `closedAt`, yields no match: newest cannot be established, so fail closed. A newest PR that fails any check yields `null` even when an older PR on the branch is a genuine tombstone.

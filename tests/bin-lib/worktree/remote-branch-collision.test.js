@@ -15,6 +15,8 @@ const {
   formatStopCard,
   readIssueComments,
   TOMBSTONE_CLOSE_WINDOW_MS,
+  BLOCKER_STOP_MARKER,
+  BLOCKER_STOP_SENTENCE,
 } = require('../../../plugin/bin/lib/worktree/remote-branch-collision');
 
 // #2844: a run that ADOPTS its worktree (dispatch, multi-spec shared worktree)
@@ -266,6 +268,19 @@ test('AC4.2 (#4792): a pointer that is untrusted, outside the window, after clos
   assert.equal(blockerAttempt(undefined), null, 'a PR read without comments');
 });
 
+test('AC4.2 (#4792): the pointer\'s inclusive window edge counts, and the marker must open the comment', () => {
+  const edge = new Date(Date.parse(CLOSED_AT) - TOMBSTONE_CLOSE_WINDOW_MS).toISOString();
+  assert.deepEqual(blockerAttempt([blockerPointer({ createdAt: edge })]), PR9, 'exactly one window before closedAt');
+  assert.deepEqual(blockerAttempt([blockerPointer({ createdAt: CLOSED_AT })]), PR9, 'exactly at closedAt');
+  assert.equal(blockerAttempt([blockerPointer({ body: `Note\n${BLOCKER_STOP_MARKER}\n\n${BLOCKER_STOP_SENTENCE}\n` })]), null, 'a marker mid-body is not the run-comment marker');
+});
+
+test('AC4.2 (#4792): the marker and sentence are the producer\'s text in dispatch/settle-and-merge.md', () => {
+  const settle = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'dispatch', 'settle-and-merge.md'), 'utf8');
+  assert.ok(settle.includes(BLOCKER_STOP_SENTENCE), 'the blocker-landing sentence drifted from the producer');
+  assert.ok(settle.includes(BLOCKER_STOP_MARKER), 'the failure run-comment marker drifted from the producer');
+});
+
 test('AC4.1: findPriorAttemptPr matches this record\'s closed claude-tweaks PR whose head is an ancestor of origin\'s tip', () => {
   assert.deepEqual(priorAttempt(), { number: 9, url: 'https://example.test/pr/9' });
 });
@@ -486,6 +501,11 @@ test('#4058 Reading B: an open PR blocks whatever its age', () => {
 test('#4058 Reading B: an older merged PR or a fork\'s open PR does not block', () => {
   assert.deepEqual(priorAttempt(lookupOf([closedPr(), PR11({ state: 'MERGED', closedAt: OLDER })])), PR9);
   assert.deepEqual(priorAttempt(lookupOf([closedPr(), PR11({ state: 'OPEN', closedAt: null, isCrossRepository: true })])), PR9);
+});
+
+test('#4058 Reading B: a non-closed PR in an unknown state blocks unless its closedAt is strictly earlier', () => {
+  assert.equal(priorAttempt(lookupOf([closedPr(), PR11({ state: 'WEIRD', closedAt: null })])), null, 'unknown state, no closedAt');
+  assert.deepEqual(priorAttempt(lookupOf([closedPr(), PR11({ state: 'WEIRD', closedAt: OLDER })])), PR9, 'unknown state, strictly older');
 });
 
 test('#4058 Reading B: a merged PR whose closedAt cannot be compared blocks', () => {
