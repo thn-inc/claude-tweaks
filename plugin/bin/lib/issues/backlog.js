@@ -184,11 +184,12 @@ function foreignLookupSet(records) {
 // ' (state unreadable)' suffix is ignored for the key). A record with neither tier gets
 // `blockedBy: [...parseDependencies(body), ...refs]`, so `blockersOf`'s body-text
 // fallback result survives. An `unsynced` record, and a record absent from the map, is
-// returned as is, except that a symbolic `Blocked by: {part} (left for owner/name)` line (#6374)
-// is appended, once, to either tier or the fallback. Returns a new array of shallow copies; never mutates its input.
+// returned as is. A symbolic `Blocked by: {part} (left for owner/name)` line (#6374) is appended,
+// once, to either tier or the fallback of any other record, absent from the map or not. Returns a new array of shallow copies; never mutates its input.
 function attachBodyForeignBlockers(records, foreignByRecord) {
   return records.map((r) => {
-    const entries = (!(r.facets && r.facets.unsynced === true) && foreignByRecord.get(r.number ?? r.id)) || [];
+    if (r.facets && r.facets.unsynced === true) return r;
+    const entries = foreignByRecord.get(r.number ?? r.id) || [];
     // A symbolic blocker needs no state lookup and always holds (#6374); it is appended as authored text, never keyed.
     const symbolic = symbolicBlockerRefs(r.body || '');
     if (entries.length === 0 && symbolic.length === 0) return r;
