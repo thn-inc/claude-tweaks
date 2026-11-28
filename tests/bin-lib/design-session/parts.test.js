@@ -43,6 +43,15 @@ const FOUR_ROWS = [
 ];
 const UNAPPROVED_FOUR = designWith(FOUR_ROWS, { approval: '' });
 const APPROVED_FOUR = designWith(FOUR_ROWS, { approval: approvalLine('2026-11-28', partsDigest(UNAPPROVED_FOUR)) });
+const APPROVED_LINE = approvalLine('2026-11-28', partsDigest(UNAPPROVED_FOUR));
+
+function TWO_REPO_ROWS(marks = {}) {
+  return [
+    row(1, 'Parser', 'size:low', REPO, '—', marks.Parser || ''),
+    row(2, 'Skill steps', 'size:medium', OTHER, 'Parser', marks['Skill steps'] || ''),
+    row(3, 'Docs and help', 'size:low', REPO, 'Parser, Skill steps', marks['Docs and help'] || ''),
+  ];
+}
 
 test('AC1.1/AC1.2: four parts parse with their names and blockers, in table order', () => {
   const p = parseParts(APPROVED_FOUR);
@@ -108,11 +117,15 @@ test('markFiled conflicts', () => {
   const same = markFiled(once, { Parser: `${REPO}#7001` });
   assert.deepEqual(same.conflicts, []);
   assert.equal(same.text, once);
-  const left = markFiled(APPROVED_FOUR, { 'Skill steps': `left for ${OTHER}` }).text;
-  assert.equal(parseParts(left).parts[2].issue, `left for ${OTHER}`);
+  const twoRepo = designWith(TWO_REPO_ROWS());
+  const left = markFiled(twoRepo, { 'Skill steps': `left for ${OTHER}` }).text;
+  assert.equal(parseParts(left).parts[1].issue, `left for ${OTHER}`);
   const over = markFiled(left, { 'Skill steps': `${OTHER}#5` });
   assert.deepEqual(over.conflicts, []);
-  assert.equal(parseParts(over.text).parts[2].issue, `${OTHER}#5`);
+  assert.equal(parseParts(over.text).parts[1].issue, `${OTHER}#5`);
+  const wrongRepo = markFiled(twoRepo, { Parser: `left for ${OTHER}` });
+  assert.deepEqual(wrongRepo.conflicts, ['Parser']);
+  assert.equal(wrongRepo.text, twoRepo);
   const unknown = markFiled(APPROVED_FOUR, { Nope: `${REPO}#1` });
   assert.deepEqual(unknown.unknown, ['Nope']);
   assert.equal(unknown.text, APPROVED_FOUR);
@@ -124,12 +137,6 @@ test('markFiled keeps CRLF line endings', () => {
   const r = markFiled(crlf, { Parser: `${REPO}#7001` });
   assert.equal(r.text, markFiled(APPROVED_FOUR, { Parser: `${REPO}#7001` }).text.replace(/\n/g, '\r\n'));
 });
-
-const TWO_REPO_ROWS = (marks = {}) => [
-  row(1, 'Parser', 'size:low', REPO, '—', marks.Parser || ''),
-  row(2, 'Skill steps', 'size:medium', OTHER, 'Parser', marks['Skill steps'] || ''),
-  row(3, 'Docs and help', 'size:low', REPO, 'Parser, Skill steps', marks['Docs and help'] || ''),
-];
 
 test('planFiling', () => {
   const first = planFiling(parseParts(designWith(TWO_REPO_ROWS())).parts, REPO);
@@ -254,4 +261,49 @@ test('fences', () => {
   const text = ['# Design', '', ...FRAME.slice(0, -1), ...fencedParts, ...APPROACHES].join('\n');
   assert.equal(parseParts(text).present, false);
   assert.equal(checkApproval(text).reason, 'no-parts');
+});
+
+test('a malformed Issue cell is a row error, never a part missing from the filing plan', () => {
+  for (const issue of ['#7001', 'TBD', `left for ${OTHER}`]) {
+    const text = designWith([
+      row(1, 'A', 'size:low', REPO, '—', issue),
+      row(2, 'B', 'size:low', REPO, 'A'),
+    ]);
+    const p = parseParts(text);
+    assert.equal(p.errors.length, 1, `${issue}: ${p.errors.join('; ')}`);
+    assert.match(p.errors[0], /^row 1: .*Issue/);
+    assert.equal(checkApproval(text).reason, 'invalid-parts');
+  }
+  const own = parseParts(designWith([row(1, 'A', 'size:low', REPO, '—', `left for ${REPO}`)]));
+  assert.deepEqual(own.errors, []);
+  assert.deepEqual(planFiling(own.parts, REPO).file.map((x) => x.name), ['A']);
+  const dash = parseParts(designWith([row(1, 'A', 'size:low', REPO, '—', '—')]));
+  assert.deepEqual(dash.errors, []);
+  assert.equal(dash.parts[0].issue, null);
+});
+
+test('planFiling throws on parts a parse would have rejected', () => {
+  const a = { n: 1, name: 'A', slug: 'a', size: 'size:low', repository: REPO, waitsFor: [], issue: 'TBD' };
+  const b = { n: 2, name: 'B', slug: 'b', size: 'size:low', repository: REPO, waitsFor: ['A'], issue: null };
+  assert.throws(() => planFiling([a, b], REPO), /part 'A' .*neither fileable nor filed/);
+  const c = { ...b, waitsFor: ['Ghost'] };
+  assert.throws(() => planFiling([c], REPO), /unknown part 'Ghost'/);
+});
+
+test('fenced Approved: and Measure: lines are not read', () => {
+  const fencedApproval = designWith(FOUR_ROWS, { approval: ['```', APPROVED_LINE, '```'].join('\n') });
+  assert.equal(checkApproval(fencedApproval).reason, 'not-approved');
+  const fencedMeasure = APPROVED_FOUR.replace('Measure: weekly orders filed — for 4 weeks',
+    ['```', 'Measure: fenced example', '```', 'Measure: weekly orders filed — for 4 weeks'].join('\n'));
+  assert.equal(measure(fencedMeasure), 'weekly orders filed — for 4 weeks');
+  const onlyFenced = APPROVED_FOUR.replace('Measure: weekly orders filed — for 4 weeks',
+    ['```', 'Measure: fenced example', '```'].join('\n'));
+  assert.equal(measure(onlyFenced), null);
+});
+
+test('more than one Approved: line is not-approved', () => {
+  const twice = designWith(FOUR_ROWS, { approval: [APPROVED_LINE, APPROVED_LINE].join('\n') });
+  assert.equal(checkApproval(twice).reason, 'not-approved');
+  const stale = designWith(FOUR_ROWS, { approval: [approvalLine('2026-11-27', 'b'.repeat(64)), APPROVED_LINE].join('\n') });
+  assert.equal(checkApproval(stale).reason, 'not-approved');
 });

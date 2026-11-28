@@ -19,17 +19,21 @@
 //     `work-backend: local-files`); a part this run did not file is marked
 //     `left for owner/name`. A part marked `owner/name#N` is filed and is never
 //     filed or re-marked again; `left for …` counts as marked, not as filed.
+//     The cell is empty, `—`, an `owner/name#N`, or `left for {the row's own
+//     Repository}`; anything else (`#7001`, `TBD`, `left for` another
+//     repository) is a row error, so no part ever falls outside planFiling.
 // The part that makes the order visible to a user is the last row.
 //
-// `## Approval` holds a `Status:` line and the status line
+// `## Approval` holds a `Status:` line and exactly one status line
 //   `Approved: {YYYY-MM-DD} — digest sha256:{64 lowercase hex}`   (approvalLine)
+// outside a fence; none, or more than one, is not approved.
 // The digest is sha256 over three blocks joined with `\n`: `## Frame` and
 // `## Approaches` (each its heading line, then its section lines without
 // `Status:` lines) and `## Parts` (its heading line, then each data row's first
 // five cells, trimmed, joined with ` | `); every line is right-trimmed. Issue
 // marks and the Estimate line are outside it, so filing never invalidates it.
 //
-// The worth-it measure is `## Frame`'s `Measure:` line, read verbatim; the
+// The worth-it measure is `## Frame`'s first `Measure:` line outside a fence, read verbatim; the
 // parent issue carries it under a `## Worth-it measure` heading. `## Filing`
 // (after `## Approval`) records the filing run.
 //
@@ -41,7 +45,7 @@
 const crypto = require('node:crypto');
 const { fencedLineMask } = require('../markdown-blocks');
 const { H2_RE, STATUS_RE, splitLines } = require('./notes');
-const { sectionLines, sectionField } = require('./design-md');
+const { sectionLines } = require('./design-md');
 
 const PARTS_HEADING = 'Parts';
 const APPROVAL_HEADING = 'Approval';
@@ -63,6 +67,8 @@ const EXTERNAL_RE = new RegExp(`^(?:${REPO})?#\\d+$`);
 const NONE_VALUES = ['', '—', '–', '-'];
 const SEPARATOR_RE = /^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?$/;
 const APPROVED_RE = /^Approved: (\d{4}-\d{2}-\d{2}) — digest sha256:([0-9a-f]{64})$/;
+// design-md.js sectionField's `{key}:` line rule, read here over unfenced lines only.
+const MEASURE_RE = new RegExp(`^\\s*${MEASURE_KEY}:\\s*(.*?)\\s*$`, 'i');
 
 function unitSlug(name) {
   return String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
@@ -78,24 +84,51 @@ function cellsOf(line) {
   return s.split('|').map((c) => c.trim());
 }
 
+// -> { lines, body: [full-text line index of each section line, with
+// `fenced` marking those inside a fence] } for `## {heading}`, or null when
+// the section is absent. The section's bounds are sectionLines'.
+function sectionIndices(designText, heading) {
+  const lines = splitLines(designText);
+  const body = sectionLines(designText, heading);
+  if (!body) return null;
+  const fenced = fencedLineMask(lines);
+  const start = lines.findIndex((l, i) => !fenced[i] && H2_RE.test(l) && l.replace(/^##\s+/, '').trim() === heading);
+  const indices = [];
+  for (let i = start + 1; i <= start + body.length; i++) indices.push(i);
+  return { lines, indices, fenced };
+}
+
+// The section's lines outside a fence; null when the section is absent.
+function unfencedSectionLines(designText, heading) {
+  const s = sectionIndices(designText, heading);
+  return s && s.indices.filter((i) => !s.fenced[i]).map((i) => s.lines[i]);
+}
+
 // -> { lines, present, header: index|null, rows: [line index] } for the
 // `## Parts` table in the full text.
 function locateTable(designText) {
-  const lines = splitLines(designText);
-  const body = sectionLines(designText, PARTS_HEADING);
-  if (!body) return { lines, present: false, header: null, rows: [] };
-  const fenced = fencedLineMask(lines);
-  const start = lines.findIndex((l, i) => !fenced[i] && H2_RE.test(l) && l.replace(/^##\s+/, '').trim() === PARTS_HEADING);
+  const s = sectionIndices(designText, PARTS_HEADING);
+  if (!s) return { lines: splitLines(designText), present: false, header: null, rows: [] };
+  const { lines, indices, fenced } = s;
   const isRow = (i) => !fenced[i] && lines[i].trim().startsWith('|');
   let header = null;
   const rows = [];
-  for (let i = start + 1; i <= start + body.length; i++) {
+  for (const i of indices) {
     if (header === null) {
       if (isRow(i)) header = i;
     } else if (isRow(i)) rows.push(i);
     else break;
   }
   return { lines, present: true, header, rows };
+}
+
+// Why an Issue cell is malformed for a row of `repository`, or null when it is fine.
+function issueProblem(issue, repository) {
+  if (noneValue(issue) || FILED_RE.test(issue)) return null;
+  const left = LEFT_RE.exec(issue);
+  if (!left) return `Issue '${issue}' is not empty, 'owner/name#N' or 'left for owner/name'`;
+  if (left[1] !== repository) return `Issue '${issue}' leaves the part for another repository than its own '${repository}'`;
+  return null;
 }
 
 function noneValue(cell) {
@@ -148,6 +181,8 @@ function parseParts(designText) {
       else if (at > k) why.push(`waits for '${w}', a later row`);
       else if (at === -1) why.push(`waits for unknown part '${w}'`);
     }
+    const issueWhy = issueProblem(issue, repository);
+    if (issueWhy) why.push(issueWhy);
     if (why.length) errors.push(`row ${n}: ${why.join('; ')}`);
     parts.push({ n, name, slug, size, repository, waitsFor, issue: noneValue(issue) ? null : issue });
   });
@@ -180,7 +215,11 @@ function approvalLine(date, digest) {
 }
 
 function measure(designText) {
-  return sectionField(designText, FRAME_HEADING, MEASURE_KEY);
+  for (const line of unfencedSectionLines(designText, FRAME_HEADING) || []) {
+    const m = MEASURE_RE.exec(line);
+    if (m) return m[1];
+  }
+  return null;
 }
 
 // reason precedence: no-parts -> invalid-parts -> not-approved -> digest-mismatch -> approved.
@@ -196,10 +235,10 @@ function checkApproval(designText) {
     if (!sectionLines(designText, h)) errors.push(`missing ## ${h} section`);
   }
   if (errors.length) return out('invalid-parts', errors);
-  const approved = (sectionLines(designText, APPROVAL_HEADING) || [])
-    .map((l) => APPROVED_RE.exec(l.trim())).find(Boolean);
-  if (!approved) return out('not-approved', errors);
-  return out(approved[2] === digest ? 'approved' : 'digest-mismatch', errors);
+  const approvals = (unfencedSectionLines(designText, APPROVAL_HEADING) || [])
+    .map((l) => APPROVED_RE.exec(l.trim())).filter(Boolean);
+  if (approvals.length !== 1) return out('not-approved', errors);
+  return out(approvals[0][2] === digest ? 'approved' : 'digest-mismatch', errors);
 }
 
 function estimate(parts) {
@@ -211,8 +250,9 @@ function estimate(parts) {
 }
 
 // Rewrites only the Issue cell of each named row: an empty cell, a `left for …`
-// cell, or one already holding the same mark. A cell holding anything else is
-// a conflict and stays as it is.
+// cell, or one already holding the same mark. A cell holding anything else, or
+// a `left for` mark naming another repository than the row's, is a conflict and
+// stays as it is.
 function markFiled(designText, marks) {
   const { lines, rows } = locateTable(designText);
   const eol = String(designText).includes('\r\n') ? '\r\n' : '\n';
@@ -231,7 +271,8 @@ function markFiled(designText, marks) {
     const segs = lines[i].split('|');
     const current = (segs[ISSUE_COL + 1] || '').trim();
     if (current === mark) continue;
-    if (!noneValue(current) && !LEFT_RE.test(current)) {
+    const left = LEFT_RE.exec(mark);
+    if ((!noneValue(current) && !LEFT_RE.test(current)) || (left && left[1] !== cellsOf(lines[i])[3])) {
       conflicts.push(name);
       continue;
     }
@@ -241,7 +282,9 @@ function markFiled(designText, marks) {
   return { text: lines.join(eol), unknown, conflicts };
 }
 
-// What one filing run from `thisRepository` does with the parts table.
+// What one filing run from `thisRepository` does with the parts table. Takes
+// parts from a parse with no errors; a Waits for name matching no part, or a
+// this-repository part that is neither fileable nor filed, throws.
 function planFiling(parts, thisRepository) {
   const filed = (p) => p.issue !== null && FILED_RE.test(p.issue);
   const file = parts.filter((p) => p.repository === thisRepository
@@ -252,7 +295,11 @@ function planFiling(parts, thisRepository) {
     if (EXTERNAL_RE.test(w)) return { kind: 'issue', ref: w };
     if (fileNames.has(w)) return { kind: 'sibling', ref: w };
     const p = byName.get(w);
+    if (!p) throw new Error(`planFiling: Waits for names unknown part '${w}'`);
     if (filed(p)) return { kind: 'issue', ref: p.issue };
+    if (p.repository === thisRepository) {
+      throw new Error(`planFiling: part '${w}' of ${thisRepository} is neither fileable nor filed (Issue '${p.issue}')`);
+    }
     return { kind: 'symbolic', ref: `${w} (left for ${p.repository})` };
   };
   const writeBack = [];
