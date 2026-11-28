@@ -28,6 +28,7 @@ prompt, never a reason to fork the template.
 | Risk-flag answers (omit only when no human was reachable at the pre-pass) | `record-creation-subissues.md`'s Risk flags pre-pass, run in the main thread before this dispatch (a subagent cannot ask the flag question): per unit, the absolute path of its held answers file and its `--add` slugs | Step 3's per-unit `settle` applies them with `--answers-file`; with none passed, it takes the headless `settle` |
 | Accepted scaffold path (frontend specs only — omit unless Step 2.5b-ii's variant exploration ran and a direction was accepted) | Step 2.5b-ii's `visual_reference` output (`design-pre-steps.md` item 5) | Step 3 prefixes `Visual-reference: {scaffold path}` on every generated sub-issue covering that surface — `record-creation-subissues.md`'s Body section (#1346's split of `record-creation.md`) |
 | Diagram suggestions (omit if Step 2.5d emitted none) | Step 2.5d's output — at most two recommendations | Step 9's summary renders them under `### Diagram suggestions` |
+| Approved parts (omit unless Step 2 took the approved branch) | `check-approval`'s JSON (parts, measure, designSlug, and `filing`'s file, skipped, leftFor and writeBack lists), the folder path, and the no-gate rule in one sentence, since the subagent never reads `decomposition-mode.md` | Step 3 titles, sizes and slugs each unit from it and writes the measure on the parent; Step 4 writes `filing.writeBack` back; Step 5 keeps every part as approved; Step 7 marks and keeps the folder instead of deleting it; Step 9 lists the left-for parts |
 | Design doc — path and, if it will be deleted before the subagent could read it, its full content | Resolve-the-input | Step 4 absorbs remaining Decision Rationale / Assumptions / Cross-Spec Promises from it; Step 7 deletes it (or marks it, under `phase-N`) |
 | `phase-N` (omit if this run is not phase-scoped) | The invocation's own argument | Step 7's delete-vs-mark table branches on whether this run targeted one phase of a multi-phase doc |
 | `--surface` override (omit if not given) | The invocation's own argument | Step 3 applies it to every produced record |
@@ -50,6 +51,12 @@ Collapse decision: {Step 2.6's verdict, plus the parent's draft body when kept}
 Dependency graph: {Blocked-by links from Step 1's Overlap Analysis + Step 2's Implicit
 Dependency Detection groups}
 Design doc: {path, or full content when it will be deleted before you could read it}
+[Approved parts — omit unless Step 2 took the approved branch: check-approval JSON {the whole
+printed object}; design folder {path}. No gate changes an approved part: no step applies an
+outcome that would drop, merge, rename or re-size a part, or add or remove one of its blockers —
+before its record exists, stop and ask or stage; once it exists, leave the part as approved, clear
+the record's ready, and stage or ask the question, never applying the change. Keep the design
+folder; mark it with mark-filed instead of deleting it]
 [Design pre-step answers — frontend specs only: design-intent: {value}, ui-stack: {value},
 shape: {value}]
 [Risk-flag answers — omit only when no human was reachable at the pre-pass: per unit, answers
@@ -64,7 +71,7 @@ Run context: work-backend={value}, PIPELINE_RUN_DIR={value}
 
 OUTPUT FORMAT (required): Return the Step 9 summary exactly as `decomposition-mode-closeout.md`'s
 own Step 9 template renders it (Work Units Created table, Collapse outcome line, Existing Records
-Modified, Artifacts Removed, Diagram suggestions when present, Actions Performed table, and
+Modified, Artifacts Removed (or the Design folder kept line and `### Left for another repository` on the approved branch), Diagram suggestions when present, Actions Performed table, and
 `### Staged for caller` when Step 5's red-team left any decision-worthy finding unresolved — see
 that file's own template for its exact row shape) — no paraphrase, so the caller can relay it
 without having watched the work happen.

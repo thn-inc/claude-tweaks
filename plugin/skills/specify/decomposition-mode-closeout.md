@@ -21,6 +21,8 @@ When Step 2.6 kept the parent, records are created **parent-first**: the parent'
 
 Every record this run is going to create now has a number (a parent's, under a kept parent; every unit's own, under collapse). This pass wires the relationships between them and absorbs the last of the design doc's context, before Step 7 deletes it. Read `record-creation-linking.md` in this skill's directory (#1346's split of `record-creation.md`) for the full procedure: Linking (branches on driver and `work-links`), and Decision Rationale / Assumptions / Cross-Spec Promises absorption.
 
+**Approved parts list (Step 2's approved branch) — write back the earlier repositories' symbolic blockers.** After linking, for each `filing.writeBack` entry `{ issue, waitsOn }`, replace the line `Blocked by: {waitsOn} (left for {thisRepository})` in that issue's body with `Blocked by {thisRepository}#{N}` (`{N}` the sub-issue this run filed for `waitsOn`). Under `github-issues` that is one `gh issue view {n} --repo {owner/name} --json body` read and one `gh issue edit {n} --repo {owner/name} --body-file` write per issue, the body composed whole and written once; `{n}` and `{owner/name}` come from the entry's `issue`. A line that is not there is left alone and named in Step 9's summary. Under `local-files` there is no other repository's store to edit, so each entry is listed in Step 9's summary instead.
+
 ---
 
 ## Step 5: Multi-Persona Red-Team
@@ -65,10 +67,19 @@ The design doc has served its purpose **once every phase has been decomposed int
 
 | Decomposition mode | Delete design doc? |
 |---|---|
+| Approved parts list (Step 2's approved branch) | **No** — the design folder is kept, since it holds the evidence and the notes. Mark each part this run filed `{thisRepository}#{N}` and each part in `filing.leftFor` `left for {owner/name}` (never a part in `filing.skipped`): write the marks to a session temp JSON file with the Write tool, run `mark-filed`, and commit `design.md` with this step's commit. |
 | No `phase-N` argument; doc has 0 phase sections (single-phase) | Yes — fully consumed |
 | No `phase-N` argument; doc has N phase sections; all decomposed in this run | Yes — fully consumed |
 | `phase-N` argument; only that phase decomposed | **No** — design doc retained for remaining phases. Add a `## Phase N: Specified` marker after the phase heading instead, listing the record numbers it produced. |
 | `phase-N` argument; this was the last un-specified phase | Yes — fully consumed (run delete after marker bookkeeping confirms all phases marked) |
+
+The marks file is one JSON object, `{ "{part name}": "{owner/name}#{N}" | "left for {owner/name}" }` (`{N}` the numeric record id under `local-files`); each mark names the part's own repository. The file is written at the path `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value design-marks.json` prints, then:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/design-session.js" mark-filed --folder "{folder}" --marks "{marks file}"
+```
+
+Exit 1 (an unknown or conflicting mark) writes nothing: fix the marks and rerun. Exit 2 is a bad marks file or a symlinked `design.md`: stop and show stderr. The `git rm` block below does not run on this branch.
 
 ```bash
 # Full decomposition (all phases or single-phase):
@@ -105,6 +116,9 @@ Present a summary. The `Collapse outcome` line below renders in every decomposit
 ### Artifacts Removed
 - Design doc: `docs/superpowers/specs/{filename}` (absorbed into the records this run produced)
 
+### Left for another repository (optional — render only on the approved branch, when `filing.leftFor` is not empty)
+- {part name} — left for {owner/name}; rerun `/claude-tweaks:design {argument}` in that repository's checkout
+
 ### Teardown (optional — render only when the check below finds the branch net-empty)
 {one paste-ready line, see below}
 
@@ -116,6 +130,8 @@ Present a summary. The `Collapse outcome` line below renders in every decomposit
 |--------|-------------|----------------------|
 | {ref} | {the whole `<!-- ambiguity: ... -->` comment, or the whole `## Open Questions` table row, verbatim — never just the flagged sentence, which leaves the marker behind} | {the resolution the red-team persona proposed, or "—" if none was proposed} |
 ```
+
+**Under the approved branch** the summary's Artifacts line reads `Design folder kept: {path} (parts marked filed)` in place of `### Artifacts Removed`, and the Actions Performed row `Deleted design doc` reads `Marked design folder`. The `### Left for another repository` block lists each part in `filing.leftFor` with its repository and the rerun line `/claude-tweaks:design {argument}` (step 10, in that repository's checkout), and the summary also names each `filing.writeBack` line Step 4 did not find, and under `local-files` each entry it listed instead of editing. With an empty `filing.file` the summary says nothing was filed here and lists the left and skipped parts.
 
 **Resolving a `### Staged for caller` row.** Decide the resolution (an `AskUserQuestion` call or your own judgment), then apply it with `bin/resolve-ambiguity.js`, one row at a time, since each row re-fetches the body the previous one wrote. `{n}` below is the bare issue number: `#{n}` would start a bash comment.
 

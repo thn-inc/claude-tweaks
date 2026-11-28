@@ -362,3 +362,149 @@ test('a local-files slug collision keeps the part slug in the fingerprint', () =
   const region = SUB_REGION(SUB);
   assertEachPatternGoesRed(region, SUB_FACTS.slice(2), missingSub);
 });
+
+// --- red-team.md, decomposition-mode-closeout.md, mechanical-handoff.md (#6353 Task 5) ----------
+
+const RT = read('red-team.md');
+const CLOSE = read('decomposition-mode-closeout.md');
+const HANDOFF = read('mechanical-handoff.md');
+
+const T5_REGIONS = {
+  rt: (text) => between(text, '5. **Decision-worthy findings stage instead', '6. **Compose-then-write-once**', 'red-team write-back step 5'),
+  step4: (text) => between(text, '## Step 4: Link and order', '## Step 5: Multi-Persona Red-Team', 'closeout Step 4'),
+  step7: (text) => between(text, '## Step 7: Delete Consumed Artifacts', '## Step 9: Summary and Commit', 'closeout Step 7'),
+  step9: (text) => between(text, '## Step 9: Summary and Commit', '**Resolving a `### Staged for caller` row.**', 'closeout Step 9'),
+  row: (text) => between(text, '\n## Required inputs', '\n## Dispatch prompt', 'handoff Required inputs'),
+  prompt: (text) => between(text, '\n## Dispatch prompt', '\nStatus line (required)', 'handoff dispatch prompt'),
+};
+
+const T5_FACTS = {
+  rt: [
+    [/On an approved parts list \(`decomposition-mode\.md`'s Approved parts list\), a finding whose resolution would change a part's name, size or blockers is always decision-worthy and is never applied: it is staged or asked as above, and the part stays as approved/, 'T1 a part-changing finding is never applied'],
+    [/with neither a run directory nor a human, the marker stays and `ready` stays cleared\. The red-team may still write its marker or Open Questions row\./, 'T2 no run dir and no human keeps the marker'],
+  ],
+  step4: [
+    [/for each `filing\.writeBack` entry `\{ issue, waitsOn \}`, replace the line `Blocked by: \{waitsOn\} \(left for \{thisRepository\}\)` in that issue's body with `Blocked by \{thisRepository\}#\{N\}`/, 'W1 the symbolic line is replaced by the sibling ref'],
+    [/`gh issue view \{n\} --repo \{owner\/name\} --json body` read and one `gh issue edit \{n\} --repo \{owner\/name\} --body-file` write per issue/, 'W2 gh read and write per issue'],
+    [/A line that is not there is left alone and named in Step 9's summary\./, 'W3 a missing line is named, not edited'],
+    [/Under `local-files` there is no other repository's store to edit, so each entry is listed in Step 9's summary instead\./, 'W4 local-files lists the entries'],
+  ],
+  step7: [
+    [/\| Approved parts list \(Step 2's approved branch\) \| \*\*No\*\* — the design folder is kept, since it holds the evidence and the notes\./, 'K1 the folder is kept'],
+    [/Mark each part this run filed `\{thisRepository\}#\{N\}` and each part in `filing\.leftFor` `left for \{owner\/name\}` \(never a part in `filing\.skipped`\)/, 'K2 filed, left-for and skipped marks'],
+    [/write the marks to a session temp JSON file with the Write tool, run `mark-filed`, and commit `design\.md` with this step's commit\./, 'K3 marks file by Write, then mark-filed and commit'],
+    [/node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/design-session\.js" mark-filed --folder "\{folder\}" --marks "\{marks file\}"/, 'K4 the mark-filed call'],
+    [/The `git rm` block below does not run on this branch\./, 'K5 git rm does not run'],
+  ],
+  step9: [
+    [/Under the approved branch\*\* the summary's Artifacts line reads `Design folder kept: \{path\} \(parts marked filed\)`/, 'S1 Artifacts line'],
+    [/### Left for another repository \(optional/, 'S2 the block heading in the template'],
+    [/The `### Left for another repository` block lists each part in `filing\.leftFor` with its repository and the rerun line `\/claude-tweaks:design \{argument\}` \(step 10, in that repository's checkout\)/, 'S3 block content and rerun line'],
+    [/With an empty `filing\.file` the summary says nothing was filed here and lists the left and skipped parts\./, 'S4 empty filing.file'],
+  ],
+  row: [
+    [/\| Approved parts \(omit unless Step 2 took the approved branch\) \| `check-approval`'s JSON \(parts, measure, designSlug, and `filing`'s file, skipped, leftFor and writeBack lists\), the folder path, and the no-gate rule in one sentence, since the subagent never reads `decomposition-mode\.md` \|/, 'H1 row inputs carry the JSON, folder and the no-gate rule'],
+    [/Step 3 titles, sizes and slugs each unit from it and writes the measure on the parent; Step 4 writes `filing\.writeBack` back; Step 5 keeps every part as approved; Step 7 marks and keeps the folder instead of deleting it; Step 9 lists the left-for parts \|/, 'H2 row says why each step needs it'],
+  ],
+  prompt: [
+    [/\[Approved parts — omit unless Step 2 took the approved branch: check-approval JSON \{the whole\nprinted object\}; design folder \{path\}\./, 'H3 prompt line carries JSON and folder'],
+    [/No gate changes an approved part: no step applies an\noutcome that would drop, merge, rename or re-size a part, or add or remove one of its blockers —\nbefore its record exists, stop and ask or stage; once it exists, leave the part as approved, clear\nthe record's ready, and stage or ask the question, never applying the change\./, 'H4 prompt states the no-gate rule itself'],
+    [/Keep the design\nfolder; mark it with mark-filed instead of deleting it\]/, 'H5 prompt keeps and marks the folder'],
+  ],
+};
+const missingT5 = Object.fromEntries(Object.entries(T5_FACTS).map(([k, f]) => [k, missingFactsOf(f)]));
+const T5_SOURCE = { rt: RT, step4: CLOSE, step7: CLOSE, step9: CLOSE, row: HANDOFF, prompt: HANDOFF };
+const allFacts = (region) => T5_FACTS[region].map(([, f]) => f);
+
+function pinT5(region, ...prefixes) {
+  const text = T5_REGIONS[region](T5_SOURCE[region]);
+  const subset = T5_FACTS[region].filter(([, fact]) => prefixes.some((p) => fact.startsWith(p)));
+  assert.ok(subset.length > 0, `no facts named ${prefixes.join(', ')}`);
+  assert.deepEqual(missingT5[region](text).filter((f) => subset.some(([, s]) => s === f)), [], `${region} is missing facts`);
+  assertEachPatternGoesRed(text, subset, missingT5[region]);
+}
+
+test('every Task 5 region states every fact, each exactly once', () => {
+  for (const region of Object.keys(T5_FACTS)) {
+    const text = T5_REGIONS[region](T5_SOURCE[region]);
+    assert.deepEqual(missingT5[region](text), [], region);
+    assertEachPatternGoesRed(text, T5_FACTS[region], missingT5[region]);
+  }
+});
+
+test('AC2.2: red-team never changes an approved part', () => {
+  pinT5('rt', 'T');
+  // Move-out control: the clause moved below step 6 stays in the file but leaves step 5 red.
+  const para = RT.split('\n').find((l) => T5_FACTS.rt[0][0].test(l));
+  assert.ok(para, 'the clause must sit in one paragraph');
+  const moved = RT.replace(`${para}\n`, '').replace('7. **Decision-log entries', () => `${para}\n7. **Decision-log entries`);
+  assert.notEqual(moved, RT);
+  assert.ok(moved.includes(para));
+  assert.deepEqual(missingT5.rt(T5_REGIONS.rt(moved)), allFacts('rt'));
+});
+
+test('a later repository\'s run rewrites the earlier issues\' symbolic blockers', () => {
+  pinT5('step4', 'W');
+  // Move-out control: the paragraph moved into Step 5 stays in the file but leaves Step 4 red.
+  const para = CLOSE.split('\n').find((l) => l.startsWith('**Approved parts list (Step 2\'s approved branch) — write back'));
+  assert.ok(para, 'write-back paragraph must be one line');
+  const moved = CLOSE.replace(`${para}\n\n`, '').replace('## Step 5: Multi-Persona Red-Team\n', () => `## Step 5: Multi-Persona Red-Team\n\n${para}\n`);
+  assert.notEqual(moved, CLOSE);
+  assert.ok(moved.includes(para));
+  assert.deepEqual(missingT5.step4(T5_REGIONS.step4(moved)), allFacts('step4'));
+});
+
+test('the design folder is kept and its parts marked filed', () => {
+  pinT5('step7', 'K');
+  const ROW = '| Approved parts list (Step 2\'s approved branch)';
+  const FIRST = '| No `phase-N` argument; doc has 0 phase sections';
+  const GIT_RM = 'git rm docs/superpowers/specs/';
+  const order = (text) => {
+    requireOrder(text, ROW, FIRST, 'approved row first in the table');
+    requireOrder(text, FIRST, GIT_RM, 'table before the git rm block');
+    requireOrder(text, 'design-session.js" mark-filed', GIT_RM, 'mark-filed before the git rm block');
+  };
+  order(CLOSE);
+  const row = CLOSE.split('\n').find((l) => l.startsWith(ROW));
+  const firstRow = CLOSE.split('\n').find((l) => l.startsWith(FIRST));
+  const rowSecond = CLOSE.replace(`${row}\n`, '').replace(`${firstRow}\n`, () => `${firstRow}\n${row}\n`);
+  assert.notEqual(rowSecond, CLOSE);
+  assert.throws(() => order(rowSecond), { message: /approved row first in the table: order violated/ });
+  const call = 'node "${CLAUDE_PLUGIN_ROOT}/bin/design-session.js" mark-filed --folder "{folder}" --marks "{marks file}"';
+  const markLate = CLOSE.replace(`\`\`\`bash\n${call}\n\`\`\`\n\n`, '').replace('git rm docs/superpowers/specs/YYYY-MM-DD-{topic}-design.md\n', (m) => `${m}${call}\n`);
+  assert.notEqual(markLate, CLOSE);
+  assert.throws(() => order(markLate), { message: /mark-filed before the git rm block: order violated/ });
+});
+
+test('the mark-filed call is one the CLI accepts', () => {
+  const usage = execFileSync(process.execPath, [path.join(ROOT, 'plugin', 'bin', 'design-session.js'), '--help'], { encoding: 'utf8' });
+  const accepted = (text) => text.includes('design-session.js mark-filed --folder <dir> --marks <file>');
+  assert.ok(accepted(usage), 'mark-filed no longer takes --folder and --marks');
+  assert.equal(accepted(usage.replace('--marks', '--file')), false);
+});
+
+test('parts left for another repository appear in the Step 9 summary', () => {
+  pinT5('step9', 'S');
+  // Move-out control: the Artifacts-line paragraph moved above Step 9 leaves its facts red.
+  const para = CLOSE.split('\n').find((l) => l.startsWith('**Under the approved branch**'));
+  assert.ok(para, 'Step 9 approved paragraph must be one line');
+  const moved = CLOSE.replace(`${para}\n\n`, '').replace('## Step 9: Summary and Commit\n', () => `${para}\n\n## Step 9: Summary and Commit\n`);
+  assert.notEqual(moved, CLOSE);
+  assert.ok(moved.includes(para));
+  assert.deepEqual(missingT5.step9(T5_REGIONS.step9(moved)), ['S1 Artifacts line', 'S3 block content and rerun line', 'S4 empty filing.file']);
+});
+
+test('the mechanical handoff carries the approved parts', () => {
+  pinT5('row', 'H1', 'H2');
+  pinT5('prompt', 'H3', 'H4', 'H5');
+  // Move-out control: the prompt line moved above the dispatch prompt heading leaves the prompt red.
+  const start = HANDOFF.indexOf('[Approved parts — omit unless');
+  const tail = 'instead of deleting it]';
+  const end = HANDOFF.indexOf(tail, start) + tail.length;
+  assert.ok(start > 0 && end > start, 'prompt line must resolve');
+  const line = HANDOFF.slice(start, end);
+  const moved = HANDOFF.replace(`${line}\n`, '').replace('\n## Dispatch prompt', () => `\n${line}\n\n## Dispatch prompt`);
+  assert.notEqual(moved, HANDOFF);
+  assert.deepEqual(missingT5.prompt(T5_REGIONS.prompt(moved)), allFacts('prompt'));
+  requireOrder(HANDOFF, '| Approved parts (omit unless', '| Design doc — path and', 'approved row before the design doc row');
+});
