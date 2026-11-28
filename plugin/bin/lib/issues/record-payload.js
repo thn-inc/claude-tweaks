@@ -128,8 +128,9 @@ function recordPayload({ title, body, type, origin, risk, size, ceremony, soluti
     }
   }
 
-  // A symbolic `Blocked by: … (left for owner/name)` line is read by no blocker surface, so
-  // `ready` on that body would show the record unblocked (#6374): withhold the label and say
+  // A symbolic `Blocked by: … (left for owner/name)` line names no issue and no resolvable
+  // state (no native or `#N` blocker exists yet), so `ready` stays off until a later run
+  // rewrites it to `owner/name#N` (#6374): withhold the label and say
   // so in `readyWithheld` rather than throw. Lazy require: materialize-format.js loads this
   // file, via policy-schema.js, at load time, so a top-level require of blocker-lines.js would
   // hand it a partial export through the load cycle.

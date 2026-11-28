@@ -36,8 +36,9 @@ function hasOpenQuestionsSection(body) {
 // sections present and no TBD/TODO/ambiguity placeholder) and no Open
 // Questions section survives (spec-template.md: resolve every row, then
 // delete the section), and no symbolic `Blocked by: … (left for owner/name)`
-// line remains: no blocker surface reads one, so `ready` would show the record
-// unblocked until the later repository's run rewrites it (design-session/parts.js).
+// line remains: that line names no issue and no resolvable state (no native or
+// `#N` blocker exists yet), so `ready` stays off until a later run rewrites it to
+// `owner/name#N` (design-session/parts.js).
 function readyRestorable(body) {
   return readyGate(body).ok;
 }
@@ -48,7 +49,7 @@ function readyRestorable(body) {
 // its boolean; bin/ready-gate.js prints it for the skills that grant `ready`.
 function readyGate(body) {
   if (typeof body !== 'string') return { ok: false, reasons: ['body-not-a-string'] };
-  const reasons = [...(shapeGate(body).missing || [])];
+  const reasons = [...shapeGate(body).missing];
   if (hasOpenQuestionsSection(body)) reasons.push('open-questions-section');
   for (const ref of symbolicBlockerRefs(body)) reasons.push(`symbolic-blocker: ${ref}`);
   return { ok: reasons.length === 0, reasons };
