@@ -10,7 +10,7 @@
 
 // Line-anchored 'Blocked by #N' dependency declarations and their ': {text}' assumption
 // variant (multiline); both regexes are defined in blocker-lines.js.
-const { LOCAL_BLOCKER_LINE_RE: DEP_RE, LOCAL_BLOCKER_ASSUMPTION_RE: DEP_ASSUMPTION_RE } = require('./blocker-lines');
+const { LOCAL_BLOCKER_LINE_RE: DEP_RE, LOCAL_BLOCKER_ASSUMPTION_RE: DEP_ASSUMPTION_RE, symbolicBlockerRefs } = require('./blocker-lines');
 
 // Parent task-list entries (work-links: body-text), written by /specify as
 // '- [ ] #{subIssueNum}' and checked off over time — both box states count.
@@ -256,6 +256,8 @@ function partitionByOpenBodyBlockers(candidates, openNumbers, foreignByRecord) {
   return partitionByOpenBlockers(candidates, (c) => [
     ...parseDependencies(c.body).filter((dep) => openNumbers.has(dep)),
     ...(foreignByRecord.get(c.number) || []).filter(foreignBlockerBlocks).map(foreignBlockerRef),
+    // #6374: a symbolic line has no issue and no state, so it holds on the body alone, after the foreign refs.
+    ...symbolicBlockerRefs(c.body),
   ]);
 }
 

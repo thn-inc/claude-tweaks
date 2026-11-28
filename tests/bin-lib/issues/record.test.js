@@ -11,6 +11,7 @@ const {
   buildLinkedPRQuery, partitionByOpenLinkedPR, extractSection, isRepoRelativeKeyFilePath,
   crossRepositoryBlockers, withoutCrossRepoBlockers, foreignBlockerBlocks, foreignBlockerRef, openBlockerRefs, openNativeBlockerRefs,
 } = require('../../../plugin/bin/lib/issues/record');
+const { SYMBOLIC_REF, symbolicBody } = require('../../helpers/symbolic-blocker-fixture');
 
 test('recordPayload assembles labels for a born-ready health record', () => {
   const result = recordPayload({
@@ -564,6 +565,15 @@ test('partitionByOpenBodyBlockers keeps a candidate whose blocker is not in open
   const { eligible, excluded } = partitionByOpenBodyBlockers(candidates, new Set(), new Map());
   assert.deepStrictEqual(eligible.map((c) => c.number), [12]);
   assert.deepStrictEqual(excluded, []);
+});
+
+test('AC2.2: partitionByOpenBodyBlockers excludes a record whose only blocker is a symbolic line, naming it', () => {
+  const { eligible, excluded } = partitionByOpenBodyBlockers([{ number: 9, body: symbolicBody() }], new Set(), new Map());
+  assert.deepStrictEqual(eligible, []);
+  assert.deepStrictEqual(excluded, [{ number: 9, blockedBy: [SYMBOLIC_REF] }]);
+  const foreign = new Map([[10, [{ repository: 'acme/x', number: 5, state: 'OPEN' }]]]);
+  const mixed = partitionByOpenBodyBlockers([{ number: 10, body: symbolicBody() }], new Set(), foreign);
+  assert.deepStrictEqual(mixed.excluded, [{ number: 10, blockedBy: ['acme/x#5', SYMBOLIC_REF] }]);
 });
 
 test('partitionByOpenBodyBlockers reports a two-member dependency cycle as two entries naming each other', () => {

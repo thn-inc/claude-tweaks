@@ -6,6 +6,7 @@ const {
   readOrder, writeOrder, buildFreshnessSignal, signalsMatch, composeOrderBlob, cacheUsable, GROUPING_MODE, groupingMode,
 } = require('../../../plugin/bin/lib/dispatch/queue-order.js');
 const { groupingFingerprint } = require('../../../plugin/bin/lib/express/queue.js');
+const { SYMBOLIC_LINE, SYMBOLIC_REF, symbolicBody } = require('../../helpers/symbolic-blocker-fixture');
 const { isCatFileBatch, answerCatFileBatch } = require('../../helpers/fake-cat-file-batch');
 
 // Same minimal fake git runner shape as merge-lane-breaker.test.js's own
@@ -290,6 +291,17 @@ test('#4793: the same queue is a cache hit without a qualified foreign Blocked b
   const mixed = [...queue(''), { number: 2, updatedAt: 'b', state: 'OPEN', body: 'Blocked by acme/x#2' }];
   assert.deepStrictEqual(buildFreshnessSignal(mixed).foreignDeclared, true);
   assert.equal('foreignDeclared' in buildFreshnessSignal(queue('')), false, 'absent when no body declares one');
+});
+
+test('a symbolic line rewritten to owner/name#N is a cache miss', () => {
+  const queue = (body, updatedAt) => [{ number: 1, updatedAt, state: 'OPEN', body }];
+  const symbolic = queue(symbolicBody(), 'a');
+  const persisted = composeOrderBlob({
+    computedAt: 'x', runId: 'y', freshnessSignal: buildFreshnessSignal(symbolic), groups: [], excluded: [{ number: 1, blockedBy: [SYMBOLIC_REF] }], fingerprint: 'fp',
+  });
+  assert.equal(cacheUsable(persisted, buildFreshnessSignal(symbolic), KEY), true, 'a symbolic verdict is a function of the body alone');
+  const rewritten = queue(symbolicBody().replace(SYMBOLIC_LINE, 'Blocked by thn-inc/other#5'), 'b');
+  assert.equal(cacheUsable(persisted, buildFreshnessSignal(rewritten), KEY), false);
 });
 
 // signalsMatch pairs entries by issue number: two signals of the same length that differ only in one

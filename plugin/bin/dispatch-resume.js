@@ -64,7 +64,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const claimStore = require('./lib/issues/claim-store');
 const { defaultRunner: gitCasRunner } = require('./lib/issues/claims-git-cas');
-const { parseDependencies, openBlockerRefs, foreignBlockerBlocks, foreignBlockerRef } = require('./lib/issues/record');
+const { parseDependencies, openBlockerRefs, foreignBlockerBlocks, foreignBlockerRef, symbolicBlockerRefs } = require('./lib/issues/record');
 const { parseCrossRepoDependencies, foreignEntries, bodyOnlyForeign } = require('./lib/issues/cross-repo-refs');
 const { fetchCrossRepoStates } = require('./lib/issues/cross-repo-states');
 const { parseStatusPorcelainZ } = require('./lib/git-z');
@@ -324,6 +324,8 @@ function readOpenBlockers(ctx, body) {
     if (Array.isArray(entry.crossRepoBlockers)) nativeCross = entry.crossRepoBlockers.filter((b) => b && typeof b === 'object');
   }
   foreign.push(...bodyForeignBlockerRefs(ctx, body, nativeCross));
+  // #6374: a symbolic `(left for owner/name)` line has no issue to read, so it is named as written, never looked up.
+  foreign.push(...symbolicBlockerRefs(body));
   return [...[...open].sort((a, b) => a - b), ...foreign];
 }
 
