@@ -55,6 +55,8 @@ An `open`, `unlanded` or `hollow` verdict's stop is gate `blocker-landing`; unde
 
 An entry with `via: cross-repository` or `via: cross-repository-state-unreadable` is a blocker in another repository, linked natively or declared by a `Blocked by owner/name#N` body line; its `repository` key holds `owner/name`, and its number names that repository's issue, so write it as `{repository}#{blocker}`. An `open` entry stops as the table says, its stop line naming `{repository}#{blocker}`; with `via: cross-repository-state-unreadable` the stop line reads "159 depends on {repository}#{blocker} (state unreadable) — read as open (fail closed)". An `undetermined` entry writes the SKIP line `condition: {repository}#{blocker} lives in another repository (via cross-repository) → fallback: proceeded without judging its landing — blocker landing reads only this repository's integration branch` (#4793, Decisions Q1 and Q5).
 
+An entry with `via: symbolic-blocker` names a part that is not filed yet, so its stop line names `{blocker}` exactly as written (never `{repository}#…`), says the part is not filed yet in `{repository}`, and gives the escape: that repository's run files the part and rewrites the line to `Blocked by owner/name#N`.
+
 A failed blocker query is not `undetermined` — the call exits non-zero and the run stops before claiming (`multispec-preflight-failure.md`).
 
 The `unlanded` stop card:
