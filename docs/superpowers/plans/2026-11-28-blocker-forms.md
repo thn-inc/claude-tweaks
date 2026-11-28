@@ -4,7 +4,7 @@
 
 **Goal:** One module defines the three `Blocked by` line forms. A ready-grant gate keeps `ready` off every path while a `Blocked by: {part} (left for owner/name)` line remains, and every blocker reader holds a record with such a line and names the blocker the same way.
 
-**Architecture:** A new pure module, `plugin/bin/lib/issues/blocker-lines.js`, owns the grammar of all three forms. `record-dependencies.js`, `cross-repo-refs.js`, `design-session/parts.js` and `plan-line.js` import their regexes and the symbolic-ref writer from it. A symbolic blocker has no issue and no state, so it does not ride the stateful foreign-entry plumbing (`crossRepoKey`, `foreignEntries` and the state lookups all assume `owner/name#N`). Each reader appends `symbolicBlockerRefs(body)`, plain blocker strings, at its verdict layer instead, so the record always holds and the blocker is named identically everywhere. `readyGate(body)` sits beside `shapeGate` in `ambiguity-resolve.js`, `readyRestorable` delegates to it, and a new `plugin/bin/ready-gate.js` CLI exposes it to the prose paths that add `ready`. `recordPayload` refuses `ready: true` on a body carrying a symbolic line.
+**Architecture:** A new pure module, `plugin/bin/lib/issues/blocker-lines.js`, owns the grammar of all three forms. `record-dependencies.js`, `cross-repo-refs.js`, `design-session/parts.js` and `plan-line.js` import their regexes and the symbolic-ref writer from it. A symbolic blocker has no issue and no state, so it does not ride the stateful foreign-entry plumbing (`crossRepoKey`, `foreignEntries` and the state lookups all assume `owner/name#N`). Each reader appends `symbolicBlockerRefs(body)`, plain blocker strings, at its verdict layer instead, so the record always holds and the blocker is named identically everywhere. `readyGate(body)` sits beside `shapeGate` in `ambiguity-resolve.js`, `readyRestorable` delegates to it, and a new `plugin/bin/ready-gate.js` CLI exposes it to the prose paths that add `ready`. `recordPayload` withholds `ready` from a body carrying a symbolic line (it files without the label and says so), so every born-ready creator is covered without a prose change.
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`.
 
@@ -110,7 +110,9 @@ Note on AC1.2: the grammar AC's grep also matches `ranking.js`'s `PROSE_DEP_RE` 
 
 **Files:**
 - Modify: `plugin/bin/lib/issues/ambiguity-resolve.js` (add `readyGate`; `readyRestorable` delegates to it; header comment)
-- Modify: `plugin/bin/lib/issues/record-payload.js` (`recordPayload` refuses `ready: true` with a symbolic blocker, via a lazy require)
+- Modify: `plugin/bin/lib/issues/record-payload.js` (`recordPayload` withholds `ready` from a body with a symbolic blocker, via a lazy require)
+- Modify: `plugin/bin/compose-record.js` (prints one `Warning:` line on stderr when the composed payload's `readyWithheld` is non-empty; exit code unchanged)
+- Test: `tests/compose-record-cli.test.js` (path per the existing compose-record CLI suite)
 - Create: `plugin/bin/ready-gate.js`
 - Modify: `plugin/bin/resolve-ambiguity.js` header (readyRestorable now means the ready-grant gate passes)
 - Modify: `docs/plugin-structure.md` (CLI row for `ready-gate.js`; the `resolve-ambiguity.js` row's readyRestorable clause names the symbolic-line condition)
@@ -123,29 +125,31 @@ Note on AC1.2: the grammar AC's grep also matches `ranking.js`'s `PROSE_DEP_RE` 
 - Produces: `readyGate(body: string) -> { ok: boolean, reasons: string[] }`. `reasons` is, in order: shapeGate's `missing` entries, `'open-questions-section'` when that heading survives, and one `'symbolic-blocker: {ref}'` per `symbolicBlockerRefs(body)` entry. `ok` is `reasons.length === 0`. A non-string body gives `{ ok: false, reasons: ['body-not-a-string'] }`.
 - Produces: `readyRestorable(body) === readyGate(body).ok`, so the signature is unchanged.
 - Produces: `node plugin/bin/ready-gate.js <body-file>`. It prints one JSON line, `{"ready":true|false,"reasons":[…]}`, and exits 0 (may carry `ready`), 1 (must not), or 2 (malformed invocation or an unreadable file). It exports `run(argv, deps)` and `realDeps` (`readFile`, `stdout`, `stderr`, `cwd`), and resolves a relative path against `deps.cwd()`.
-- Produces: `recordPayload({ ready: true, body })` throws `Error('a record cannot be ready while a Blocked by: … (left for owner/name) line remains: {ref}')` when `hasSymbolicBlocker(body)`.
+- Produces: `recordPayload({ ready: true, body })` on a body where `hasSymbolicBlocker(body)` is true returns its usual payload without the `ready` label and with `readyWithheld: symbolicBlockerRefs(body)`. Every other payload has no `readyWithheld` key. It never throws for this (Planning Decisions, settled at plan review). `compose-record.js` prints `Warning: ready withheld — a Blocked by: … (left for owner/name) line remains: {refs joined by ', '}` to stderr when the field is present.
 
 - [ ] **Step 1: Write the failing tests**
   - `ambiguity-resolve.test.js`, `AC2.1: readyGate names every reason ready must stay off`: `readyGate(symbolicBody())` deep-equals `{ ok: false, reasons: ['symbolic-blocker: ' + SYMBOLIC_REF] }`; a body with both an Open Questions heading and the line lists both reasons in order; `readyGate(symbolicBody())` with the line rewritten to `Blocked by thn-inc/other#7004` gives `{ ok: true, reasons: [] }`. The existing `readyRestorable` cases stay unchanged and must still pass (characterization).
-  - `record.test.js`, `AC2.1: recordPayload refuses ready on a body with a symbolic blocker`: `assert.throws(() => recordPayload({ title: 't', body: symbolicBody(), type: 'task', ready: true }), /left for/)`. The same call with `ready: false` does not throw (create-time filing unchanged, AC3.1).
+  - `record.test.js`, `AC2.1: recordPayload withholds ready from a body with a symbolic blocker and says so`: `recordPayload({ title: 't', body: symbolicBody(), type: 'task', ready: true })` has no `ready` in `labels` and `readyWithheld` deep-equals `[SYMBOLIC_REF]`. The same body with the line rewritten to `Blocked by thn-inc/other#7004` keeps `ready` and has no `readyWithheld` key. With `ready: false` the result is unchanged from today (create-time filing unchanged, AC3.1).
+  - compose-record CLI suite: a payload with `ready: true` and a `symbolicBody()` body exits 0, its printed labels lack `ready`, and stderr carries the one `Warning: ready withheld` line.
   - `tests/ready-gate-cli.test.js` (in-process through `tests/helpers/run-cli.js`'s `runCliSync`, following an existing in-process CLI test's shape): exit 1 with `ready:false` and the symbolic reason for a `symbolicBody()` file; exit 0 with `{"ready":true,"reasons":[]}` for the rewritten body; exit 2 for no argument and for a missing file; a relative path resolves against the injected `cwd`; a one-line test that `realDeps` carries each key.
   - `compose-record` (AC3.1): in the existing `compose-record` CLI suite, `--check` on a `symbolicBody()` file exits 0 (validateShaped still accepts the line).
 
 - [ ] **Step 2: Run them to verify they fail**
   Run: `node --test tests/bin-lib/issues/ambiguity-resolve.test.js tests/bin-lib/issues/record.test.js tests/ready-gate-cli.test.js`
-  Expected: FAIL (`readyGate is not a function`, no throw, `Cannot find module`).
+  Expected: FAIL (`readyGate is not a function`, `ready` still in labels, `Cannot find module`).
 
-- [ ] **Step 3: Implement** `readyGate` and the `readyRestorable` delegation in `ambiguity-resolve.js`. Add the `recordPayload` refusal: `const { hasSymbolicBlocker, symbolicBlockerRefs } = require('./blocker-lines')` inside the function, guarded by `ready === true`, with a comment naming the load cycle from Global Constraints. Write `plugin/bin/ready-gate.js` under the CLI wrapper contract, with its exit codes in the header comment and `USAGE`.
+- [ ] **Step 3: Implement** `readyGate` and the `readyRestorable` delegation in `ambiguity-resolve.js`. Add the `recordPayload` withhold: `const { hasSymbolicBlocker, symbolicBlockerRefs } = require('./blocker-lines')` inside the function, guarded by `ready === true`, with a comment naming the load cycle from Global Constraints. Then the compose-record warning line. Write `plugin/bin/ready-gate.js` under the CLI wrapper contract, with its exit codes in the header comment and `USAGE`.
 
 - [ ] **Step 4: Run the tests**
-  Run: `node --test tests/bin-lib/issues/ambiguity-resolve.test.js tests/bin-lib/issues/record.test.js tests/ready-gate-cli.test.js tests/resolve-ambiguity-cli.test.js tests/bin-lib/cli-entry-conformance.test.js tests/bin-lib/exit-code-conformance.test.js`
+  Run: `node --test tests/bin-lib/issues/ambiguity-resolve.test.js tests/bin-lib/issues/record.test.js tests/ready-gate-cli.test.js tests/resolve-ambiguity-cli.test.js tests/bin-lib/cli-entry-conformance.test.js tests/bin-lib/exit-code-conformance.test.js` plus the compose-record CLI suite
   Expected: PASS
 
-- [ ] **Step 5: Commit** with the message `Add the ready-grant gate beside shapeGate — readyGate, ready-gate.js, recordPayload refusal (#6374)`.
+- [ ] **Step 5: Commit** with the message `Add the ready-grant gate beside shapeGate — readyGate, ready-gate.js, recordPayload withholds ready (#6374)`.
 
 ### Task 3: Dispatch surfaces hold and name a symbolic blocker
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/issues/record-dependencies.js` (`partitionByOpenBodyBlockers`: append `symbolicBlockerRefs(c.body)` after the foreign refs). The queue pull's body pass runs under both `work-links` values (`queue-pull.js:767-772`), so this one change covers both modes.
@@ -179,6 +183,7 @@ Note on AC1.2: the grammar AC's grep also matches `ranking.js`'s `PROSE_DEP_RE` 
 ### Task 4: Backlog surfaces count and filter a symbolic blocker
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/issues/backlog.js` (`attachBodyForeignBlockers`: also attach `symbolicBlockerRefs(r.body)`, both when the record has no foreign entries and when it has a tier already. Dedupe against strings already in the tier, so a second pass adds nothing. Overview's native path re-applies this function after its native attach, so both `work-links` values are covered.)
@@ -213,18 +218,18 @@ Note on AC1.2: the grammar AC's grep also matches `ranking.js`'s `PROSE_DEP_RE` 
 
 **Files:**
 - Modify: `plugin/bin/materialize.js` (lines 437 and 632: `bodyBlockedBy` and `blockedBy` each append `...symbolicBlockerRefs(record.body)` after the foreign refs)
-- Modify: `plugin/bin/preflight-records.js` (after `addBodyForeignBlockers`, each record's `blockerLanding` appends one `{ blocker: ref, verdict: 'open', via: 'symbolic-blocker', repository }` per `symbolicBlockers(issue.body)` entry, where `ref` is `symbolicBlockerRef(entry)`. Never hand a symbolic entry to `addBodyForeignBlockers`, `crossRepoKey` or `fetchCrossRepoStates`. This runs under both `work-links` values and under `--records-json`.)
+- Modify: `plugin/bin/preflight-records.js` (after `addBodyForeignBlockers`, each record's `blockerLanding` appends one `{ blocker: ref, verdict: 'open', commit: null, via: 'symbolic-blocker', repository }` (the producer contract in `preflight-records.js`'s header always carries `commit`; add the symbolic entry to that header comment) per `symbolicBlockers(issue.body)` entry, where `ref` is `symbolicBlockerRef(entry)`. Never hand a symbolic entry to `addBodyForeignBlockers`, `crossRepoKey` or `fetchCrossRepoStates`. This runs under both `work-links` values and under `--records-json`.)
 - No change: `plugin/bin/lib/preflight-records/blocker-landing.js` (`open` already stops; the symbolic entry is appended in `plugin/bin/preflight-records.js`)
 - Modify: `plugin/skills/flow/multispec-dependency-ordering.md` (one sentence beside the `owner/name#N` rule: a `{part} (left for owner/name)` entry in `blocked-by:` never adds an edge, and pre-flight reads it as an `open` out-of-run blocker, a STOP). Also `plugin/skills/flow/validation.md`'s 2.7b item 3 (body-text no-op): a symbolic line lands in `bodyBlockedBy`, so the call runs.
 - Test: `tests/materialize-design-intent.test.js` (beside `'Q7 (#4793): blocked-by lists…'`), `tests/preflight-records.test.js` (beside the `:957` body-declared OPEN foreign case; path per `git grep -l "body-declared OPEN foreign blocker reads open" -- tests`), `tests/flow-cross-repo-header-conformance.test.js` (one fact for the new prose sentence, proven red)
 
 **Interfaces:**
 - Consumes: `symbolicBlockers`, `symbolicBlockerRef`, `symbolicBlockerRefs` (Task 1); fixture.
-- Produces: the `blockerLanding` entry shape `{ blocker: string, verdict: 'open', via: 'symbolic-blocker', repository: string }`. `validation.md`'s rule "`open` … is BLOCKED" already stops on it.
+- Produces: the `blockerLanding` entry shape `{ blocker: string, verdict: 'open', commit: null, via: 'symbolic-blocker', repository: string }`. `validation.md`'s rule "`open` … is BLOCKED" already stops on it.
 
 - [ ] **Step 1: Write the failing tests**
   - `AC2.5: --check reports a symbolic-only body's blocker in bodyBlockedBy, and the header lists it after this repository's numbers and foreign refs`: `bodyBlockedBy` deep-equals `[SYMBOLIC_REF]`, and with `Blocked by #12` and `Blocked by a/b#3` added, the header reads `blocked-by: [12, a/b#3, Skill steps (left for thn-inc/other)]`.
-  - `AC2.5: a symbolic blocker reads open in blockerLanding under body-text, native and --records-json, with no state lookup for it`: each run's record has one entry `{ blocker: SYMBOLIC_REF, verdict: 'open', via: 'symbolic-blocker', repository: 'thn-inc/other' }`, and the fake runner received no query naming `Skill steps`.
+  - `AC2.5: a symbolic blocker reads open in blockerLanding under body-text, native and --records-json, with no state lookup for it`: each run's record has one entry `{ blocker: SYMBOLIC_REF, verdict: 'open', commit: null, via: 'symbolic-blocker', repository: 'thn-inc/other' }`, and the fake runner received no query naming `Skill steps`.
   - Header conformance: the multispec-dependency-ordering sentence fact, proven red per `skill-prose-conformance-tests`.
 
 - [ ] **Step 2: Run them to verify they fail**
@@ -242,6 +247,7 @@ Note on AC1.2: the grammar AC's grep also matches `ranking.js`'s `PROSE_DEP_RE` 
 ### Task 6: Wrap-up never reports a symbolic-blocked record newly unblocked
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/wrap-up/pack.js` (both `work-links` branches of the newly-unblocked probe drop a dependent with `hasSymbolicBlocker(r.body)` before `dropForeignBlocked`, so no symbolic ref reaches `distinctCrossRepoRefs`, `foreignEntries` or the spawn; the `local-files` `unblockedLocal` branch drops it too)
@@ -271,17 +277,21 @@ Note on AC1.2: the grammar AC's grep also matches `ranking.js`'s `PROSE_DEP_RE` 
 ### Task 7: Every prose path that adds ready runs the gate
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
-- Derive the list first: `git grep -n -l -e "add-label ready" -e readyRestorable -e "ready: true" -- plugin/skills`. As of this plan it is these files:
+- Derive the list first with the spec's grep, `git grep -n -l -e "add-label ready" -e readyRestorable -e "ready: true" -- plugin`, and classify every hit. As of this plan the hits classify as follows:
+- Covered by `recordPayload`'s withhold (Task 2), no prose change: the born-ready creators `plugin/bin/lib/ci-audit/issue-payload.js`, `plugin/bin/lib/code-health/issue-payload.js`, `plugin/bin/lib/docs-health/issue-payload.js`, `plugin/bin/lib/harness-health/issue-payload.js`, `plugin/bin/lib/journey-health/issue-payload.js`, `plugin/skills/capture/SKILL.md` (Shaped-body step 3), `plugin/skills/review/step3-routing.md` (Defer), `plugin/skills/_shared/ledger-format.md` (Keep), `plugin/skills/wrap-up/leftover-routing.md` and `plugin/skills/specify/record-creation-subissues.md` (line 83). Each passes `ready: true` through `recordPayload`.
+- Not a ready path: `plugin/bin/lib/issues/link.js` and `plugin/skills/specify/record-creation-linking.md` (`already: true`), `plugin/skills/specify/planning.md:149` (it omits `ready`), and red-team (it clears `ready`; the restore is the closeout's `readyRestorable` paragraph). `plugin/bin/lib/issues/ambiguity-resolve.js` and `plugin/bin/resolve-ambiguity.js` are the gate itself (Task 2).
+- Modify: `plugin/skills/specify/red-team.md` (confirm-only: line 121 clears `ready` pending the Review Console and adds none; leave the file unchanged unless a `ready` add is found)
+- Gate calls to write:
 - Modify: `plugin/skills/specify/shaping-mode-stamping.md`: before the compose-then-write-once `gh issue edit`, run `node "${CLAUDE_PLUGIN_ROOT}/bin/ready-gate.js" "$SPECIFY_SHAPED_BODY"`. On exit 1, drop `--add-label ready` from that call (add `--remove-label ready` when the record carries it) and name the printed reasons in the run's summary. Exit 2 stops. The gh-absent and `local-files` variants in the same file follow the same rule.
 - Modify: `plugin/skills/specify/planning-answer.md` (d): add `ready` only when the label was removed and `ready-gate.js "{body}"` exits 0; on exit 1 the outcome names the reasons.
 - Modify: `plugin/skills/specify/decomposition-mode-closeout.md` Step 4 write-back: replace the restated "no other `Blocked by: … (left for …)` line … no `<!-- ambiguity:` marker or `## Open Questions` heading" condition with "`ready-gate.js` exits 0 on the composed body". The Step 9 `readyRestorable` paragraph (around line 156) says `readyRestorable` is the ready-grant gate's verdict (`readyGate`), keeping its three named conditions.
-- Modify: `plugin/skills/specify/red-team.md` step 5: where it restores `ready`, cite `readyRestorable` as the ready-grant gate's verdict. If step 5 has no restore wording of its own (it delegates to the closeout), change nothing there and record that in the commit message.
-- Modify: `plugin/skills/specify/record-creation-subissues.md` (line 15): one clause saying `recordPayload` now refuses `ready: true` on such a body, so the create call fails loud if the drop is missed.
+- Modify: `plugin/skills/specify/record-creation-subissues.md` (line 15): one clause saying `recordPayload` now withholds `ready` from such a body and `compose-record.js` warns, so a missed drop still files the sub-issue without `ready`.
 - No change: `plugin/skills/specify/next-mode-shape.md`: no edit, because its `ready` rides `shaping-mode-stamping.md`'s call (lines 238-246). Classify it no-change in the commit message.
 - Any further file the grep lists: classify it as covered or as needing the same gate call.
-- Modify: `.claude/skills/blocker-surface-parity/SKILL.md`: the table's Parse row names `plugin/bin/lib/issues/blocker-lines.js` (`symbolicBlockers`, `symbolicBlockerRefs`, `isBlockerLine`). Add a Ready gate row (`ambiguity-resolve.js`'s `readyGate`, `plugin/bin/ready-gate.js`, `recordPayload`'s refusal). Rule 7 is rewritten to say what is true now: every reader holds the symbolic line and names it `{part} (left for owner/name)`, and every path that adds `ready` runs `readyGate`. Keep its `git grep` derivation.
+- Modify: `.claude/skills/blocker-surface-parity/SKILL.md`: the table's Parse row names `plugin/bin/lib/issues/blocker-lines.js` (`symbolicBlockers`, `symbolicBlockerRefs`, `isBlockerLine`). Add a Ready gate row (`ambiguity-resolve.js`'s `readyGate`, `plugin/bin/ready-gate.js`, `recordPayload`'s withhold). Rule 7 is rewritten to say what is true now: every reader holds the symbolic line and names it `{part} (left for owner/name)`, and every path that adds `ready` runs `readyGate`. Keep its `git grep` derivation.
 - Create: `tests/ready-gate-callers-conformance.test.js`
 - Test: `tests/specify-approved-parts-conformance.test.js` (it pins the closeout write-back prose this task rewrites; update its facts to the gate wording, keeping each assertion able to go red)
 - Test: the existing suites that pin these files' prose (`git grep -l -e shaping-mode-stamping -e planning-answer -e decomposition-mode-closeout -- tests`)
@@ -289,7 +299,7 @@ Note on AC1.2: the grammar AC's grep also matches `ranking.js`'s `PROSE_DEP_RE` 
 **Interfaces:**
 - Consumes: `plugin/bin/ready-gate.js` and its exit codes (Task 2).
 
-- [ ] **Step 1: Write the failing test** `tests/ready-gate-callers-conformance.test.js`. For each file that adds `ready` (shaping-mode-stamping, planning-answer, decomposition-mode-closeout), assert that the region holding its `add-label ready` (or its restore sentence) names `ready-gate.js` and says what exit 1 does. Use `tests/helpers/conformance-asserts.js`'s `missingFactsOf` and `assertEachPatternGoesRed`, following `tests/cross-repo-blocker-readers-conformance.test.js`'s shape. Name the test `AC5.1: every prose path that adds ready runs ready-gate.js`.
+- [ ] **Step 1: Write the failing test** `tests/ready-gate-callers-conformance.test.js`. For each gate call this task writes (shaping-mode-stamping's write, planning-answer (d), decomposition-mode-closeout's Step 4 write-back), assert that the region holding its `add-label ready` names `ready-gate.js` and says what exit 1 does. For the closeout's Step 9 `readyRestorable` paragraph, assert that it names the ready-grant gate. Add one assertion that `record-creation-subissues.md` line 15's paragraph names the `recordPayload` withhold. Use `tests/helpers/conformance-asserts.js`'s `missingFactsOf` and `assertEachPatternGoesRed`, following `tests/cross-repo-blocker-readers-conformance.test.js`'s shape. Name the test `AC5.1: every prose path that adds ready runs ready-gate.js`.
 
 - [ ] **Step 2: Run it to verify it fails**
   Run: `node --test tests/ready-gate-callers-conformance.test.js`
