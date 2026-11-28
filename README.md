@@ -43,8 +43,10 @@ a way to wrap an existing marketplace plugin instead of requiring a rewrite.
      │                     Design Doc          ◄───  brainstorm
      │                     (specify can invoke brainstorm directly on topic input)
      │
+  design ───────────────►  Design Doc          (an order: a parent with parts; saved in a session folder, specify takes its design.md)
+     │
   specify ──────────────►  Ready record(s)    (writes surface: + design-intent: + ui-stack: body metadata)
-     │  calls: design shape (frontend only — appends Impeccable shape output to design doc)
+     │  calls: design-wrapper shape (frontend only — appends Impeccable shape output to design doc)
      │  calls: visualize (diagram suggestion, all surfaces)
      │                     (deletes Design Doc)
      │
@@ -53,7 +55,7 @@ a way to wrap an existing marketplace plugin instead of requiring a rewrite.
   ┈┈ /claude-tweaks:flow automates below (worktree mode default) ┈┈
      │
   build ────────────────►  Code + Journeys    ◄───  subagent-driven-development
-     │  calls: design pre-build (lazy-load Impeccable references)
+     │  calls: design-wrapper pre-build (lazy-load Impeccable references)
      │         simplify,                             executing-plans
      │         journeys                              using-git-worktrees ⚙
      │           calls: visualize (diagram suggestion)
@@ -61,21 +63,21 @@ a way to wrap an existing marketplace plugin instead of requiring a rewrite.
   stories ──────────────►  Story YAML
      │
   test ─────────────────►  TEST_PASSED
-     │  calls: design test (Impeccable detect — deterministic CLI gate)
+     │  calls: design-wrapper test (Impeccable detect — deterministic CLI gate)
      │
   review ───────────────►  Review Summary     ◄───  dispatching-parallel-agents
-     │  calls: design review (Impeccable critique + audit — advisory)
+     │  calls: design-wrapper review (Impeccable critique + audit — advisory)
      │         reflect,
      │         simplify,
-     │         visual-review (calls: design survey — Creative Opportunities)
+     │         visual-review (calls: design-wrapper survey — Creative Opportunities)
      │  suggests: visualize (diagram gap finding — Lens 3i-diagram; the user runs it)
      │
   polish ───────────────►  Polished Code      (frontend specs only)
-     │  calls: design polish (refinement set + suggestion-driven + intent-driven)
+     │  calls: design-wrapper polish (refinement set + suggestion-driven + intent-driven)
      │         test skip-qa  (re-verify gate, 1-cycle cap)
      │
   flow summary ─────────►  Pipeline report    (Creative Opportunities block)
-     │  calls: design survey (full diff; decline tracking)
+     │  calls: design-wrapper survey (full diff; decline tracking)
      │
   wrap-up ──────────────►  Done               ◄───  finishing-a-dev-branch ⚙
      │  calls: reflect
@@ -130,7 +132,7 @@ See `plugin/skills/_shared/work-record.md` for the full axis contract (Type, Ori
 
 ## Skills
 
-claude-tweaks ships a full set of skills spanning the plan phase (capture, specify), the automated pipeline (build, test, review, wrap-up), standalone component skills (challenge, reflect, simplify, deepen, journeys, visual-review, visualize, assess-agent-autonomy, feedback), and utility skills (flow, help, tidy, accept, code-health, ci-health, backlog, dispatch, sweep, and more). Each is invoked as `/claude-tweaks:{name}` and most work both standalone and as part of the automated `/claude-tweaks:flow` pipeline.
+claude-tweaks ships a full set of skills spanning the plan phase (capture, design, specify), the automated pipeline (build, test, review, wrap-up), standalone component skills (challenge, reflect, simplify, deepen, journeys, visual-review, visualize, assess-agent-autonomy, feedback), and utility skills (flow, help, tidy, accept, code-health, ci-health, backlog, dispatch, sweep, and more). Each is invoked as `/claude-tweaks:{name}` and most work both standalone and as part of the automated `/claude-tweaks:flow` pipeline.
 
 See [docs/getting-started.md](docs/getting-started.md) for the full skill reference,
 [docs/plugin-structure.md](docs/plugin-structure.md) for the directory layout, per-skill sub-file
@@ -150,6 +152,11 @@ behind CLAUDE.md's `## Don'ts` rules.
 /claude-tweaks:challenge --lens=1 meal planning  # optional: human debiasing lens before brainstorming
 /superpowers:brainstorming
 /claude-tweaks:specify meal planning
+/claude-tweaks:flow 73
+
+# An order (a parent with parts) — design session first
+/claude-tweaks:design meal planning
+/claude-tweaks:specify docs/superpowers/specs/{date}-meal-planning/design.md
 /claude-tweaks:flow 73
 
 # Fast — spec already exists
