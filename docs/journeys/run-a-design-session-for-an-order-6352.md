@@ -15,6 +15,9 @@ files:
   - plugin/bin/lib/design-session/parts.js
   - plugin/skills/specify/decomposition-mode.md
   - plugin/skills/specify/decomposition-mode-closeout.md
+  - plugin/skills/specify/record-creation-subissues.md
+  - plugin/bin/lib/issues/blocker-lines.js
+  - plugin/bin/ready-gate.js
 ---
 
 # Run a Design Session for an Order
@@ -103,10 +106,15 @@ files:
 - **Action:** Copy the folder as committed and rerun the command in that repository.
 - **Should feel:** Like continuing the same session, not starting a new one.
 - **Should understand:**
-  - The first run's summary lists each part marked `left for {owner/name}`. Those sub-issues' blockers on another repository are written `Blocked by: {part} (left for {owner/name})`, and the issues stay out of `ready` until the later run rewrites that line to `owner/name#N`.
+  - The first run's summary lists each part marked `left for {owner/name}`. When such a part blocks a sub-issue in this repository, the sub-issue's blocker line is written `Blocked by: {part} (left for {owner/name})`. That sub-issue is filed without `ready`, and every path that would add `ready` runs `ready-gate.js` first and keeps it off. This holds until the later run rewrites the line to `owner/name#N`.
+  - Until then the sub-issue counts as blocked everywhere, and the blocker is named the same way, `{part} (left for {owner/name})`, on every surface:
+    - `/claude-tweaks:dispatch` excludes it from the queue.
+    - The backlog counts it blocked, and the grant pre-pass filters it.
+    - `/claude-tweaks:flow` pre-flight stops on it, and the materialized spec's `blocked-by:` header lists it.
+    - Wrap-up never reports it newly unblocked.
   - `status --repository {owner/name}` (or a parseable origin) reads a part `left for` this repository as unfiled, so the session resumes at step 10 and files only that repository's parts. When no repository resolves, a `complete` status lists `unresolvedLeftFor`, and the session reruns with `--repository` before calling itself finished.
   - An order of two or more approved parts keeps a parent in this repository too, even when only one part is filed here. `## Filing` keeps the first repository's `Parent:` line and adds this repository's below it.
-- **Red flags:** The second repository's session reading `complete` while a part is still left for it. The first repository's `Parent:` line replaced rather than kept. A `ready` sub-issue that is still blocked by a part with no issue number.
+- **Red flags:** The second repository's session reading `complete` while a part is still left for it. The first repository's `Parent:` line replaced rather than kept. A `ready` sub-issue that is still blocked by a part with no issue number. A dispatch, a /flow run or a "newly unblocked" line for a sub-issue whose `left for` line is still there. A surface naming that blocker differently.
 
 ### 10. Resume a lost session, then hand off — status
 - **URL:** `/claude-tweaks:design {topic|#N}` again, then Next Actions
@@ -120,4 +128,4 @@ files:
 
 ## Origin
 
-Built for record #6352 (`/claude-tweaks:design`, factory v7 slice 1), on #6351's `frontier --exception design-reader` resolver. Steps 6-9 were added by record #6353 (parts and estimate, approval with a digest, and filing through decomposition as written).
+Built for record #6352 (`/claude-tweaks:design`, factory v7 slice 1), on #6351's `frontier --exception design-reader` resolver. Steps 6-9 were added by record #6353 (parts and estimate, approval with a digest, and filing through decomposition as written). Record #6374 made step 9's `left for` blocker hold on every surface: one parser for the three `Blocked by` forms, the `ready-gate.js` ready-grant gate, and the same name on every blocker surface.
