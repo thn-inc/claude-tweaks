@@ -12,6 +12,10 @@
 
 const { authoredText } = require('./materialize-format');
 
+// The four exported *_LINE_RE / *_ASSUMPTION_RE regexes are `g`/`m`-flagged, so they carry
+// `lastIndex` state: use them with `matchAll` / `String.prototype.match` only, never `.test()` or
+// `.exec()`. (AC1.1 pins their source and flags to the regexes they replaced.)
+
 // Line-anchored 'Blocked by #N' dependency declarations (multiline).
 const LOCAL_BLOCKER_LINE_RE = /^Blocked by #(\d+)\b/gm;
 
@@ -32,13 +36,14 @@ const REPO = '[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+';
 const SYMBOLIC_BLOCKER_LINE_RE = new RegExp(`^[ \\t]*(?:[-*][ \\t]+)?Blocked by: (.+) \\(left for (${REPO})\\)[ \\t]*$`, 'gm');
 // The same line as one non-global test, for isBlockerLine.
 const SYMBOLIC_ONE_LINE_RE = new RegExp(SYMBOLIC_BLOCKER_LINE_RE.source);
-// The two `#N` forms, well-formed only, as one non-global test.
-const NUMBERED_ONE_LINE_RE = /^Blocked by (?:[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9._-]+)?#\d+\b/;
+// The two `#N` forms as non-global tests, derived from the line regexes above so one edit moves both.
+const LOCAL_ONE_LINE_RE = new RegExp(LOCAL_BLOCKER_LINE_RE.source);
+const FOREIGN_ONE_LINE_RE = new RegExp(FOREIGN_BLOCKER_LINE_RE.source);
 
 // One line matches any of the three forms.
 function isBlockerLine(line) {
   if (typeof line !== 'string') return false;
-  return NUMBERED_ONE_LINE_RE.test(line) || SYMBOLIC_ONE_LINE_RE.test(line);
+  return LOCAL_ONE_LINE_RE.test(line) || FOREIGN_ONE_LINE_RE.test(line) || SYMBOLIC_ONE_LINE_RE.test(line);
 }
 
 // A symbolic blocker's name: the text after `Blocked by: `. The one producer;

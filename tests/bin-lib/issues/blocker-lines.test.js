@@ -20,6 +20,15 @@ test('AC1.1: the three line regexes equal the ones they replace, and the old mod
   assert.equal(FOREIGN_BLOCKER_LINE_RE.source, '^Blocked by ([A-Za-z0-9][A-Za-z0-9-]*\\/[A-Za-z0-9._-]+)#(\\d+)\\b');
   assert.equal(FOREIGN_BLOCKER_LINE_RE.flags, 'gm');
   assert.equal(SYMBOLIC_BLOCKER_LINE_RE.flags, 'gm');
+  // the old modules import them: each requires blocker-lines and defines no `Blocked by` regex literal
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const lib = path.join(__dirname, '../../../plugin/bin/lib');
+  for (const f of ['issues/record-dependencies.js', 'issues/cross-repo-refs.js', 'issues/plan-line.js', 'issues/ambiguity-resolve.js', 'design-session/parts.js']) {
+    const text = fs.readFileSync(path.join(lib, f), 'utf8');
+    assert.match(text, /require\('(?:\.\.\/issues|\.)\/blocker-lines'\)/, `${f} requires blocker-lines`);
+    assert.doesNotMatch(text, /\/\^?[ \\t(?:\-*\]\[]*Blocked by|RegExp\([^)]*Blocked by/, `${f} defines no Blocked by regex of its own`);
+  }
   // the importing parsers behave as before
   assert.deepEqual(parseDependencies('Blocked by #7\nBlocked by #9: needs the api'), [7, 9]);
   assert.deepEqual(parseDependencyAssumptions('Blocked by #9: needs the api'), [{ number: 9, assumption: 'needs the api' }]);
