@@ -81,24 +81,22 @@ gh issue comment <issue_number> --body "Regressed: this finding reappeared. Run:
 
 **Headless (Routine) runs skip this gate entirely** — do not read that file — per `_shared/health-filing-gate.md`'s applicability rule; every surviving finding files automatically, with no human to route it through a table.
 
-For each survivor disposed as "File issue" (every payload if "Apply all recommended" was chosen and its Recommended value was `"File issue"`; only the individually-overridden ones otherwise), call `gh issue create`.
-
-**Type expression branch** (canonical shape in `_shared/health-finding-shapes.md` — check that file when either changes to keep this skill's copy in sync with its three siblings). Read the project's `work-types` config key once before filing and branch — never re-probe mid-flow (`_shared/work-record.md`'s config-key table; the key is written by `/init`). `work-types: native` applies `payload.type` (always `task`) via GitHub's native Issue Type; `work-types: labels` adds the matching `type:task` label instead (the pair lives in `record.js`'s `TYPE_LABELS`):
+For each survivor disposed as "File issue" (every payload if "Apply all recommended" was chosen and its Recommended value was `"File issue"`; only the individually-overridden ones otherwise), create the issue through `_shared/github-write-transport.md`'s Create row: title `payload.title`, body `payload.body`, every label in `payload.labels`, never a hand-typed label list. `recordPayload` withholds `ready` from a body that carries a `Blocked by: … (left for …)` line, so a typed `ready` label would file what the payload withheld. The engine is emit-only; filing is always done by the skill. Title and body carry untrusted text, so neither is typed into a command line, where double quotes would run backticks as command substitution. The Write tool writes `payload.title` to the session-scoped `harness-health-title.txt` and `payload.body` to `harness-health-body.md`. On the CLI path, the create call opens with these lines (each path resolved again inside the call that reads it):
 
 ```bash
-# Example: an additive finding, work-types: native
-gh issue create --title "<payload.title>" --body "<payload.body>" --type task \
-  --label by:harness-health --label risk:low --label size:low --label ready --label harness-health:additive
-
-# Same finding, work-types: labels
-gh issue create --title "<payload.title>" --body "<payload.body>" \
-  --label by:harness-health --label risk:low --label size:low --label ready --label harness-health:additive --label type:task
+HARNESS_HEALTH_TITLE_FILE="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value harness-health-title.txt)"
+HARNESS_HEALTH_BODY_FILE="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value harness-health-body.md)"
+HARNESS_HEALTH_TITLE="$(cat "$HARNESS_HEALTH_TITLE_FILE")"
 ```
+
+and then, in that same call, runs the Create row's command with `--title "$HARNESS_HEALTH_TITLE"`, `--body-file "$HARNESS_HEALTH_BODY_FILE"` and one `--label` per entry of `payload.labels`. On the MCP path both go as tool parameters, read from those files, with `payload.labels` as the label array.
+
+**Type expression branch** (canonical shape in `_shared/health-finding-shapes.md` — check that file when either changes to keep this skill's copy in sync with its three siblings). Read the project's `work-types` config key once before filing and branch — never re-probe mid-flow (`_shared/work-record.md`'s config-key table; the key is written by `/init`). `work-types: native` applies `payload.type` (always `task`) via GitHub's native Issue Type; `work-types: labels` adds the matching `type:task` label instead (the pair lives in `record.js`'s `TYPE_LABELS`). `payload.labels` never carries the type, so this step always applies it.
 
 **Exception — a headless D5 finding.** When the subject check routed this finding to D5 and no human is present to clear `/claude-tweaks:feedback`'s confirmation gate, this payload is the one case where the label set differs: apply `upstream-candidate` plus `by:harness-health`, and omit `ready`, `risk:*` and `size:*` entirely. It is not this project's work to build. See `skills/_shared/learning-routing.md`'s "Subject check (health sweeps)".
 
-Apply the same branch to every payload regardless of classification/kind — a `restructural` payload's call carries `risk:medium`/`size:high`/`harness-health:restructural` instead, and a `new-skill` payload's call carries only `by:harness-health`/`ready`/`harness-health:new-skill` (no scoring labels), per the mapping table above; only the `--type task` vs. `--label type:task` branch and the `--label` list change, never the underlying `gh issue create --title/--body`. This applies uniformly — CLAUDE.md findings, design-artifact findings, additive skill/rule patches, restructural patches, and new-skill candidates all file the same way. `/harness-health` never edits anything directly; matching `/code-health`, it only ever judges and files.
+Apply the same branch to every payload regardless of classification/kind — a `restructural` payload's own `labels` carry `risk:medium`/`size:high`/`harness-health:restructural`, and a `new-skill` payload's carry only `by:harness-health`/`ready`/`harness-health:new-skill` (no scoring labels), per the mapping table above; only the `--type task` vs. `--label type:task` branch changes. This applies uniformly — CLAUDE.md findings, design-artifact findings, additive skill/rule patches, restructural patches, and new-skill candidates all file the same way. `/harness-health` never edits anything directly; matching `/code-health`, it only ever judges and files.
 
-**Recent-commit overlap check.** Immediately after each `gh issue create` above succeeds for a new finding, run `_shared/health-recent-commit-check.md` and apply it in full — it screens the just-filed finding against recently-merged commits and, on a strong match, posts a triage comment rather than blocking or reopening anything.
+**Recent-commit overlap check.** Immediately after each create above succeeds for a new finding, run `_shared/health-recent-commit-check.md` and apply it in full — it screens the just-filed finding against recently-merged commits and, on a strong match, posts a triage comment rather than blocking or reopening anything.
 
 In `--dry-run` mode, print what would be filed or reopened, and the `gh` commands that would run, but do not call `gh`.

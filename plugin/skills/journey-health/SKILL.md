@@ -190,33 +190,23 @@ gh issue comment <issue_number> --body "Regressed: this finding reappeared. Run:
 
 **Headless (Routine) runs skip this gate entirely** — do not read that file — per `_shared/health-filing-gate.md`'s applicability rule; every surviving finding files automatically, with no human to route it through a table.
 
-For each survivor disposed as "File issue" (every payload if "Apply all recommended" was chosen and its Recommended value was `"File issue"`; only the individually-overridden ones otherwise), call `gh issue create` per the branch below.
-
-**Type expression branch** (canonical shape in `_shared/health-finding-shapes.md` — check that file when either changes to keep this skill's copy in sync with its three siblings). Read the project's `work-types` config key once before filing and branch — never re-probe mid-flow (`_shared/work-record.md`'s config-key table; the key is written by `/init`). `work-types: native` applies `payload.type` (`bug` for a `regression-suspected` finding, `task` for `drift`/`coverage`) via GitHub's native Issue Type; `work-types: labels` adds the matching `type:bug`/`type:task` label instead (the pairs live in `record.js`'s `TYPE_LABELS`):
+For each survivor disposed as "File issue" (every payload if "Apply all recommended" was chosen and its Recommended value was `"File issue"`; only the individually-overridden ones otherwise), create the issue through `_shared/github-write-transport.md`'s Create row: title `payload.title`, body `payload.body`, every label in `payload.labels`, never a hand-typed label list. `recordPayload` withholds `ready` from a body that carries a `Blocked by: … (left for …)` line, so a typed `ready` label would file what the payload withheld. The engine is emit-only; filing is always done by the skill. Title and body carry untrusted text, so neither is typed into a command line, where double quotes would run backticks as command substitution. The Write tool writes `payload.title` to the session-scoped `journey-health-title.txt` and `payload.body` to `journey-health-body.md`. On the CLI path, the create call opens with these lines (each path resolved again inside the call that reads it):
 
 ```bash
-# Example: a drift finding (type task), work-types: native
-gh issue create --title "<payload.title>" --body "<payload.body>" --type task \
-  --label by:journey-health --label risk:high --label size:medium --label ready --label journey-health:drift
-
-# Same finding, work-types: labels
-gh issue create --title "<payload.title>" --body "<payload.body>" \
-  --label by:journey-health --label risk:high --label size:medium --label ready --label journey-health:drift --label type:task
-
-# Example: a regression-suspected finding (type bug), work-types: native
-gh issue create --title "<payload.title>" --body "<payload.body>" --type bug \
-  --label by:journey-health --label risk:medium --label size:medium --label ready --label journey-health:regression-suspected
-
-# Same finding, work-types: labels
-gh issue create --title "<payload.title>" --body "<payload.body>" \
-  --label by:journey-health --label risk:medium --label size:medium --label ready --label journey-health:regression-suspected --label type:bug
+JOURNEY_HEALTH_TITLE_FILE="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value journey-health-title.txt)"
+JOURNEY_HEALTH_BODY_FILE="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value journey-health-body.md)"
+JOURNEY_HEALTH_TITLE="$(cat "$JOURNEY_HEALTH_TITLE_FILE")"
 ```
+
+and then, in that same call, runs the Create row's command with `--title "$JOURNEY_HEALTH_TITLE"`, `--body-file "$JOURNEY_HEALTH_BODY_FILE"` and one `--label` per entry of `payload.labels`. On the MCP path both go as tool parameters, read from those files, with `payload.labels` as the label array.
+
+**Type expression branch** (canonical shape in `_shared/health-finding-shapes.md` — check that file when either changes to keep this skill's copy in sync with its three siblings). Read the project's `work-types` config key once before filing and branch — never re-probe mid-flow (`_shared/work-record.md`'s config-key table; the key is written by `/init`). `work-types: native` applies `payload.type` (`bug` for a `regression-suspected` finding, `task` for `drift`/`coverage`) via GitHub's native Issue Type; `work-types: labels` adds the matching `type:bug`/`type:task` label instead (the pairs live in `record.js`'s `TYPE_LABELS`). `payload.labels` never carries the type, so this step always applies it.
 
 **Exception — a headless D5 finding.** When the subject check routed this finding to D5 and no human is present to clear `/claude-tweaks:feedback`'s confirmation gate, this payload is the one case where the label set differs: apply `upstream-candidate` plus `by:journey-health`, and omit `ready`, `risk:*` and `size:*` entirely. It is not this project's work to build. See `skills/_shared/learning-routing.md`'s "Subject check (health sweeps)".
 
-Apply the same branch to every payload regardless of category — a `coverage` payload's call carries `journey-health:coverage` and `--type task`/`--label type:task` the same way a `drift` payload does; only the `--type task`/`--type bug` vs. `--label type:task`/`--label type:bug` branch and the `--label` list change, never the underlying `gh issue create --title/--body`. `/journey-health` never edits journey files, stories, or code.
+Apply the same branch to every payload regardless of category — a `coverage` payload's own `labels` carry `journey-health:coverage` and it takes `--type task`/`--label type:task` the same way a `drift` payload does; only the `--type task`/`--type bug` vs. `--label type:task`/`--label type:bug` branch changes. `/journey-health` never edits journey files, stories, or code.
 
-**Recent-commit overlap check.** After each `gh issue create` above succeeds, run `_shared/health-recent-commit-check.md` in full.
+**Recent-commit overlap check.** After each create above succeeds, run `_shared/health-recent-commit-check.md` in full.
 
 In `--dry-run` mode, print what would be filed or reopened, and the `gh` commands that would run, but do not call `gh`.
 
