@@ -96,7 +96,8 @@ const PINNED_SHA = 'c19a97b7a4ff1b8e9ff51f5834326eaabbd189b5';
 // `ls-remote-failed`), the one state a fixture repo cannot produce on demand. With `gitFake` null
 // git is the real one the fixture's cwd runs. The CLI's other ./lib requires are re-exported from
 // the real tree rather than copying their dependency chain.
-function stubPluginRoot(t, gitFake, prs = []) {
+// #4058: `comments` / `readOk` pin the issue-comment read findPriorAttemptPr makes for tombstone evidence.
+function stubPluginRoot(t, gitFake, prs = [], comments = [], readOk = true) {
   const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'adopted-branch-stub-root-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   fs.mkdirSync(path.join(dir, 'bin', 'lib', 'worktree'), { recursive: true });
@@ -113,7 +114,7 @@ function stubPluginRoot(t, gitFake, prs = []) {
   fs.writeFileSync(path.join(dir, 'bin', 'lib', 'worktree', 'remote-branch-collision.js'), [
     `const real = require(${JSON.stringify(real)});`,
     ...(gitFake ? pinnedGit : []),
-    `const gh = () => ${JSON.stringify(JSON.stringify(prs))};`,
+    `const gh = (args) => { if (args[0] === 'issue') { if (!${JSON.stringify(readOk)}) throw new Error('pinned comment read failure'); return ${JSON.stringify(JSON.stringify({ comments }))}; } return ${JSON.stringify(JSON.stringify(prs))}; };`,
     `module.exports = { ...real, checkAdoptedBranch: (o) => real.checkAdoptedBranch({ ...o, ${gitFake ? 'git, ' : ''}gh }) };`,
   ].join('\n'));
   return dir.split(path.sep).join('/');
@@ -143,8 +144,18 @@ test('the snippet prints the unknown-relation card for unreachable with remoteSh
 
 // #3887: a dispatched retry's fresh same-name branch is `foreign` by ancestry; the snippet tells this record's
 // own closed prior attempt apart from a genuinely unrelated branch by the PR lookup plus the run's record numbers.
-test('AC1.1: the snippet adopts this record\'s own prior attempt instead of carding it (#3887)', (t) => {
-  const r = originWithTwoClones('adopted-branch-prior-attempt-');
+// #4058: a closed PR is this record's own tombstone only with a trusted `Attempt N failed` issue comment
+// in the window before its `closedAt` (the shape dispatch/settle-and-merge.md Step 6 step 5 leaves).
+const CLOSED_AT = '2026-10-21T12:00:00Z';
+const TOMBSTONE_COMMENT = {
+  body: 'Attempt 1 failed: tests red. Claim released, will retry.',
+  authorAssociation: 'MEMBER',
+  createdAt: '2026-10-21T11:59:55Z',
+};
+
+// The #3887 fixture: a record-1 retry whose branch meets its own earlier closed attempt on origin.
+function priorAttemptFixture(t, prefix) {
+  const r = originWithTwoClones(prefix);
   t.after(() => fs.rmSync(r.root, { recursive: true, force: true }));
   const branch = 'worktree-record-1';
 
@@ -164,17 +175,24 @@ test('AC1.1: the snippet adopts this record\'s own prior attempt instead of card
     state: 'CLOSED',
     isDraft: false,
     isCrossRepository: false,
+    closedAt: CLOSED_AT,
     headRefOid: closedHead,
     closingIssuesReferences: [{ number: 1, repository: { name: 'r', owner: { login: 'o' } } }],
     body: '<!-- claude-tweaks-run: 2026-10-21T000000-record-1 -->\nclaude-tweaks-run: 2026-10-21T000000-record-1\n\nFixes #1\n',
   };
   const snippet = extractSnippet();
-  const exec = (script) => execFileSync('bash', ['-c', script], {
+  assert.strictEqual(snippet.split('"{records}"').length - 1, 1, 'the snippet must carry the "{records}" placeholder exactly once');
+  const exec = (script, comments = [TOMBSTONE_COMMENT], readOk = true) => execFileSync('bash', ['-c', script], {
     cwd: r.work, timeout: 60000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...r.env, CLAUDE_PLUGIN_ROOT: stubPluginRoot(t, null, [pr]) },
+    env: { ...r.env, CLAUDE_PLUGIN_ROOT: stubPluginRoot(t, null, [pr], comments, readOk) },
   });
-  const run = (script) => JSON.parse(exec(script).trim());
+  const run = (script, comments, readOk) => JSON.parse(exec(script, comments, readOk).trim());
   const withRecords = (records) => fill(snippet, { branch, repo: 'o/r', records });
+  return { snippet, exec, run, withRecords, branch };
+}
+
+test('AC1.1: the snippet adopts this record\'s own prior attempt instead of carding it (#3887)', (t) => {
+  const { snippet, exec, run, withRecords, branch } = priorAttemptFixture(t, 'adopted-branch-prior-attempt-');
 
   const own = run(withRecords('1'));
   assert.strictEqual(own.state, 'prior-attempt');
@@ -223,4 +241,19 @@ test('AC5.1 go-red: the same structural assertion throws on the pre-#5589 heredo
   ].join('\n');
   assert.throws(() => assertPlainOneLineCommand(oldFence), /the fence must be a single line/);
   assert.throws(() => assertPlainOneLineCommand(oldFence.split('\n').join(' ')), /the fence must carry no heredoc/);
+});
+
+test('#4058 AC1.2: the snippet stops with the foreign card on a closed PR that has no tombstone evidence', (t) => {
+  const { run, withRecords } = priorAttemptFixture(t, 'adopted-branch-no-evidence-');
+  const result = run(withRecords('1'), []);
+  assert.strictEqual(result.state, 'foreign');
+  assert.match(result.card, /closed PR #9/);
+  assert.match(result.card, /worktree-record-1/);
+});
+
+test('#4058 AC1.2: a failed comment read stops with the same foreign card', (t) => {
+  const { run, withRecords } = priorAttemptFixture(t, 'adopted-branch-read-failed-');
+  const result = run(withRecords('1'), [TOMBSTONE_COMMENT], false);
+  assert.strictEqual(result.state, 'foreign');
+  assert.match(result.card, /closed PR #9/);
 });

@@ -21,6 +21,7 @@ const norm = (text) => text.replace(/\s+/g, ' ');
 const WORKTREE_SETUP = read('plugin', 'skills', 'build', 'worktree-setup.md');
 const CHECK = read('plugin', 'skills', 'build', 'adopted-branch-collision-check.md');
 const PR_EARLY = read('plugin', 'skills', '_shared', 'pr-early-run-lifecycle.md');
+const SETTLE = read('plugin', 'skills', 'dispatch', 'settle-and-merge.md');
 
 test('the skip-creation guard routes an adopted branch to the collision check', () => {
   const start = WORKTREE_SETUP.indexOf('Skip creation when already inside an externally-created worktree');
@@ -95,4 +96,33 @@ test('the adopted-branch collision stop is registered in auto-mode-contract.md\'
   // The registered cases must stay the ones the sub-file stops on (items 3-4).
   assert.match(row, /`foreign`, or `unreachable` with a `remoteSha`/);
   assert.match(norm(CHECK), /a registered HARD-GATE \(`_shared\/auto-mode-contract\.md`'s HARD-GATE \/ BLOCKED \/ STOP row\)/);
+});
+
+// #4058: item 5 adopts a closed PR only with failure-tombstone evidence — a
+// trusted `Attempt {N} failed` issue comment just before the PR's closedAt.
+function assertTombstoneEvidence(text) {
+  const t = norm(text);
+  const start5 = t.indexOf('5. `prior-attempt`');
+  const item5 = t.slice(start5, t.indexOf('**Out of scope:**', start5));
+  assert.match(item5, /`Attempt \{N\} failed`/);
+  assert.match(item5, /isTrustedComment/);
+  assert.match(item5, /closedAt/);
+  assert.match(item5, /TOMBSTONE_CLOSE_WINDOW_MS/);
+  // #4792: two producers — the failure path and the blocker-landing stop, whose evidence is the PR's own pointer comment.
+  assert.match(item5, /two producers of this shape/);
+  assert.match(item5, /Stopped: an out-of-run blocker has not landed\./);
+  assert.match(item5, /human/);
+  assert.match(item5, /newest closed PR/);
+  assert.match(item5, /open, draft or merged/);
+  assert.match(item5, /never re-runs/);
+  assert.match(item5, /second blocker stop/);
+}
+test('#4058: item 5 states the tombstone-evidence condition', () => assertTombstoneEvidence(CHECK));
+test('#4058 go-red: the assertion throws once the evidence clause is removed', () => {
+  assert.throws(() => assertTombstoneEvidence(CHECK.replace(/TOMBSTONE_CLOSE_WINDOW_MS/g, 'WINDOW')));
+});
+test('#4058: settle posts the attempt comment on the issue before it closes the PR', () => {
+  const posted = SETTLE.indexOf('gh issue comment "$ISSUE" --body-file "$ATTEMPT_COMMENT_BODY"');
+  const closed = SETTLE.indexOf('gh pr close {pr-number} --repo {owner}/{repo}');
+  assert.ok(posted !== -1 && closed !== -1 && posted < closed);
 });
