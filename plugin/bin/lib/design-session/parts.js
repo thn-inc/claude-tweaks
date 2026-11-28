@@ -19,9 +19,10 @@
 //     `work-backend: local-files`); a part this run did not file is marked
 //     `left for owner/name`. A part marked `owner/name#N` is filed and is never
 //     filed or re-marked again; `left for …` counts as marked, not as filed.
-//     The cell is empty, `—`, an `owner/name#N`, or `left for {the row's own
-//     Repository}`; anything else (`#7001`, `TBD`, `left for` another
-//     repository) is a row error, so no part ever falls outside planFiling.
+//     The cell is empty, `—`, or a mark naming the row's own Repository
+//     (`{Repository}#N` or `left for {Repository}`); anything else (`#7001`,
+//     `TBD`, a mark naming another repository) is a row error, so no part ever
+//     falls outside planFiling.
 // The part that makes the order visible to a user is the last row.
 //
 // `## Approval` holds a `Status:` line and exactly one status line
@@ -61,7 +62,7 @@ const ESTIMATE_BASIS = 'v6 records no per-size token use in its timing or model-
 
 const REPO = '[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+';
 const REPO_RE = new RegExp(`^${REPO}$`);
-const FILED_RE = new RegExp(`^${REPO}#\\d+$`);
+const FILED_RE = new RegExp(`^(${REPO})#\\d+$`);
 const LEFT_RE = new RegExp(`^left for (${REPO})$`);
 const EXTERNAL_RE = new RegExp(`^(?:${REPO})?#\\d+$`);
 const NONE_VALUES = ['', '—', '–', '-'];
@@ -124,11 +125,17 @@ function locateTable(designText) {
 
 // Why an Issue cell is malformed for a row of `repository`, or null when it is fine.
 function issueProblem(issue, repository) {
-  if (noneValue(issue) || FILED_RE.test(issue)) return null;
-  const left = LEFT_RE.exec(issue);
-  if (!left) return `Issue '${issue}' is not empty, 'owner/name#N' or 'left for owner/name'`;
-  if (left[1] !== repository) return `Issue '${issue}' leaves the part for another repository than its own '${repository}'`;
+  if (noneValue(issue)) return null;
+  const repo = markRepository(issue);
+  if (repo === null) return `Issue '${issue}' is not empty, 'owner/name#N' or 'left for owner/name'`;
+  if (repo !== repository) return `Issue '${issue}' names another repository than the part's own '${repository}'`;
   return null;
+}
+
+// The `owner/name` an `owner/name#N` or `left for owner/name` mark names; null for anything else.
+function markRepository(mark) {
+  const m = FILED_RE.exec(mark) || LEFT_RE.exec(mark);
+  return m ? m[1] : null;
 }
 
 function noneValue(cell) {
@@ -251,8 +258,8 @@ function estimate(parts) {
 
 // Rewrites only the Issue cell of each named row: an empty cell, a `left for …`
 // cell, or one already holding the same mark. A cell holding anything else, or
-// a `left for` mark naming another repository than the row's, is a conflict and
-// stays as it is.
+// a mark naming another repository than the row's, is a conflict and stays as
+// it is.
 function markFiled(designText, marks) {
   const { lines, rows } = locateTable(designText);
   const eol = String(designText).includes('\r\n') ? '\r\n' : '\n';
@@ -260,7 +267,8 @@ function markFiled(designText, marks) {
   const unknown = [];
   const conflicts = [];
   for (const [name, mark] of Object.entries(marks)) {
-    if (!FILED_RE.test(mark) && !LEFT_RE.test(mark)) {
+    const markRepo = markRepository(mark);
+    if (markRepo === null) {
       throw new TypeError(`markFiled: '${mark}' for '${name}' is not an 'owner/name#N' or 'left for owner/name' mark`);
     }
     const i = byName.get(name);
@@ -271,8 +279,7 @@ function markFiled(designText, marks) {
     const segs = lines[i].split('|');
     const current = (segs[ISSUE_COL + 1] || '').trim();
     if (current === mark) continue;
-    const left = LEFT_RE.exec(mark);
-    if ((!noneValue(current) && !LEFT_RE.test(current)) || (left && left[1] !== cellsOf(lines[i])[3])) {
+    if ((!noneValue(current) && !LEFT_RE.test(current)) || markRepo !== cellsOf(lines[i])[3]) {
       conflicts.push(name);
       continue;
     }
@@ -286,9 +293,14 @@ function markFiled(designText, marks) {
 // parts from a parse with no errors; a Waits for name matching no part, or a
 // this-repository part that is neither fileable nor filed, throws.
 function planFiling(parts, thisRepository) {
-  const filed = (p) => p.issue !== null && FILED_RE.test(p.issue);
+  const filed = (p) => p.issue !== null && FILED_RE.test(p.issue) && markRepository(p.issue) === p.repository;
   const file = parts.filter((p) => p.repository === thisRepository
     && (p.issue === null || p.issue === `left for ${thisRepository}`));
+  for (const p of parts) {
+    if (p.repository === thisRepository && !file.includes(p) && !filed(p)) {
+      throw new Error(`planFiling: part '${p.name}' of ${thisRepository} is neither fileable nor filed (Issue '${p.issue}')`);
+    }
+  }
   const fileNames = new Set(file.map((p) => p.name));
   const byName = new Map(parts.map((p) => [p.name, p]));
   const blocker = (w) => {
@@ -297,9 +309,6 @@ function planFiling(parts, thisRepository) {
     const p = byName.get(w);
     if (!p) throw new Error(`planFiling: Waits for names unknown part '${w}'`);
     if (filed(p)) return { kind: 'issue', ref: p.issue };
-    if (p.repository === thisRepository) {
-      throw new Error(`planFiling: part '${w}' of ${thisRepository} is neither fileable nor filed (Issue '${p.issue}')`);
-    }
     return { kind: 'symbolic', ref: `${w} (left for ${p.repository})` };
   };
   const writeBack = [];

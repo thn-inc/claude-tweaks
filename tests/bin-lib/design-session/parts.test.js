@@ -288,6 +288,21 @@ test('planFiling throws on parts a parse would have rejected', () => {
   assert.throws(() => planFiling([a, b], REPO), /part 'A' .*neither fileable nor filed/);
   const c = { ...b, waitsFor: ['Ghost'] };
   assert.throws(() => planFiling([c], REPO), /unknown part 'Ghost'/);
+  assert.throws(() => planFiling([a], REPO), /part 'A' .*neither fileable nor filed/);
+  const foreign = { ...a, issue: `${OTHER}#5` };
+  assert.throws(() => planFiling([foreign], REPO), /part 'A' .*neither fileable nor filed/);
+});
+
+test('a filed mark must name the row own repository', () => {
+  const text = designWith([row(1, 'A', 'size:low', REPO, '—', `${OTHER}#5`)]);
+  const p = parseParts(text);
+  assert.equal(p.errors.length, 1, p.errors.join('; '));
+  assert.match(p.errors[0], /^row 1: .*Issue/);
+  assert.equal(checkApproval(text).reason, 'invalid-parts');
+  const clean = designWith([row(1, 'A', 'size:low', REPO, '—')]);
+  const r = markFiled(clean, { A: `${OTHER}#5` });
+  assert.deepEqual(r.conflicts, ['A']);
+  assert.equal(r.text, clean);
 });
 
 test('fenced Approved: and Measure: lines are not read', () => {
