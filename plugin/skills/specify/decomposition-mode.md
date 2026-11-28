@@ -121,6 +121,22 @@ For **Gap** items, proceed directly to Step 2 (decompose into work units).
 
 Break the design doc into self-contained work units. Each work unit must be:
 
+### Approved parts list (checked first)
+
+When the design doc is a `design.md` that holds a `## Parts` section, run this before anything else in Step 2, `{folder}` being the folder that holds that `design.md`:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/design-session.js" check-approval --folder "{folder}"
+```
+
+It prints JSON on exit 0 and exit 1. `{argument}` below is its `designSlug` with each `-` written as a space, which resumes the same design folder.
+
+- **Exit 0.** The parts in `filing.file` are the work units, in table order: each unit's title is the part's `name`, its `size:` label the part's `size`, its unit slug the part's `slug`, and its blockers the part's resolved `blockers` — `sibling` → that sibling sub-issue's link in Step 4, `issue` → the `owner/name#N` ref as written, `symbolic` → the line `Blocked by: {part name} (left for {owner/name})`. Skip `### Sizing Guidelines`, `### Decomposition Heuristics` (its rewrite-signal check included) and `--granularity`. Overlap Analysis, Implicit Dependency Detection with its file-overlap check, Step 2.6 and Steps 3 to 9 run as today, under the rule below.
+- **Other repositories' parts.** Parts in `filing.leftFor` are not filed: Step 9's summary lists each as left for that repository's run, which rewrites its own `symbolic` blockers. Parts in `filing.skipped` are already filed, by a sibling repository's earlier run, and are never filed again.
+- **No gate changes an approved part.** Any step from here to Step 9 whose outcome would change a part's name, size or blockers — an overlap resolution (`overlap-resolution.md`), an implicit-dependency link, a red-team resolution, a scoring judgment — stops and asks with one `AskUserQuestion`: `Keep the part as approved (Recommended)` / `Change it — the design goes back for a new approval`. Recommend keeping, because the maintainer approved exactly these parts. Keeping drops that outcome and the step goes on. Choosing the change stops decomposition and names `/claude-tweaks:design {argument}`. With no human reachable it stops all the same, before that part's record is written, and stages the question the way `red-team.md`'s write-back step 5 stages a decision-worthy finding; it never keeps going on its own.
+- **Exit 1**, by `reason`. `no-parts` → the rest of Step 2 runs as today. `no-repository` → when the session knows this checkout's `owner/name` (`gh repo view --json nameWithOwner -q .nameWithOwner`, or the cloud session's repository), run `check-approval` again with `--repository {owner/name}`; otherwise stop: `This checkout has no origin remote naming owner/name, so the parts' repositories cannot be matched.` Any other reason → stop before Step 3: `The design is not approved ({reason}) — run /claude-tweaks:design {argument} to approve its parts, then decompose again.` **Exit 2** → stop and show stderr.
+- **The parent**, when Step 2.6 keeps one, carries `## Worth-it measure` followed by `measure` word for word (`record-creation.md`'s Parent record).
+
 ### Sizing Guidelines
 
 Defaults below apply under `--granularity standard` (the default when the flag is omitted). `--granularity fine` tightens Tasks per work unit to 2-4 and Files touched per task to 1-2, for a use case that wants smaller blast radius per sub-issue (an unfamiliar or high-risk surface). `--granularity coarse` relaxes Tasks per work unit to 6-12 and Files touched per task to 1-4, for a well-understood, low-risk refactor where fewer, larger sub-issues reduce coordination overhead. Dependency depth and cross-package scope targets are unaffected by `--granularity` in either direction.
@@ -214,6 +230,8 @@ Each returned group of size > 1 is a set of records/work-units sharing at least 
 `work-backend: local-files` carries no bot-state signal (`_shared/work-record.md`: "the local driver carries no bot state") — every group membership with an existing local record collapses to the first row; there's no in-progress distinction available to make.
 
 (Closed records are excluded from the input set entirely — no group they'd appear in needs action.)
+
+On an approved parts list, a flagged link that the part's own `blockers` do not carry would change an approved part, so `### Approved parts list (checked first)`'s rule asks before Step 4 writes it.
 
 Present any detected implicit dependencies as part of the Step 9 summary. These are flagged alongside the `Blocked by #N` relationships already noted from Overlap Analysis — both feed the same Step 4 linking pass, which is where the actual links get written, once every record's number exists.
 
