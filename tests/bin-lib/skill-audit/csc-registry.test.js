@@ -58,6 +58,7 @@ const PIPELINE_RUN_DIR_EXEMPT = {
   flow: /no parent-vs-direct branch to detect/,
   browse: /no `PIPELINE_RUN_DIR` signal/,
   demo: /no `PIPELINE_RUN_DIR` signal/,
+  design: /no `PIPELINE_RUN_DIR` signal/,
   help: /no `PIPELINE_RUN_DIR` signal/,
   intake: /no `PIPELINE_RUN_DIR` signal/,
   'pipeline-smoke-test': /no `PIPELINE_RUN_DIR` signal/,

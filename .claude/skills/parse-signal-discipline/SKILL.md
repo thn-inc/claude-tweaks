@@ -1,6 +1,6 @@
 ---
 name: parse-signal-discipline
-description: Use when writing or reviewing a mechanized deterministic check that parses loose, real-world prose (a plan, a record body, a free-form config value) rather than a formal grammar — the check's "I could not parse this" case must be a distinguishable signal, never silently identical to "this input legitimately does not apply." Also covers a shell-out check whose tool exits non-zero for both "no match" and "could not run", and a probe in skill prose the agent runs, and a start/end snapshot guard around a run. Keywords - snapshot guard, start/end read, parse failure, could-not-parse, deterministic check, prose heuristic, silent null, false negative, mechanized check, plan-audit, exit code, git grep, skill-prose probe, fail closed.
+description: Use when writing or reviewing a mechanized deterministic check that parses loose, real-world prose (a plan, a record body, a free-form config value) rather than a formal grammar — the check's "I could not parse this" case must be a distinguishable signal, never silently identical to "this input legitimately does not apply." Also covers a shell-out check whose tool exits non-zero for both "no match" and "could not run", and a probe in skill prose the agent runs, and a start/end snapshot guard around a run. Keywords - snapshot guard, start/end read, parse failure, could-not-parse, deterministic check, prose heuristic, silent null, false negative, mechanized check, plan-audit, exit code, git grep, skill-prose probe, fail closed, markdown fence, section heading, markdown-blocks, path with spaces.
 ---
 
 # Parse-Signal Discipline — Distinguish "Couldn't Parse" From "Doesn't Apply"
@@ -397,7 +397,7 @@ kept. Read it when your case matches one of these:
 23. **Failing closed does not excuse folding "could not read" into "read, but unclassifiable". The reason a withheld item carries is what the human acts on.**
 24. **A composer's validator owes its reader's sentinels and delimiters too, not only its skip set (item 18).**
 25. **An unanchored extractor with a narrow character class truncates instead of failing, so an out-of-class input yields a confident wrong value, not "no match".**
-26. **A recogniser that must ignore a marker shown as code owes a rule the host format guarantees, not a home-made model of that format.**
+26. **A recogniser that must ignore a marker shown as code owes a rule the host format guarantees, not a home-made model of that format.** For markdown that rule is `plugin/bin/lib/markdown-blocks.js` (`fencedLineMask`, `findSection`, `extractSection`, `unclosedFenceLine`). A check that reads fenced blocks or `##` sections imports it rather than toggling on a backtick regex, which a longer fence or a `~~~` fence breaks. #6352's design-session modules shipped four such toggles until the `/review` lens pass caught them.
 27. **A parse problem that hides content owes its own report, found by a second read under the relaxed reading and credited only to a cause the author can edit.**
 28. **A parser that fails closed owes a cheap precondition that proves the signal absent, so its gaps cost only on inputs that could hold the signal.**
 29. **A producer handing a file to another tool owes its parse verdict across that boundary, because the consumer reads the file, not the producer's envelope.**
@@ -405,6 +405,7 @@ kept. Read it when your case matches one of these:
 31. **A signal line read from an append-only log is also quoted or carried forward by later writers, so a counting reader keys on a measured writer-label allow-list, not on any label before the token.**
 32. **A map keyed by text parsed from a log line or event owes own-property reads and writes, because the parsed key can be `__proto__` or `constructor`.**
 33. **A reader that sorts items into in-sample, excluded and out-of-population owes the membership decision before any exclusion check, so an item that was never in the population cannot read as lost.**
+34. **A path field's pattern must accept a space.** `\S+` for a path rejects `/Users/John Smith/...`, `C:\Users\John Smith\...` and this checkout's own `.../Code Workspaces/...`. Separate list items on a delimiter a path cannot contain (`, `), and pin a POSIX and a Windows spaced path with their own tests. #6352's `evidence.js` shipped `\S+\.\w+:\d+` through six task reviews and the whole-branch review; only the fix-wave re-review caught it.
 
 ## When to use
 

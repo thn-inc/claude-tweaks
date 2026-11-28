@@ -4,7 +4,7 @@ Invoked via `/claude-tweaks:design-wrapper shape <topic>`. Returns `{mode, resul
 
 ## When this runs
 
-Called by `/claude-tweaks:specify` as a pre-decomposition step on frontend design docs. The output is appended verbatim to the design doc before decomposition into specs.
+Called by `/claude-tweaks:specify` as a pre-decomposition step on frontend design docs. The output is appended verbatim to the design doc before decomposition into specs. Also called by `/claude-tweaks:design` (with `--source design`) for a storyboard of screens; that caller writes the output into its session folder as the storyboard.
 
 ## Preconditions
 

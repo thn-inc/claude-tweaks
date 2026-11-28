@@ -9,6 +9,7 @@ Quick reference for all claude-tweaks skills. For full details, run `/claude-twe
 | `/claude-tweaks:init` | Bootstrap structure, generate CLAUDE.md, skills, rules | `[<path>\|<github-url>\|<description>\|--update\|update\|--full\|--core-only\|bootstrap\|config\|skills\|journeys\|docs\|github-remote\|issue-form\|design-integration\|diagram-suggestions\|shadcn-integration\|cloud-parity\|routines\|branch-tracking\|work-backend\|autonomy\|emil-skills\|integration-model\|release\|ci-review]` |
 | `/claude-tweaks:intake` | Sort a mixed braindump onto this repo's shelves — file / absorb / upstream / remember / drop, one table | `[<dump text>] [--file <path>]` |
 | `/claude-tweaks:capture` | Brain-dump idea into the backlog | `<idea text> [--route=brainstorm\|keep\|absorb:N] [--title="..."] [--type=bug\|feature\|task] [--needs-definition\|--no-needs-definition] [--batch <path>]` |
+| `/claude-tweaks:design` | Design session for an order (a parent with parts) — evidence, frame, storyboard, five fresh readers, alternatives, pre-mortem, builder check, saved in one folder as it happens; ends by naming `/claude-tweaks:specify` | `<topic\|#N>` |
 | `/superpowers:brainstorming` | Brainstorm solutions (Superpowers plugin) | topic |
 | `/claude-tweaks:specify` | Shape a work record to spec-shape, or decompose a design doc into ready sub-issue records | `[#N[,#M...]\|#A-#B\|record-id[,id...]\|design-doc-path\|topic\|backlog-title] [--budget <n\|all>] [--priority high\|medium\|low] [phase-N] [--surface <web\|mobile\|desktop\|backend\|infra\|terminal>] [--granularity <fine\|standard\|coarse>]` |
 | `/claude-tweaks:build` | Implement a work record, spec, or design doc | `[#<n>\|<design-doc-path>\|<topic>] [subagent\|batched] [auto] [worktree\|current-branch] [profile=<fast\|standard\|capable\|frontier>] [ops=confirm]` |
@@ -124,6 +125,13 @@ or standalone:
 /claude-tweaks:test full                              → the whole suite on this machine, asked for by name
 ```
 
+### Order from scratch (a parent with parts)
+```
+/claude-tweaks:design meal planning                   → session folder under docs/superpowers/specs/
+/claude-tweaks:specify docs/superpowers/specs/{date}-meal-planning/design.md
+/claude-tweaks:flow 73
+```
+
 ### Brownfield onboarding
 ```
 /claude-tweaks:init
@@ -142,6 +150,7 @@ Backlog record → Design Doc → Ready record(s) → Code → Stories → TEST_
 | `/claude-tweaks:capture` | Backlog record | — |
 | `/claude-tweaks:challenge` | — | — |
 | `/superpowers:brainstorming` | Design Doc | — |
+| `/claude-tweaks:design` | Design session folder (`evidence.md`, `design.md`, `storyboard`, `notes-round-N.md`) | — |
 | `/claude-tweaks:specify` | Ready record(s) — shapes an existing record in place, or creates ready sub-issues (plus a parent when kept) | Design Doc |
 | `/claude-tweaks:build` | Code (+ Journeys via /journeys) | — |
 | `/claude-tweaks:journeys` | Journey files | — |
