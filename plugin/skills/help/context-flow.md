@@ -67,7 +67,7 @@ Where a row below reads or writes `specs/NN-*.md`, that means a work record mate
 | `/claude-tweaks:backlog refine` | Open work records carrying `ready` with no `auto:*` grant yet (the authorization worklist) | `auto:build`/`auto:merge` labels (human-granted only); strips `bot:blocked` on re-authorization; removes `ready` and comments when flagging an unshaped record back | — |
 | `/claude-tweaks:dispatch` | Open work records carrying `auto:build`, unclaimed and no `bot:*` label | `bot:in-progress` claim mirror + the atomic `claims/issue-{N}.json` blob on `claims-registry`; this firing's `decisions.md`; invokes `/claude-tweaks:flow #{n}[,#{m}...]` | Releases its own claim (`bot:in-progress`) on completion or failure; strips `auto:*` grants and adds `bot:blocked` at the retry ceiling |
 | `/flow` | A work record reference, `.claude-tweaks/pipelines/{run-id}/config.yml` (Manifesto) | `{run-dir}/work/{n}-spec.md` (materialization), `decisions.md`, `staged/*`; orchestrates `/build` → `/test` → `/review` → `/design-wrapper polish` → `/wrap-up` in sequence | — |
-| `/design` | A topic or a work record reference, the repo's existing designs, decisions and open records (evidence), `docs/superpowers/specs/{date}-{slug}/` on a resumed session | `docs/superpowers/specs/{date}-{slug}/` — `evidence.md`, `design.md`, `storyboard.{ext}`, `notes-round-{N}.md` (nothing outside the folder) | — |
+| `/design` | A topic or a work record reference, the repo's existing designs, decisions and open records (evidence), `docs/superpowers/specs/{date}-{slug}/` on a resumed session | `docs/superpowers/specs/{date}-{slug}/` — `evidence.md`, `design.md`, `storyboard.{ext}`, `notes-round-{N}.md`, the `## Parts` list and its approval marks; at step 10, through `/claude-tweaks:specify`, the parent issue and sub-issues for the approved parts (nothing else outside the folder) | — |
 | `/design-wrapper` | Changed files / spec surface metadata, Impeccable CLI/plugin output | Design findings, polish diffs, `design-seed:` on the record body (review mode) | — |
 | `/build` | `specs/NN-*.md`, `docs/plans/*.md`; under `plan-at-specify: on`, the plan a record's `Plan:` line names (`refs/claude-tweaks/plans/{n}`, via `plan-store.js read`, #6060) | Code, plan files, ledger items. Invokes `/journeys` for journey files and `/simplify` for code cleanup. Worktree mode also produces transient worktree directories and feature branches. | — |
 | `/journeys` | Changed files (from parent or git diff), `docs/journeys/*.md` | `docs/journeys/*.md` | — |
@@ -140,7 +140,7 @@ This is why every skill writes its output to files, not just to the conversation
 Every artifact that a skill produces must be consumed by a downstream skill or explicitly resolved:
 
 - A build's materialized spec file is archived on the branch by `/wrap-up` before the merge (`.claude-tweaks/pipelines/archive/{run-id}/`)
-- Design docs are deleted by `/specify` after absorption into the surviving records
+- Design docs are deleted by `/specify` after absorption into the surviving records; a `/claude-tweaks:design` session folder is kept, its parts marked filed
 - Plans are kept by default (`superpowers-plans-retention: keep-forever`) — deleted by `/wrap-up` only under `prune-after-wrapup`, and bulk-pruned by `/tidy` once enough accumulate
 - Ledger files are deleted by `/wrap-up` after all items are resolved (a multi-spec `auto`/`hybrid` run's shared ledger: by `/flow`'s Shared teardown, #3420)
 - Backlog work records are promoted, absorbed, or explicitly kept by `/tidy`

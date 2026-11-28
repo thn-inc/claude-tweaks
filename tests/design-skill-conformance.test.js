@@ -646,3 +646,24 @@ test('SKILL.md states the new boundary: filing in step 10, the section order, sp
     [/creating an issue or committing outside step 10, or starting to build \|/, 'SKILL: only issues and commits are carved out to step 10; building stays banned'],
   ]);
 });
+
+const GRAPH = readText(path.join(ROOT, 'docs', 'skill-graph.md'));
+const CONTEXT_FLOW = readText(path.join(ROOT, 'plugin', 'skills', 'help', 'context-flow.md'));
+const REFERENCE_CARD = readText(path.join(ROOT, 'plugin', 'skills', 'help', 'reference-card.md'));
+
+test('the skill graph and /help say decomposition files an approved parts list as written', () => {
+  const specifySection = sectionOf(GRAPH, '## specify');
+  const designRow = lineStartingWith(specifySection, '| `/design` |');
+  assertHas(designRow, 'check-approval', 'skill-graph: the specify section /design row names check-approval');
+  assertHas(designRow, 'mark-filed', 'skill-graph: the specify section /design row names mark-filed');
+  assert.throws(() => assertHas(mutate(designRow, 'check-approval', 'approval'), 'check-approval', 'skill-graph: the specify section /design row names check-approval'), { message: 'skill-graph: the specify section /design row names check-approval' });
+  assert.throws(() => assertHas(mutate(designRow, 'mark-filed', 'marks'), 'mark-filed', 'skill-graph: the specify section /design row names mark-filed'), { message: 'skill-graph: the specify section /design row names mark-filed' });
+  const designSection = sectionOf(GRAPH, '## design');
+  pinFacts(designSection, [[/step 10 invokes `\/claude-tweaks:specify` on the approved `design\.md`/, 'skill-graph: the design section says step 10 invokes specify on the approved design.md']]);
+  const contextRow = lineStartingWith(CONTEXT_FLOW, '| `/design` |');
+  assertHas(contextRow, 'parent issue and sub-issues', 'context-flow: the /design row names the parent issue and sub-issues');
+  assertHas(contextRow, '/claude-tweaks:specify', 'context-flow: the /design row names the filing through specify');
+  assert.throws(() => assertHas(mutate(contextRow, 'parent issue and sub-issues', 'nothing'), 'parent issue and sub-issues', 'context-flow: the /design row names the parent issue and sub-issues'), { message: 'context-flow: the /design row names the parent issue and sub-issues' });
+  pinFacts(CONTEXT_FLOW, [[/Design docs are deleted by `\/specify` after absorption into the surviving records; a `\/claude-tweaks:design` session folder is kept, its parts marked filed/, 'context-flow: the no-drop bullet keeps the session folder']]);
+  pinFacts(REFERENCE_CARD, [[/ends by filing the approved parts through `\/claude-tweaks:specify`/, 'reference-card: the /design row says it files the approved parts']]);
+});
