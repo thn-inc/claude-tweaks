@@ -107,7 +107,9 @@ function assertTombstoneEvidence(text) {
   assert.match(item5, /isTrustedComment/);
   assert.match(item5, /closedAt/);
   assert.match(item5, /TOMBSTONE_CLOSE_WINDOW_MS/);
-  assert.match(item5, /the only producer/);
+  // #4792: two producers — the failure path and the blocker-landing stop, whose evidence is the PR's own pointer comment.
+  assert.match(item5, /two producers of this shape/);
+  assert.match(item5, /Stopped: an out-of-run blocker has not landed\./);
   assert.match(item5, /human/);
   assert.match(item5, /newest closed PR/);
   assert.match(item5, /open, draft or merged/);

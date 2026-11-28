@@ -146,7 +146,7 @@ function findPrsForBranch({ branch, repo, gh = defaultGh }) {
   try {
     const out = gh([
       'pr', 'list', '--repo', repo, '--head', branch, '--state', 'all',
-      '--json', 'number,url,state,isDraft,headRefOid,closingIssuesReferences,body,isCrossRepository,closedAt',
+      '--json', 'number,url,state,isDraft,headRefOid,closingIssuesReferences,body,isCrossRepository,closedAt,comments',
     ]);
     return { ok: true, prs: JSON.parse(out || '[]') };
   } catch (err) {
@@ -174,6 +174,24 @@ function hasTombstoneEvidence(closedAt, lookup) {
   return lookup.comments.some((comment) => {
     if (!comment || typeof comment !== 'object' || typeof comment.body !== 'string') return false;
     if (!ATTEMPT_RE.test(comment.body) || !isTrustedComment(comment)) return false;
+    const created = Date.parse(comment.createdAt);
+    return created <= closed && closed - created <= TOMBSTONE_CLOSE_WINDOW_MS;
+  });
+}
+
+// #4792: the blocker-landing stop closes its PR as a tombstone with a `failure`-kind pointer
+// comment ON THE PR and posts no `Attempt N failed` comment on the issue, so that pointer is
+// this producer's evidence: a trusted comment carrying the run-comment failure marker and the
+// stop sentence, created in the same window before `closedAt`. A read without `comments` is no evidence.
+const BLOCKER_STOP_MARKER = '<!-- run-comment: failure -->';
+const BLOCKER_STOP_SENTENCE = 'Stopped: an out-of-run blocker has not landed.';
+function hasBlockerLandingEvidence(pr) {
+  if (!Array.isArray(pr.comments)) return false;
+  const closed = Date.parse(pr.closedAt);
+  return pr.comments.some((comment) => {
+    if (!comment || typeof comment !== 'object' || typeof comment.body !== 'string') return false;
+    if (!comment.body.includes(BLOCKER_STOP_MARKER) || !comment.body.includes(BLOCKER_STOP_SENTENCE)) return false;
+    if (!isTrustedComment(comment)) return false;
     const created = Date.parse(comment.createdAt);
     return created <= closed && closed - created <= TOMBSTONE_CLOSE_WINDOW_MS;
   });
@@ -207,8 +225,8 @@ function newerLivePr(prs, closedMs) {
 // The newest CLOSED same-repo PR on the branch (Reading A, by `closedAt`) when it is a
 // claude-tweaks PR (run marker on its body's first line) that closes one of `records`
 // in `repo` (`owner/name`), whose head is an ancestor of `remoteSha`, and that carries
-// tombstone evidence (a trusted `Attempt N failed` comment on a record it closes, in the
-// window before its `closedAt`) — the record's own failed earlier attempt — as
+// tombstone evidence (a trusted `Attempt N failed` comment on a record it closes, or the
+// blocker-landing stop's pointer comment on the PR itself, in the window before its `closedAt`) — the record's own failed earlier attempt — as
 // `{ number, url }`, else null. Only the newest closed PR is judged: failing any check, it
 // is null, never a fallback to an older PR, so commits a human rejected are not adopted.
 // A newer same-repo OPEN, draft or MERGED PR (Reading B) also yields null, before any check
@@ -234,7 +252,7 @@ function findPriorAttemptPr({ remoteSha, prLookup, records, repo, git = defaultG
   }
   // `some` stops at the first record with evidence. `wanted` is deduplicated and only this
   // one PR is judged, so each linked record's comments are read at most once.
-  if (!linked.some((n) => hasTombstoneEvidence(pr.closedAt, readComments({ number: n, repo })))) return null;
+  if (!hasBlockerLandingEvidence(pr) && !linked.some((n) => hasTombstoneEvidence(pr.closedAt, readComments({ number: n, repo })))) return null;
   return { number: pr.number, url: pr.url };
 }
 

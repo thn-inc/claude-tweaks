@@ -237,6 +237,35 @@ const priorAttempt = (over) => findPriorAttemptPr({
   ...over,
 });
 
+// #4792: the blocker-landing stop closes its PR with a failure-kind pointer comment on the PR and
+// posts no `Attempt N failed` comment on the issue, so that pointer is the tombstone's evidence.
+const blockerPointer = (over) => ({
+  body: '<!-- run-comment: failure -->\n\nStopped: an out-of-run blocker has not landed. Resume with the ### Resume command in this PR body once it lands.\n',
+  authorAssociation: 'MEMBER',
+  createdAt: '2026-10-21T11:59:55Z',
+  ...over,
+});
+const blockerPr = (comments) => closedPr({ comments });
+const blockerAttempt = (comments, readComments) => priorAttempt({
+  prLookup: { ok: true, prs: [blockerPr(comments)] },
+  readComments: readComments || (() => ({ ok: true, comments: [] })),
+});
+
+test('AC4.2 (#4792): a blocker-landing tombstone — the PR\'s own stop pointer, no issue comment — is this record\'s prior attempt, with no issue-comment read', () => {
+  let reads = 0;
+  assert.deepEqual(blockerAttempt([blockerPointer()], () => { reads += 1; return { ok: true, comments: [] }; }), PR9);
+  assert.equal(reads, 0, 'the PR-local evidence decides before any issue-comment read');
+});
+
+test('AC4.2 (#4792): a pointer that is untrusted, outside the window, after closedAt, or the plain failure pointer is no evidence', () => {
+  assert.equal(blockerAttempt([blockerPointer({ authorAssociation: 'NONE' })]), null, 'untrusted author');
+  assert.equal(blockerAttempt([blockerPointer({ createdAt: new Date(Date.parse(CLOSED_AT) - TOMBSTONE_CLOSE_WINDOW_MS - 1000).toISOString() })]), null, 'older than the window');
+  assert.equal(blockerAttempt([blockerPointer({ createdAt: new Date(Date.parse(CLOSED_AT) + 1000).toISOString() })]), null, 'created after the close');
+  assert.equal(blockerAttempt([blockerPointer({ body: '<!-- run-comment: failure -->\n\nAttempt failed — see the full comment on #42.\n' })]), null, 'a plain failure pointer carries no blocker sentence');
+  assert.equal(blockerAttempt([blockerPointer({ body: 'Stopped: an out-of-run blocker has not landed.' })]), null, 'the sentence without the run-comment marker');
+  assert.equal(blockerAttempt(undefined), null, 'a PR read without comments');
+});
+
 test('AC4.1: findPriorAttemptPr matches this record\'s closed claude-tweaks PR whose head is an ancestor of origin\'s tip', () => {
   assert.deepEqual(priorAttempt(), { number: 9, url: 'https://example.test/pr/9' });
 });
@@ -330,7 +359,7 @@ test('findPriorAttemptPr: judges the newest closed PR, ignoring older non-matchi
 test('findPrsForBranch: requests the fields findPriorAttemptPr reads', () => {
   let seen;
   findPrsForBranch({ branch: 'b', repo: 'o/r', gh: (args) => { seen = args; return '[]'; } });
-  assert.equal(seen[seen.indexOf('--json') + 1], 'number,url,state,isDraft,headRefOid,closingIssuesReferences,body,isCrossRepository,closedAt');
+  assert.equal(seen[seen.indexOf('--json') + 1], 'number,url,state,isDraft,headRefOid,closingIssuesReferences,body,isCrossRepository,closedAt,comments');
 });
 
 // --- #4058: a closed PR is a tombstone only with a failure comment just before its closedAt ---

@@ -107,8 +107,11 @@ then treat it as `unreachable` with reason `no-output` (item 3). Branch on `stat
    (`isTrustedComment`) `Attempt {N} failed` comment created no more than
    `TOMBSTONE_CLOSE_WINDOW_MS` before the PR's `closedAt`, and not after it — the shape
    `dispatch/settle-and-merge.md` Step 6 step 5 leaves: branch kept, that comment posted on the
-   issue, then the PR closed as a tombstone). Dispatch's failure path is the only producer of this
-   shape. The comment is the discriminator because a PR a human closed to reject the approach has
+   issue, then the PR closed as a tombstone). Dispatch has two producers of this shape: its failure
+   path, and the blocker-landing stop (#4792), which posts no issue comment — its evidence is the
+   trusted `failure`-kind pointer comment on the PR itself (the `<!-- run-comment: failure -->` marker
+   and the `Stopped: an out-of-run blocker has not landed.` sentence), created in the same window
+   before `closedAt`. The comment is the discriminator because a PR a human closed to reject the approach has
    every other property: only a failure that posts its comment just before closing the PR passes the
    timing test. Only the newest closed PR on the branch is judged, so a newer PR a human closed stops
    as `foreign` even when an older PR on the branch is a genuine tombstone — rejected commits are
