@@ -32,9 +32,10 @@
 // The digest is sha256 over three blocks joined with `\n`: `## Frame` and
 // `## Approaches` (each its heading line, then its section lines without
 // `Status:` lines, which flip from in-progress to done as steps finish after
-// approval, so including them would invalidate every approval) and `## Parts` (its heading line, then each data row's first
-// five cells, trimmed, joined with ` | `); every line is right-trimmed. Issue
-// marks and the Estimate line are outside it, so filing never invalidates it.
+// approval, so including them would invalidate every approval) and `## Parts`
+// (its heading line, then each data row's first five cells, trimmed, joined
+// with ` | `); every line is right-trimmed. Issue marks and the Estimate line
+// are outside it, so filing never invalidates it.
 //
 // The worth-it measure is `## Frame`'s first `Measure:` line outside a fence, read verbatim; the
 // parent issue carries it under a `## Worth-it measure` heading. `## Filing`
