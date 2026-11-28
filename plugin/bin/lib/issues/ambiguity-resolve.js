@@ -7,6 +7,7 @@
 const {
   shapeGate, stripCodeSpans, originalRequestOffset,
 } = require('./materialize-format');
+const { SYMBOLIC_LINE_RE } = require('../design-session/parts');
 
 // The opening of a red-team marker (specify/red-team.md's write-back). Same
 // pattern the spec-shaped gate uses (materialize-format.js's
@@ -43,10 +44,12 @@ function hasOpenQuestionsSection(body) {
 // itself asserts (_shared/work-record.md, implemented by shapeGate: required
 // sections present and no TBD/TODO/ambiguity placeholder) and no Open
 // Questions section survives (spec-template.md: resolve every row, then
-// delete the section).
+// delete the section), and no symbolic `Blocked by: … (left for owner/name)`
+// line remains: no blocker surface reads one, so `ready` would show the record
+// unblocked until the later repository's run rewrites it (design-session/parts.js).
 function readyRestorable(body) {
   if (typeof body !== 'string') return false;
-  return shapeGate(body).ok && !hasOpenQuestionsSection(body);
+  return shapeGate(body).ok && !hasOpenQuestionsSection(body) && !SYMBOLIC_LINE_RE.test(authoredText(body));
 }
 
 // Deletes an Open Questions section whose table has no data rows left (only

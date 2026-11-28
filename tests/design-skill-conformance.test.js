@@ -15,7 +15,7 @@ const { readBlocks } = require('../plugin/bin/lib/design-session/brief');
 const ROOT = path.join(__dirname, '..');
 const DESIGN_DIR = path.join(ROOT, 'plugin', 'skills', 'design');
 const BIN_DIR = path.join(ROOT, 'plugin', 'bin');
-const FILES = ['SKILL.md', 'step-1-evidence.md', 'step-2-frame.md', 'step-3-storyboard.md', 'step-4-perspectives.md', 'step-5-alternatives.md', 'step-6-pre-mortem.md', 'step-7-builder-check.md', 'reader-briefs.md'];
+const FILES = ['SKILL.md', 'step-1-evidence.md', 'step-2-frame.md', 'step-3-storyboard.md', 'step-4-perspectives.md', 'step-5-alternatives.md', 'step-6-pre-mortem.md', 'step-7-builder-check.md', 'step-8-parts.md', 'step-9-approve.md', 'step-10-file.md', 'reader-briefs.md'];
 const read = (name) => readText(path.join(DESIGN_DIR, name));
 const TEXT = Object.fromEntries(FILES.map((f) => [f, read(f)]));
 const SKILL = TEXT['SKILL.md'];
@@ -23,6 +23,9 @@ const STEP1 = TEXT['step-1-evidence.md'];
 const STEP4 = TEXT['step-4-perspectives.md'];
 const STEP6 = TEXT['step-6-pre-mortem.md'];
 const STEP7 = TEXT['step-7-builder-check.md'];
+const STEP8 = TEXT['step-8-parts.md'];
+const STEP9 = TEXT['step-9-approve.md'];
+const STEP10 = TEXT['step-10-file.md'];
 const BRIEFS = TEXT['reader-briefs.md'];
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -284,7 +287,7 @@ test('the skill never creates a worktree', () => {
 
   const section = sectionOf(SKILL, '## Session folder and resume');
   const facts = [
-    [/The skill writes nothing outside it, and never creates a worktree or a branch\./, 'never creates a worktree or a branch'],
+    [/The skill writes nothing outside it except step 10, which files issues and commits through `\/claude-tweaks:specify`, and never creates a worktree or a branch\./, 'never creates a worktree or a branch'],
     [/\*\*Worktree gate, before the first write\.\*\*/, 'worktree gate before the first write'],
     [/`node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/resolve-policy\.js" --values worktree-always`/, 'reads worktree-always'],
     [/When it is `true` and the checkout is the main checkout, not a linked worktree/, 'true on the main checkout'],
@@ -305,7 +308,7 @@ test('AC8.1: no write outside the folder, no issue, no commit', () => {
   }
   // prose may name them: the same literal outside a code region is not an offender
   assertNoBannedInCode({ ...DESIGN_MD, 'step-7-builder-check.md': `${STEP7}\n\nNever run gh issue create here.\n` }, banned, 'no outside write');
-  const row = lineStartingWith(SKILL, '| Writing outside the folder, creating a worktree or a branch, creating an issue, committing, or starting to build |');
+  const row = lineStartingWith(SKILL, '| Writing outside the folder, creating a worktree or a branch, creating an issue or committing outside step 10, or starting to build |');
   assert.notEqual(row, '', 'anti-pattern row missing');
   assert.throws(() => assertHas(mutate(SKILL, row, ''), row, 'anti-pattern row for outside writes missing'), { message: 'anti-pattern row for outside writes missing' });
 });
@@ -385,6 +388,10 @@ function checkFlagsAccepted(line, script) {
   return flags;
 }
 
+const PARTS_CALL = `${DS} parts --folder "{folder}"`;
+const DIGEST_CALL = `${DS} digest --folder "{folder}"`;
+const CHECK_APPROVAL_CALL = `${DS} check-approval --folder "{folder}"`;
+
 const PINNED_CALLS = [
   ['design-session.js', `${DS} folder --topic "{argument}" --root "{repo root}" --create`, SKILL],
   ['design-session.js', `${DS} status --folder "{folder}"`, SKILL],
@@ -393,8 +400,12 @@ const PINNED_CALLS = [
   ['design-session.js', `${DS} brief --folder "{folder}" --reader {perspective} --round {N}`, STEP4],
   ['design-session.js', `${DS} brief --folder "{folder}" --reader pre-mortem`, STEP6],
   ['design-session.js', `${DS} brief --folder "{folder}" --reader builder`, STEP7],
+  ['design-session.js', PARTS_CALL, STEP8],
+  ['design-session.js', DIGEST_CALL, STEP9],
+  ['design-session.js', CHECK_APPROVAL_CALL, STEP10],
   ['resolve-profile.js', EXCEPTION_CALL, SKILL],
   ['resolve-policy.js', 'node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values worktree-always', SKILL],
+  ['design-session.js', `${DS} status --folder "{folder}" --repository {owner/name}`, SKILL],
 ];
 
 test('every --flag in a pinned call line is one the CLI accepts', () => {
@@ -428,7 +439,7 @@ function bareRefsIn(texts) {
 
 test('skill references in step bodies are fully qualified', () => {
   const stepBodies = Object.fromEntries(Object.entries(TEXT).filter(([n]) => n.startsWith('step-') || n === 'SKILL.md'));
-  assert.equal(Object.keys(stepBodies).length, 8, 'step-body file set changed');
+  assert.equal(Object.keys(stepBodies).length, 11, 'step-body file set changed');
   assert.deepEqual(bareRefsIn(stepBodies), []);
   // the qualified form is present (the sweep reads real references)
   assert.ok(/`\/claude-tweaks:design \{argument\}`/.test(SKILL), 'qualified self-reference missing');
@@ -490,7 +501,7 @@ test('a limit step-down says the count never resets and offers an honest handoff
   const other = lineStartingWith(model, '   - Any other reason.');
   assert.notEqual(other, '', 'other-reason bullet missing');
   pinFacts(other, [[/`Fix the cause and retry` — the maintainer clears the reason \(for `policy`, `stance` or `ceiling`, the setting that caused it\)/, 'other reasons: fix and retry']]);
-  pinFacts(sectionOf(SKILL, '## Next Actions'), [[/A `limit` gap recorded in `## Decisions` is not a stop: it renders both lines\./, 'Next Actions: a limit gap renders both lines']]);
+  pinFacts(sectionOf(SKILL, '## Next Actions'), [[/A `limit` gap recorded in `## Decisions` is not a stop: the session goes on to step 8\./, 'Next Actions: a limit gap goes on to step 8']]);
 });
 
 test('steps 6 and 7 read what is left of the 22 before recommending another reader', () => {
@@ -543,11 +554,11 @@ test('the session model check runs before the frame and lets the maintainer deci
   ]);
 });
 
-test('interim ending: after step 7 the skill names /claude-tweaks:specify {design.md path} as the next command', () => {
-  // Interim by design: the next record changes this ending, and this pin changes with it.
+test('ending: after step 10 the skill renders only the resume line, since specify rendered the flow commands', () => {
   pinFacts(sectionOf(SKILL, '## Next Actions'), [
-    [/After step 7, or when `status` prints `resumeAt: 'complete'`, render as plain markdown/, 'Next Actions: rendered after step 7 or on complete'],
-    [/^\*\*`\/claude-tweaks:specify \{design\.md path\}`\*\* — shape the design into records \(recommended\)$/m, 'Next Actions: names specify on the design.md path (interim ending)'],
+    [/After step 10, or when `status` prints `resumeAt: 'complete'`, render only the resume line/, 'Next Actions: after step 10 or on complete, the resume line only'],
+    [/`\/claude-tweaks:specify` already rendered the flow commands for the filed parts/, 'Next Actions: specify already rendered the flow commands'],
+    [/^`\/claude-tweaks:design \{argument\}` — resume or reread this session later, from the same checkout$/m, 'Next Actions: the resume line'],
   ]);
 });
 
@@ -555,4 +566,154 @@ test('the pre-mortem reader gets the storyboard; the builder gets design.md alon
   pinFacts(sectionOf(STEP6, '## 1. Brief, resolve, dispatch'), [[/Compose the brief — `design\.md` without its `## Decisions` list, followed by the storyboard/, 'step-6 brief carries the storyboard']]);
   pinFacts(sectionOf(STEP7, '## 1. Brief, resolve, dispatch'), [[/Compose the brief — `design\.md` without its `## Decisions` list, so the reader plans from the design/, 'step-7 brief is design.md alone']]);
   pinFacts(readBlocks(BRIEFS).get('pre-mortem'), [[/The document follows this brief, and after it the storyboard/, 'pre-mortem block names the storyboard']]);
+});
+
+// ---------------------------------------------------------------------------------------------
+// #6353 Task 3: steps 8-10 — parts, approval, filing
+
+test('step 8 works the parts out in parts.js\'s table and fixes every reported error', () => {
+  pinFacts(STEP8, [
+    [/`## Parts` after `## Builder check`, with `Status: in-progress`/, 'step 8: adds ## Parts after the builder check, in progress'],
+    [/`bin\/lib\/design-session\/parts\.js`'s header comment/, 'step 8: cites the parts.js header for the grammar'],
+    [/the part that makes the order visible to a user goes last/i, 'step 8: the user-visible part goes last'],
+    [/A part for another repository names it in Repository/, 'step 8: another repository is named in Repository'],
+    [/fix every reported error until it exits 0/, 'step 8: errors fixed until exit 0'],
+    [/under the table exactly as printed/, 'step 8: the estimate line is written as printed'],
+    [/set `Status: done`/, 'step 8: confirmed then done'],
+  ]);
+  assertHas(STEP8, PARTS_CALL, 'step 8: parts call missing');
+  assert.ok(!/^\s*(?:\| *#|Estimate:)/m.test(STEP8.replace(/```[\s\S]*?```/g, '')), 'step 8 restates the table grammar');
+});
+
+test('AC6.1: step 9 asks for a new approval before changing an approved frame, approach or parts', () => {
+  pinFacts(STEP9, [
+    [/`Approve the design, its parts and estimate \(Recommended\)`/, 'step 9: the recommended approve option'],
+    [/— or `Change something first`\. Recommend approving/, 'step 9: the change option'],
+    [/^Approved: \{YYYY-MM-DD\} — digest sha256:\{digest\}$/m, 'step 9: the Approved line'],
+    [/^## Approval\nStatus: done\n/m, 'step 9: Approval written done'],
+    [/after asking for a new approval/, 'step 9: change only after asking for a new approval'],
+    [/sets the Approval section back to `Status: in-progress`/, 'step 9: Status goes back to in-progress'],
+    [/removes the `Approved:` line/, 'step 9: the Approved line is removed'],
+    [/`reapprove` action/, 'step 9: the reapprove action runs this step again'],
+    [/`by: maintainer`/, 'step 9: the decision is by the maintainer'],
+  ]);
+  assertHas(STEP9, DIGEST_CALL, 'step 9: digest call missing');
+});
+
+test('step 10 files only through /claude-tweaks:specify', () => {
+  assertHas(STEP10, CHECK_APPROVAL_CALL, 'step 10: check-approval call missing');
+  assertHas(STEP10, '/claude-tweaks:specify {design.md path}', 'step 10: the specify invocation missing');
+  assert.throws(() => assertHas(mutate(STEP10, '/claude-tweaks:specify {design.md path}', '/claude-tweaks:specify'), '/claude-tweaks:specify {design.md path}', 'step 10: the specify invocation missing'), { message: 'step 10: the specify invocation missing' });
+  assert.throws(() => assertHas(mutate(STEP10, CHECK_APPROVAL_CALL, ''), CHECK_APPROVAL_CALL, 'step 10: check-approval call missing'), { message: 'step 10: check-approval call missing' });
+  requireOrder(STEP10, CHECK_APPROVAL_CALL, '/claude-tweaks:specify {design.md path}', 'step 10: check-approval before specify');
+  const reversed = STEP10.replace(CHECK_APPROVAL_CALL, '@@').replace('/claude-tweaks:specify {design.md path}', CHECK_APPROVAL_CALL).replace('@@', '/claude-tweaks:specify {design.md path}');
+  assert.notEqual(reversed, STEP10);
+  assert.throws(() => requireOrder(reversed, CHECK_APPROVAL_CALL, '/claude-tweaks:specify {design.md path}', 'step 10: check-approval before specify'), { message: 'step 10: check-approval before specify: order violated' });
+  pinFacts(STEP10, [
+    [/`no-repository`, run it again with `--repository \{owner\/name\}`/, 'step 10: no-repository retries with --repository or stops'],
+    [/run step 9 again/, 'step 10: a refusal sends the session back to step 9'],
+    [/^## Filing\nStatus: done\nParent: \{owner\/name\}#\{N\}$/m, 'step 10: the Filing section and its Parent line'],
+    [/`Parent: \{owner\/name\} — none, one part`/, 'step 10: the collapse form of Parent'],
+    [/A part marked `left for \{owner\/name\}` belongs to that repository/, 'step 10: parts for another repository are left'],
+    [/`\/claude-tweaks:design \{argument\}` there/, 'step 10: the other repository resumes with design there'],
+    [/`\/claude-tweaks:specify`'s Step 9 committed this folder, its marks included; the copy for that repository is taken from that commit\./, 'step 10: specify Step 9 committed the folder, the copy comes from that commit'],
+    [/`status` there reads that repository, so the part marked `left for` it keeps step 10 open: it resumes at step 10/, 'step 10: the other repository\'s status resumes at step 10'],
+    [/Then run `status` \(with `--repository \{owner\/name\}` when section 1 passed it to `check-approval`\)/, 'step 10: the closing status call carries --repository'],
+    [/check every part carries an Issue mark and none is still marked `left for` this checkout's repository/, 'step 10: section 2 checks no part is still left for this repository'],
+    [/Every `Parent:` line is repository-qualified, in the same form as the filed marks: `\{owner\/name\}` is this checkout's repository \(`check-approval`'s `thisRepository`\), and `\{N\}` the parent's issue number under `github-issues` or its record id under `local-files`\./, 'step 10: every Parent line is repository-qualified'],
+    [/There is one line per repository: a later repository's run keeps the earlier lines and adds its own below them\./, 'step 10: one Parent line per repository'],
+  ]);
+});
+
+const assertNoBareParent = (text) => assert.ok(!/\{record ref\}|Parent: #|backend's own form/.test(text), 'step 10 writes a bare Parent line');
+
+test('step 10 never writes a bare, unqualified Parent line', () => {
+  assertNoBareParent(STEP10);
+  for (const planted of ['Parent: {record ref}', 'Parent: #7000', '`{record ref}` is in the backend\'s own form']) {
+    assert.throws(() => assertNoBareParent(`${STEP10}\n${planted}\n`), { message: 'step 10 writes a bare Parent line' }, planted);
+  }
+});
+
+const assertNoUncommitted = (text) => assert.ok(!/uncommitted/i.test(text), 'step 10 calls the folder uncommitted');
+
+test('step 10 never calls the folder uncommitted: specify\'s Step 9 committed it', () => {
+  assertNoUncommitted(STEP10);
+  assert.throws(() => assertNoUncommitted(`${STEP10}\nRemind the maintainer that the folder is uncommitted.\n`), { message: 'step 10 calls the folder uncommitted' });
+  pinFacts(sectionOf(SKILL, '## Session folder and resume'), [
+    [/Until step 10's `\/claude-tweaks:specify` run commits it, the folder is uncommitted/, 'SKILL: the folder is uncommitted until step 10 commits it'],
+    [/Say both when the session starts, and again when it stops before step 10\./, 'SKILL: say it at the start and at a stop before step 10'],
+  ]);
+});
+
+test('status takes --repository when the session knows this checkout\'s repository', () => {
+  pinFacts(sectionOf(SKILL, '## Session folder and resume'), [
+    [/When the session knows this checkout's `owner\/name` — the cloud session's repository, or the one step 10 passed to `check-approval` — add `--repository \{owner\/name\}` to this and every later `status` call/, 'SKILL: status takes --repository when the session knows it'],
+    [/a part marked `left for` that repository keeps step 10 open/, 'SKILL: a part left for this repository keeps step 10 open'],
+    [/an origin that names none counts every `left for …` mark as marked\./, 'SKILL: with no repository, every left-for mark counts as marked'],
+    [/`resumeAt: 'complete'` with a non-empty `unresolvedLeftFor` means no repository resolved while parts are marked `left for` those repositories/, 'SKILL: complete with unresolvedLeftFor is not yet finished'],
+    [/Before telling the maintainer the session is finished, get this checkout's `owner\/name` \(`gh repo view --json nameWithOwner -q \.nameWithOwner`, or ask the maintainer\) and run `status` again with it/, 'SKILL: get owner/name and rerun status first'],
+    [/`resumeAt: 'complete'` with no `unresolvedLeftFor` → say the session is finished/, 'SKILL: finished only with no unresolvedLeftFor'],
+  ]);
+  // the rerun rule sits in item 4, before item 6 says the session is finished
+  const order = (text) => requireOrder(text, 'with a non-empty `unresolvedLeftFor`', 'with no `unresolvedLeftFor` → say the session is finished', 'rerun before finished');
+  const section = sectionOf(SKILL, '## Session folder and resume');
+  order(section);
+  const para = section.split('\n').find((l) => l.includes('with a non-empty `unresolvedLeftFor`'));
+  const moved = `${section.replace(`${para}\n`, '')}\n${para}\n`;
+  assert.notEqual(moved, section);
+  assert.throws(() => order(moved), { message: 'rerun before finished: order violated' });
+  const usageHas = (usage) => assert.ok(usage.split('\n').some((l) => l.includes('design-session.js status --folder <dir> [--repository <owner/name>]')), 'status no longer takes --repository');
+  const usage = cliUsage('design-session.js');
+  usageHas(usage);
+  assert.throws(() => usageHas(usage.replace('status --folder <dir> [--repository', 'status --folder <dir> [--repo')), { message: 'status no longer takes --repository' });
+});
+
+test('the Steps table lists steps 8, 9 and 10 in order', () => {
+  const rows = [
+    '| 8. Parts | `step-8-parts.md` | `## Parts` | its `Status: done`, and `parts` exits 0 |',
+    '| 9. Approval | `step-9-approve.md` | `## Approval` | its `Status: done`, and `check-approval` exits 0 |',
+    '| 10. Filing | `step-10-file.md` | `## Filing`, issue marks | its `Status: done`, and every part marked, none `left for` this repository |',
+  ];
+  for (const r of rows) assertHas(SKILL, r, `Steps table row missing: ${r.slice(0, 12)}`);
+  requireOrder(SKILL, rows[0], rows[1], 'steps 8 before 9');
+  requireOrder(SKILL, rows[1], rows[2], 'steps 9 before 10');
+  requireOrder(SKILL, '| 7. Builder check |', rows[0], 'step 7 before 8');
+  const swapped = SKILL.replace(rows[0], '@@').replace(rows[1], rows[0]).replace('@@', rows[1]);
+  assert.notEqual(swapped, SKILL);
+  assert.throws(() => requireOrder(swapped, rows[0], rows[1], 'steps 8 before 9'), { message: 'steps 8 before 9: order violated' });
+  assert.throws(() => assertHas(mutate(SKILL, rows[2], ''), rows[2], 'Steps table row missing: | 10. Filing'), { message: 'Steps table row missing: | 10. Filing' });
+});
+
+test('SKILL.md states the new boundary: filing in step 10, the section order, specify as a component', () => {
+  pinFacts(SKILL, [
+    [/Building anything\. This skill ends once the parts are filed and never starts a build\./, 'SKILL: ends once the parts are filed'],
+    [/except step 10, which files issues and commits through `\/claude-tweaks:specify`/, 'SKILL: step 10 is the one write outside the folder'],
+    [/`## Builder check`, `## Parts`, `## Approval`, `## Filing`, `## Decisions`/, 'SKILL: section order carries Parts, Approval, Filing'],
+    [/Step 10 invokes `\/claude-tweaks:specify`/, 'SKILL: component contract names the specify invocation'],
+    [/^\| Changing the frame, approach or parts after approval without a new approval \|/m, 'SKILL: anti-pattern row for changing after approval'],
+    [/parts and estimate, approval, filing\./, 'SKILL: the opening paragraph names the new steps'],
+    [/To change an approved frame, approach or part, first run step 9's approval rule \(`step-9-approve\.md`\): set the Approval section back to `Status: in-progress` and remove its `Approved:` line/, 'SKILL: the always-loaded pointer to step 9\'s approval rule'],
+    [/creating an issue or committing outside step 10, or starting to build \|/, 'SKILL: only issues and commits are carved out to step 10; building stays banned'],
+  ]);
+});
+
+const GRAPH = readText(path.join(ROOT, 'docs', 'skill-graph.md'));
+const CONTEXT_FLOW = readText(path.join(ROOT, 'plugin', 'skills', 'help', 'context-flow.md'));
+const REFERENCE_CARD = readText(path.join(ROOT, 'plugin', 'skills', 'help', 'reference-card.md'));
+
+test('the skill graph and /help say decomposition files an approved parts list as written', () => {
+  const specifySection = sectionOf(GRAPH, '## specify');
+  const designRow = lineStartingWith(specifySection, '| `/design` |');
+  assertHas(designRow, 'check-approval', 'skill-graph: the specify section /design row names check-approval');
+  assertHas(designRow, 'mark-filed', 'skill-graph: the specify section /design row names mark-filed');
+  assert.throws(() => assertHas(mutate(designRow, 'check-approval', 'approval'), 'check-approval', 'skill-graph: the specify section /design row names check-approval'), { message: 'skill-graph: the specify section /design row names check-approval' });
+  assert.throws(() => assertHas(mutate(designRow, 'mark-filed', 'marks'), 'mark-filed', 'skill-graph: the specify section /design row names mark-filed'), { message: 'skill-graph: the specify section /design row names mark-filed' });
+  const designSection = sectionOf(GRAPH, '## design');
+  pinFacts(designSection, [[/step 10 invokes `\/claude-tweaks:specify` on the approved `design\.md`/, 'skill-graph: the design section says step 10 invokes specify on the approved design.md']]);
+  const contextRow = lineStartingWith(CONTEXT_FLOW, '| `/design` |');
+  assertHas(contextRow, 'parent issue and sub-issues', 'context-flow: the /design row names the parent issue and sub-issues');
+  assertHas(contextRow, '/claude-tweaks:specify', 'context-flow: the /design row names the filing through specify');
+  assert.throws(() => assertHas(mutate(contextRow, 'parent issue and sub-issues', 'nothing'), 'parent issue and sub-issues', 'context-flow: the /design row names the parent issue and sub-issues'), { message: 'context-flow: the /design row names the parent issue and sub-issues' });
+  pinFacts(CONTEXT_FLOW, [[/Design docs are deleted by `\/specify` after absorption into the surviving records; a `\/claude-tweaks:design` session folder is kept, its parts marked filed/, 'context-flow: the no-drop bullet keeps the session folder']]);
+  pinFacts(REFERENCE_CARD, [[/ends by filing the approved parts through `\/claude-tweaks:specify`/, 'reference-card: the /design row says it files the approved parts']]);
 });

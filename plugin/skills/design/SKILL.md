@@ -1,12 +1,12 @@
 ---
 name: design
-description: Use when starting the design of anything that will be an order (a parent with parts), run as a session with the maintainer - evidence, frame, storyboard, five fresh readers, alternatives, pre-mortem, builder check. Not visual design (/claude-tweaks:design-wrapper) or a single small fix (/superpowers:brainstorming). Keywords - design session, order, evidence, storyboard, perspectives, pre-mortem.
+description: Use when starting the design of anything that will be an order (a parent with parts), run as a session with the maintainer - evidence, frame, storyboard, five fresh readers, alternatives, pre-mortem, builder check, parts and estimate, approval, filing. Not visual design (/claude-tweaks:design-wrapper) or a single small fix (/superpowers:brainstorming). Keywords - design session, order, evidence, storyboard, perspectives, pre-mortem.
 argument-hint: "<topic|#N>"
 ---
 
 # Design — A design session for an order, saved as it happens
 
-Runs a design session with the maintainer on the top model tier: it gathers what already exists before any idea is discussed, frames the problem, draws the cheapest picture of the result, tests that picture against five fresh readers, weighs real alternatives, runs a pre-mortem, and checks that a builder could plan from the document alone. Every step is saved in one folder as it happens, so a lost session resumes from the files.
+Runs a design session with the maintainer on the top model tier: it gathers what already exists before any idea is discussed, frames the problem, draws the cheapest picture of the result, tests that picture against five fresh readers, weighs real alternatives, runs a pre-mortem, checks that a builder could plan from the document alone, splits the approach into parts with an estimate, gets the maintainer's approval, and files the parts as issues through `/claude-tweaks:specify`. Every step is saved in one folder as it happens, so a lost session resumes from the files.
 
 Lifecycle: **`/claude-tweaks:design`** → `/claude-tweaks:specify` — the entry for an order; the full chain is in `/claude-tweaks:help`.
 
@@ -19,7 +19,7 @@ Lifecycle: **`/claude-tweaks:design`** → `/claude-tweaks:specify` — the entr
 Not for:
 - A single small fix — `/superpowers:brainstorming`, then `/claude-tweaks:specify`
 - Visual polish or screen design on its own — `/claude-tweaks:design-wrapper`
-- Building anything. This skill ends after the builder check and never starts a build.
+- Building anything. This skill ends once the parts are filed and never starts a build.
 
 ## Input
 
@@ -36,7 +36,7 @@ The maintainer may also name, at start, the repository that holds most of the or
 
 ## Session folder and resume
 
-The session's folder is `docs/superpowers/specs/{YYYY-MM-DD}-{slug}/` in the repository, holding `evidence.md`, `design.md`, `storyboard.{ext}` and `notes-round-{N}.md`. The skill writes nothing outside it, and never creates a worktree or a branch.
+The session's folder is `docs/superpowers/specs/{YYYY-MM-DD}-{slug}/` in the repository, holding `evidence.md`, `design.md`, `storyboard.{ext}` and `notes-round-{N}.md`. The skill writes nothing outside it except step 10, which files issues and commits through `/claude-tweaks:specify`, and never creates a worktree or a branch.
 
 1. `{repo root}` is `git rev-parse --show-toplevel` of the current checkout, or the absolute path of the local checkout the maintainer named.
 2. **Worktree gate, before the first write.** Read `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values worktree-always` (it reads the current directory's project; for a named other repository, read `{repo root}/.claude-tweaks/policy.yml` for the same keys the hook reads: its `worktree-always:` line, or when that line is absent its legacy `worktree.always:` line; both absent means `false`; unlike the hook, which treats any value other than `true` as off, a value other than `true` or `false` counts as `true`, so the gate fails closed). When it is `true` and the checkout is the main checkout, not a linked worktree — `git -C "{repo root}" rev-parse --git-dir` prints the same as `git -C "{repo root}" rev-parse --git-common-dir` — stop. Tell the maintainer to start the session inside a worktree (`/superpowers:using-git-worktrees`) and run `/claude-tweaks:design {argument}` again: the `worktree-always` gate would refuse the write.
@@ -53,15 +53,21 @@ The session's folder is `docs/superpowers/specs/{YYYY-MM-DD}-{slug}/` in the rep
    node "${CLAUDE_PLUGIN_ROOT}/bin/design-session.js" status --folder "{folder}"
    ```
 
-   It prints `steps`, `resumeAt`, `round`, `action` and `openSerious`. Exit 2 → stop and show stderr.
+   It prints `steps`, `resumeAt`, `round`, `action` and `openSerious`. Exit 2 → stop and show stderr. When the session knows this checkout's `owner/name` — the cloud session's repository, or the one step 10 passed to `check-approval` — add `--repository {owner/name}` to this and every later `status` call: a part marked `left for` that repository keeps step 10 open, and without the flag `status` reads the repository from the origin, so an origin that names none counts every `left for …` mark as marked.
+
+   `resumeAt: 'complete'` with a non-empty `unresolvedLeftFor` means no repository resolved while parts are marked `left for` those repositories, so this may be one of them with nothing filed yet. Before telling the maintainer the session is finished, get this checkout's `owner/name` (`gh repo view --json nameWithOwner -q .nameWithOwner`, or ask the maintainer) and run `status` again with it, then follow that output:
+
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/bin/design-session.js" status --folder "{folder}" --repository {owner/name}
+   ```
 5. **Session model check** (`## Model`, The session) — every start, whatever step `status` resumes at, before going on.
-6. Continue at `resumeAt`, in the mode `action` names, and load only that step's sub-file (`## Steps`). `resumeAt: 'complete'` → say the session is finished and render `## Next Actions`; nothing is rewritten.
+6. Continue at `resumeAt`, in the mode `action` names, and load only that step's sub-file (`## Steps`). `resumeAt: 'complete'` with no `unresolvedLeftFor` → say the session is finished and render `## Next Actions`; nothing is rewritten.
 
 Run `status` again after each step finishes, and follow it; never pick the next step by hand.
 
-The folder is uncommitted until the maintainer commits it, and a later session resumes it only from the same checkout. Say both when the session starts and when it ends.
+Until step 10's `/claude-tweaks:specify` run commits it, the folder is uncommitted, and a later session resumes it only from the same checkout. Say both when the session starts, and again when it stops before step 10.
 
-`design.md` opens with `# {topic} — design` and holds its sections in this order: `## Frame`, `## Storyboard`, `## Perspectives`, `## Approaches`, `## Pre-mortem`, `## Builder check`, `## Decisions`. A new section goes in its place in that order, before `## Decisions`, which is created with the first decision and stays last. Each step's section starts with a `Status: in-progress` line right under its heading while the step runs, set to `Status: done` only when the step is finished.
+`design.md` opens with `# {topic} — design` and holds its sections in this order: `## Frame`, `## Storyboard`, `## Perspectives`, `## Approaches`, `## Pre-mortem`, `## Builder check`, `## Parts`, `## Approval`, `## Filing`, `## Decisions`. A new section goes in its place in that order, before `## Decisions`, which is created with the first decision and stays last. Each step's section starts with a `Status: in-progress` line right under its heading while the step runs, set to `Status: done` only when the step is finished.
 
 ## Model
 
@@ -106,21 +112,25 @@ Load only the sub-file of the step `status` resumes at, from this skill's direct
 | 5. Alternatives | `step-5-alternatives.md` | `## Approaches` | its `Status: done` |
 | 6. Pre-mortem | `step-6-pre-mortem.md` | `## Pre-mortem` | its `Status: done` |
 | 7. Builder check | `step-7-builder-check.md` | `## Builder check` | its `Status: done` |
+| 8. Parts | `step-8-parts.md` | `## Parts` | its `Status: done`, and `parts` exits 0 |
+| 9. Approval | `step-9-approve.md` | `## Approval` | its `Status: done`, and `check-approval` exits 0 |
+| 10. Filing | `step-10-file.md` | `## Filing`, issue marks | its `Status: done`, and every part marked, none `left for` this repository |
+
+To change an approved frame, approach or part, first run step 9's approval rule (`step-9-approve.md`): set the Approval section back to `Status: in-progress` and remove its `Approved:` line, make the change, then run step 9 again.
 
 The readers' briefs live in `reader-briefs.md`; the `brief` command composes each reader's prompt from it and the folder's files.
 
 ## Next Actions
 
-After step 7, or when `status` prints `resumeAt: 'complete'`, render as plain markdown (docs/skill-authoring.md's Skill handoffs convention), with `{design.md path}` the repository-relative path of the session's `design.md`:
+After step 10, or when `status` prints `resumeAt: 'complete'`, render only the resume line as plain markdown (docs/skill-authoring.md's Skill handoffs convention), since `/claude-tweaks:specify` already rendered the flow commands for the filed parts:
 
-**`/claude-tweaks:specify {design.md path}`** — shape the design into records (recommended)
 `/claude-tweaks:design {argument}` — resume or reread this session later, from the same checkout
 
-When the session stops early (a step-down, a stop at the round cap, the worktree gate), render only the resume line. A `limit` gap recorded in `## Decisions` is not a stop: it renders both lines.
+When the session stops early (a step-down, a stop at the round cap, the worktree gate, a refused approval), render the same line. A `limit` gap recorded in `## Decisions` is not a stop: the session goes on to step 8.
 
 ## Component-Skill Contract
 
-`/claude-tweaks:design` is standalone and human-present: no skill or pipeline invokes it, so there is no `PIPELINE_RUN_DIR` signal to check, and `## Next Actions` always renders. It is never run unattended: every step waits on the maintainer.
+`/claude-tweaks:design` is standalone and human-present: no skill or pipeline invokes it, so there is no `PIPELINE_RUN_DIR` signal to check, and `## Next Actions` always renders. Step 10 invokes `/claude-tweaks:specify` with the Skill tool; that is the only skill this one calls. It is never run unattended: every step waits on the maintainer.
 
 ## Anti-Patterns
 
@@ -130,5 +140,6 @@ When the session stops early (a step-down, a stop at the round cap, the worktree
 | Lowering a reader's tier on a step-down, or dispatching it on another profile | The readers' judgment is the point of the round; a quiet step-down hands the maintainer weaker notes that look the same |
 | Starting a fifth round | Four rounds is the cap; after the fourth the open serious notes go to the maintainer |
 | Passing conversation, evidence or decisions to a reader | A reader that inherits the session's framing confirms it; the `brief` output is its whole prompt |
+| Changing the frame, approach or parts after approval without a new approval | The filed issues stop matching what the maintainer approved — the problem this step exists to close |
 | Going on while a note has no outcome | An undecided note is a design question left for the builder to guess |
-| Writing outside the folder, creating a worktree or a branch, creating an issue, committing, or starting to build | The session owns one folder and nothing else; shaping, filing and building are later skills' work |
+| Writing outside the folder, creating a worktree or a branch, creating an issue or committing outside step 10, or starting to build | The session owns one folder and nothing else; shaping, filing and building are later skills' work |

@@ -12,6 +12,8 @@ session-scoped temp path below resolves per `_shared/session-tmp-root.md` — ci
 
 **Only sub-issues get `ready`** — and only sub-issues carry `risk:*`/`size:*` scoring; a kept parent gets neither. One per work unit from Step 2, in any order — Step 4 does the linking once every number exists, so creation order doesn't matter.
 
+**No `ready` on a symbolic blocker.** On an approved parts list (`decomposition-mode.md` Step 2), a sub-issue whose blockers include a `symbolic` one, a part left for another repository and written `Blocked by: {ref}`, is created without `ready`: no blocker surface reads that line, so `ready` would show the sub-issue unblocked. Drop `--label ready` from its create call and pass `ready: false` in its payload; under `local-files`, leave `stage: 'ready'` out of its facets. The later repository's run restores `ready` when it writes the `owner/name#N` form (`decomposition-mode-closeout.md` Step 4).
+
 **Fresh manifest for this invocation.** Once, before the per-work-unit loop below processes its first unit, reset the batch manifest that Accumulate this unit (below) appends to. That file is session-scoped, so without this reset a second decomposition in the same session — or a resumed one, whose loop re-accumulates every unit including Idempotency-resolved ones — would carry earlier entries into this batch's cross-reference pass (`crossReferenceKeyFiles`) and Ceremony tally, which both read it:
 
 ```bash
@@ -34,7 +36,7 @@ Deliverable-name-collisions section owns the check and the grep.
 
 **Type** — when Step 2.6 kept a parent, matches it (`feature`). Under collapse there is no parent to match: derive the type from the unit itself (`feature` for a new capability or enhancement), and when shaping the origin in place (carve-out above), keep the origin record's existing type unless the unit's own content contradicts it. Either way, a unit that is clearly a defect fix (a bug report, a regression, broken behavior) overrides to `bug`.
 
-**Scoring** — judge each sub-issue's `risk` and `size` (low/medium/high each) from its own Deliverables and Acceptance Criteria — blast radius and reversibility for `risk`, estimated size and file spread for `size` — per `_shared/work-record.md`'s Scoring axis, run once per sub-issue. The tiers become `$SUB_ISSUE_RISK`/`$SUB_ISSUE_SIZE` below.
+**Scoring** — judge each sub-issue's `risk` and `size` (low/medium/high each) from its own Deliverables and Acceptance Criteria — blast radius and reversibility for `risk`, estimated size and file spread for `size` — per `_shared/work-record.md`'s Scoring axis, run once per sub-issue. The tiers become `$SUB_ISSUE_RISK`/`$SUB_ISSUE_SIZE` below. On an approved parts list (`decomposition-mode.md` Step 2), `$SUB_ISSUE_SIZE` is the part's `size` without its `size:` prefix, taken, not judged; `risk` is still judged.
 
 **Premise verification (#1769)** — run `_shared/premise-verification.md`'s check against this sub-issue's composed `## Current State`/`### Key Files` before Ceremony/Framing below: a contradicted claim is rewritten to what the tree shows now, before `gh issue create` / `writeRecord`; an unsettled or genuinely unverifiable one moves into a `## Gotchas` bullet carrying the literal `ASSUMPTION — verify at build:` prefix. Probes the checkout this decomposition is standing in, not `main`.
 
@@ -61,6 +63,8 @@ UNIT_SLUG=$(node -e "const fs=require('fs');
 ```
 
 Reuse this same `$UNIT_SLUG` value below for both the fingerprint and, under `work-backend: local-files`, the record's own slug — do not re-derive it separately at write time.
+
+On an approved parts list, `$UNIT_SLUG` is the part's `slug`, taken, not derived, so the fingerprint carries it. Under `work-backend: local-files` the record file's own slug still comes from `deriveSlug(part slug, existingSlugs)` (the fence above, with the part's `slug` in place of `$SUB_ISSUE_TITLE`), passed to `createRecord` in place of `$UNIT_SLUG`: a part whose slug an existing local record already holds gets a suffixed file name while its fingerprint keeps the part slug, since resume matches on the fingerprint, never the file name.
 
 **Fingerprint** — `{design-doc-slug}:{unit-slug}` (`$UNIT_SLUG` from Slug derivation, above), the sub-issue half of the deterministic scheme the Idempotency section above defines.
 

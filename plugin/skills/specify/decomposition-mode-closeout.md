@@ -19,13 +19,15 @@ When Step 2.6 kept the parent, records are created **parent-first**: the parent'
 
 ## Step 4: Link and order
 
-Every record this run is going to create now has a number (a parent's, under a kept parent; every unit's own, under collapse). This pass wires the relationships between them and absorbs the last of the design doc's context, before Step 7 deletes it. Read `record-creation-linking.md` in this skill's directory (#1346's split of `record-creation.md`) for the full procedure: Linking (branches on driver and `work-links`), and Decision Rationale / Assumptions / Cross-Spec Promises absorption.
+Every record this run is going to create now has a number (a parent's, under a kept parent; every unit's own, under collapse). This pass wires the relationships between them and absorbs the last of the design doc's context, before Step 7 (on the approved branch the design folder is kept, never deleted) deletes it. Read `record-creation-linking.md` in this skill's directory (#1346's split of `record-creation.md`) for the full procedure: Linking (branches on driver and `work-links`), and Decision Rationale / Assumptions / Cross-Spec Promises absorption.
+
+**Approved parts list (Step 2's approved branch) — write back the earlier repositories' symbolic blockers.** After linking, for each `filing.writeBack` entry `{ issue, waitsOn, line }`, replace the entry's `line`, the exact text the earlier run wrote, in that issue's body with `Blocked by {thisRepository}#{N}` (`{N}` the sub-issue this run filed for `waitsOn`). That issue was created without `ready` because of its symbolic line: once all its entries are replaced, add `ready` back only when no other `Blocked by: … (left for …)` line remains in its body and the body carries no `<!-- ambiguity:` marker or `## Open Questions` heading; an issue this check keeps without `ready` is named in Step 9's summary with its number and the reason. Under `github-issues` that is one `gh issue view {n} --repo {owner/name} --json body` read and one `gh issue edit {n} --repo {owner/name} --body-file` write per issue (with `--add-label ready` when `ready` comes back), the body composed whole and written once; `{n}` and `{owner/name}` come from the entry's `issue`. A line that is not there is left alone and named in Step 9's summary. Under `local-files` there is no other repository's store to edit, so each entry is listed in Step 9's summary instead, with the `ready` it would restore.
 
 ---
 
 ## Step 5: Multi-Persona Red-Team
 
-Before deleting the design doc, dispatch persona-instantiated agents in one parallel batch per sub-issue record — not the parent, which is never built directly — to surface ambiguities, gaps, and unstated assumptions. **Persona count depends on the sub-issue's own `ceremony:*` label** (stamped in Step 3): `ceremony:fast-lane` dispatches **one** persona (Skeptical Reviewer only); `ceremony:standard` dispatches all **three** (Implementer / Maintainer / Skeptical Reviewer), unchanged from before. See `red-team.md` for which persona(s) to dispatch for each tier.
+Before deleting the design doc (on the approved branch the design folder is kept, never deleted), dispatch persona-instantiated agents in one parallel batch per sub-issue record — not the parent, which is never built directly — to surface ambiguities, gaps, and unstated assumptions. **Persona count depends on the sub-issue's own `ceremony:*` label** (stamped in Step 3): `ceremony:fast-lane` dispatches **one** persona (Skeptical Reviewer only); `ceremony:standard` dispatches all **three** (Implementer / Maintainer / Skeptical Reviewer), unchanged from before. See `red-team.md` for which persona(s) to dispatch for each tier.
 
 **Freshly-created sub-issues only.** Skip this dispatch for a sub-issue resumed via Step 3's Idempotency map whose fetched body already shows zero unresolved `<!-- ambiguity: -->` markers and no `## Open Questions` section — that sub-issue completed red-team and self-review in a prior run, and re-dispatching would duplicate findings against content already resolved. Dispatch normally for every sub-issue actually created in this run, and for any resumed sub-issue that still carries unresolved markers or an open `## Open Questions` table from an interrupted prior run.
 
@@ -39,7 +41,7 @@ Read `red-team.md` in this skill's directory for the dispatch prompt (Template A
 
 ## Step 6: Record Self-Review
 
-Before deleting the design doc, look at every record you wrote with fresh eyes — including the red-team findings just written in Step 5. Fix issues inline — no subagent, no separate review pass. This is also the last chance to catch content the design doc captured but no sub-issue implements.
+Before deleting the design doc (on the approved branch the design folder is kept, never deleted), look at every record you wrote with fresh eyes — including the red-team findings just written in Step 5. Fix issues inline — no subagent, no separate review pass. This is also the last chance to catch content the design doc captured but no sub-issue implements.
 
 "Wrote" means created or edited in this run. A sub-issue resumed via Step 3's Idempotency map, skipped by Step 5 (already clean), and unedited this run needs no fresh pass — its prior run completed one. Scope checks 1-5 below to sub-issues this run created, plus any resumed one Step 5 dispatched against or Step 4's linking edited.
 
@@ -47,9 +49,9 @@ Before deleting the design doc, look at every record you wrote with fresh eyes �
 
 1. **Placeholder scan** — search for the failure patterns in `spec-template.md`'s "No Placeholders" section, over every record body (every sub-issue, plus the parent when Step 2.6 kept one). Any `TBD`, vague acceptance criteria, undefined types, "standard error handling", or "similar to sub-issue N" — fix them now. Also confirm every `<!-- ambiguity: ... -->` marker Step 5's red-team wrote has been resolved and **deleted**, with one exception: a marker whose finding Step 5 staged for the Review Console stays — that sub-issue's `ready` is already cleared, and its resolution is the console's decision, not this step's. On every sub-issue that remains `ready`, zero may remain: a `ready` sub-issue still carrying one fails `_shared/work-record.md`'s spec-shaped structural check, which treats `<!-- ambiguity:` as an unresolved placeholder marker exactly like `TBD`/`TODO`.
 2. **Internal consistency** — across the sub-issues in this decomposition, do referenced types, model names, and endpoint signatures match? A function called `clearLayers()` in sub-issue 42 but `clearFullLayers()` in sub-issue 43 is a bug.
-3. **Scope check** — is each sub-issue genuinely a single work unit (3-8 tasks)? If one is doing two things, split it now. If two are doing the same thing, merge them.
+3. **Scope check** — is each sub-issue genuinely a single work unit (3-8 tasks)? If one is doing two things, split it now. If two are doing the same thing, merge them. On the approved branch this check does not apply to approved parts: a scope concern on a part goes through `decomposition-mode.md`'s no-gate rule, which the dispatch prompt's `Approved parts` line states, and the part stays as approved.
 4. **Ambiguity check** — could any acceptance criterion be interpreted two different ways? Pick one and make it explicit.
-5. **Design-doc coverage** — re-read the design doc with each sub-issue open. If you find a requirement the doc captured but no sub-issue implements, add it to the right sub-issue now — the doc is about to be deleted in Step 7.
+5. **Design-doc coverage** — re-read the design doc with each sub-issue open. If you find a requirement the doc captured but no sub-issue implements, add it to the right sub-issue now — the doc is about to be deleted in Step 7 (kept on the approved branch).
 
 When all five checks come back clean, proceed to Step 7. No need to re-review after fixing.
 
@@ -65,10 +67,19 @@ The design doc has served its purpose **once every phase has been decomposed int
 
 | Decomposition mode | Delete design doc? |
 |---|---|
+| Approved parts list (Step 2's approved branch) | **No** — the design folder is kept, since it holds the evidence and the notes. Mark each part this run filed `{thisRepository}#{N}` and each part in `filing.leftFor` `left for {owner/name}` (never a part in `filing.skipped`): write the marks to a session temp JSON file with the Write tool and run `mark-filed`; Step 9's `git add` stages the marked `design.md`. |
 | No `phase-N` argument; doc has 0 phase sections (single-phase) | Yes — fully consumed |
 | No `phase-N` argument; doc has N phase sections; all decomposed in this run | Yes — fully consumed |
 | `phase-N` argument; only that phase decomposed | **No** — design doc retained for remaining phases. Add a `## Phase N: Specified` marker after the phase heading instead, listing the record numbers it produced. |
 | `phase-N` argument; this was the last un-specified phase | Yes — fully consumed (run delete after marker bookkeeping confirms all phases marked) |
+
+The marks file is one JSON object, `{ "{part name}": "{owner/name}#{N}" | "left for {owner/name}" }` (`{N}` the numeric record id under `local-files`); each mark names the part's own repository. The file is written at the path `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value design-marks.json` prints, then:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/design-session.js" mark-filed --folder "{folder}" --marks "{marks file}"
+```
+
+Exit 1 (an unknown or conflicting mark) writes nothing: fix the marks and rerun. Exit 2 is a bad marks file or a symlinked `design.md`: stop and show stderr. The `git rm` block below does not run on this branch, and Step 7 makes no commit of its own: Step 9's commit stages the marked `design.md`.
 
 ```bash
 # Full decomposition (all phases or single-phase):
@@ -105,6 +116,9 @@ Present a summary. The `Collapse outcome` line below renders in every decomposit
 ### Artifacts Removed
 - Design doc: `docs/superpowers/specs/{filename}` (absorbed into the records this run produced)
 
+### Left for another repository (optional — render only on the approved branch, when `filing.leftFor` is not empty)
+- {part name} — left for {owner/name}; copy the design folder, as this step commits it, into that repository's checkout and rerun `/claude-tweaks:design {argument}` there: it resumes at step 10
+
 ### Teardown (optional — render only when the check below finds the branch net-empty)
 {one paste-ready line, see below}
 
@@ -116,6 +130,8 @@ Present a summary. The `Collapse outcome` line below renders in every decomposit
 |--------|-------------|----------------------|
 | {ref} | {the whole `<!-- ambiguity: ... -->` comment, or the whole `## Open Questions` table row, verbatim — never just the flagged sentence, which leaves the marker behind} | {the resolution the red-team persona proposed, or "—" if none was proposed} |
 ```
+
+**Under the approved branch** (`{argument}` is `check-approval`'s `designSlug` with each `-` read as a space, which slugs back to the same design folder) the summary's Artifacts line reads `Design folder kept: {path} (parts marked filed)` in place of `### Artifacts Removed`, and the Actions Performed row `Deleted design doc` reads `Marked design folder`. The `### Left for another repository` block lists each part in `filing.leftFor` with its repository and the rerun line `/claude-tweaks:design {argument}` (in that repository's checkout, from a copy of the folder as this step commits it; its `status` reads that repository, finds the part marked `left for` it and resumes at step 10), and the summary also names each `filing.writeBack` line Step 4 did not find, each issue whose `ready` Step 4 kept off (`{owner/name}#{n} — ready stays off: {an ambiguity marker | an Open Questions heading | another left-for line} remains`), and under `local-files` each entry it listed instead of editing. With an empty `filing.file` the summary says nothing was filed here and lists the left and skipped parts.
 
 **Resolving a `### Staged for caller` row.** Decide the resolution (an `AskUserQuestion` call or your own judgment), then apply it with `bin/resolve-ambiguity.js`, one row at a time, since each row re-fetches the body the previous one wrote. `{n}` below is the bare issue number: `#{n}` would start a bash comment.
 
@@ -137,7 +153,7 @@ RA_OUT="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value resolv
 node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-ambiguity.js" "$RA_BODY" --marker-file "$RA_MARKER" --resolution-file "$RA_RESOLUTION" --out "$RA_OUT" && gh issue edit {n} --body-file "$RA_OUT"
 ```
 
-Exit 3 means the text is not in the body, or occurs more than once: nothing was written and the `&&` skips the write-back, so re-read the body and pass the whole comment or row. Exit 2 is a malformed call or an unreadable or unwritable file. Add `ready` back (`gh issue edit {n} --add-label ready`) only when the CLI printed `"readyRestorable":true`, meaning the body passes the spec-shaped check `ready` asserts (`_shared/work-record.md`) and no `## Open Questions` heading is left. The CLI is a pure local transform: without `gh`, fetch and write back with the MCP `issue_read`/`create_or_update_file` equivalents, and under `local-files` copy the record's body (`local-store.js`'s `readRecord`) into `$RA_BODY`, then write the CLI's output back with `writeRecord`, setting `facets.stage` to `ready` in that same call only when `readyRestorable` is `true` (the mirror of how `red-team.md`'s step 5 cleared it).
+Exit 3 means the text is not in the body, or occurs more than once: nothing was written and the `&&` skips the write-back, so re-read the body and pass the whole comment or row. Exit 2 is a malformed call or an unreadable or unwritable file. Add `ready` back (`gh issue edit {n} --add-label ready`) only when the CLI printed `"readyRestorable":true`, meaning the body passes the spec-shaped check `ready` asserts (`_shared/work-record.md`), no `## Open Questions` heading is left, and no `Blocked by: … (left for …)` line remains (a part left for another repository keeps `ready` off until that repository's run rewrites the line). The CLI is a pure local transform: without `gh`, fetch and write back with the MCP `issue_read`/`create_or_update_file` equivalents, and under `local-files` copy the record's body (`local-store.js`'s `readRecord`) into `$RA_BODY`, then write the CLI's output back with `writeRecord`, setting `facets.stage` to `ready` in that same call only when `readyRestorable` is `true` (the mirror of how `red-team.md`'s step 5 cleared it).
 
 `{ref}` is `#{N}` under `work-backend: github-issues`, the bare record id under `local-files` — same convention as Step 1's Overlap Analysis (`overlap-resolution.md`).
 
@@ -155,10 +171,10 @@ When `$ORIGIN_RECORD_NUM` is unset (every other entry path — cases 2-5), this 
 | Operational | {parent kept: "Created parent record {parent-ref} + {N} sub-issue records"} / {2-unit collapse: "Created 2 independent records (no parent), cross-linked via `**Related:**` — {ref1}, {ref2}"} / {1-unit collapse, `$ORIGIN_RECORD_NUM` set: "Shaped origin record {ref} in place (no new record created)"} / {1-unit collapse, `$ORIGIN_RECORD_NUM` unset: "Created 1 standalone ready record (no parent) — {ref}"} | `{hash}` (local-files) / `—` (github-issues — creates already landed via API, no commit) |
 | Operational | Deleted design doc | `{hash}` |
 
-**Commit whatever this run wrote to disk — the skill's terminal action, run whether or not anything ends up staged.** This covers only artifacts that are files: the design-doc deletion/marker from Step 7, and — under `work-backend: local-files` — the sub-issue record files (plus the parent's, when Step 2.6 kept one) plus Step 4's linking edits, composed and written across Steps 3-4 but not yet committed. A clean `github-issues` run has nothing to commit for the records themselves — every create and edit already landed via the API in Steps 3-5, the same no-commit case Shaping mode documents — **except** any sub-issue (or the whole batch, if a kept parent itself fell back) that Step 3's write-path resilience wrote to `local-store.js` after a `gh` failure; that file needs this commit exactly like a `local-files` record does. A full (non-`phase-N`) decomposition may therefore have nothing staged beyond the design doc's `git rm`; a `phase-N` run already committed its own marker back in Step 7, so it may have nothing staged at all. None of this affects durability — a sub-issue is durable the moment its create/write call lands, not when this step commits it. What used to be true of spec files no longer applies: sub-issues don't need to exist in committed history before a pipeline can run them; `/claude-tweaks:flow #N` (or a local record id) materializes a sub-issue into a build-time file only when a pipeline actually runs it (spec 20's contract), independent of this commit.
+**Commit whatever this run wrote to disk — the skill's terminal action, run whether or not anything ends up staged.** This covers only artifacts that are files: the design-doc deletion/marker from Step 7 (on the approved branch, the marked `design.md`), and — under `work-backend: local-files` — the sub-issue record files (plus the parent's, when Step 2.6 kept one) plus Step 4's linking edits, composed and written across Steps 3-4 but not yet committed. A clean `github-issues` run has nothing to commit for the records themselves — every create and edit already landed via the API in Steps 3-5, the same no-commit case Shaping mode documents — **except** any sub-issue (or the whole batch, if a kept parent itself fell back) that Step 3's write-path resilience wrote to `local-store.js` after a `gh` failure; that file needs this commit exactly like a `local-files` record does. A full (non-`phase-N`) decomposition may therefore have nothing staged beyond the design doc's `git rm`; a `phase-N` run already committed its own marker back in Step 7, so it may have nothing staged at all. None of this affects durability — a sub-issue is durable the moment its create/write call lands, not when this step commits it. What used to be true of spec files no longer applies: sub-issues don't need to exist in committed history before a pipeline can run them; `/claude-tweaks:flow #N` (or a local record id) materializes a sub-issue into a build-time file only when a pipeline actually runs it (spec 20's contract), independent of this commit.
 
 ```bash
-git add specs/ docs/   # local-files driver: record files (sub-issues + any kept parent) + link edits; docs/: design-doc removal/marker
+git add specs/ docs/   # local-files driver: record files (sub-issues + any kept parent) + link edits; docs/: design-doc removal/marker, or the marked design.md on the approved branch
 git status --porcelain   # empty is a valid outcome (github-issues, or a phase-N run) — commit only if something is staged
 git commit -m "{message describing the sub-issues created}"   # skip when nothing is staged
 git log --oneline -1   # verify it landed when a commit was made (see _shared/git-discipline.md)

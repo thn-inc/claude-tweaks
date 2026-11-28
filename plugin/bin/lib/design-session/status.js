@@ -7,15 +7,25 @@ const path = require('path');
 const { checkEvidence } = require('./evidence');
 const { MAX_ROUNDS, STATUS_RE, roundSettled, lastNotesRound } = require('./notes');
 const { sectionLines, sectionField } = require('./design-md');
+const {
+  parseParts, checkApproval, leftForRepository, sameRepository, PARTS_HEADING, APPROVAL_HEADING, FILING_HEADING,
+} = require('./parts');
 
 // design.md section headings by step number; step 1 is evidence.md. Adding a
-// step is one row here: STEPS and the per-step loop below derive from it.
-const SECTIONS = { 2: 'Frame', 3: 'Storyboard', 4: 'Perspectives', 5: 'Approaches', 6: 'Pre-mortem', 7: 'Builder check' };
+// step is one row here: STEPS and the per-step loop below derive from it. Steps
+// 8-10 also carry a content check, applied after the loop (like the storyboard file).
+const SECTIONS = {
+  2: 'Frame', 3: 'Storyboard', 4: 'Perspectives', 5: 'Approaches', 6: 'Pre-mortem', 7: 'Builder check',
+  8: PARTS_HEADING, 9: APPROVAL_HEADING, 10: FILING_HEADING,
+};
 const EVIDENCE_STEP = 1;
 const STEPS = [EVIDENCE_STEP, ...Object.keys(SECTIONS).map(Number)];
 // The two steps of the storyboard <-> perspectives loop.
 const STORYBOARD_STEP = 3;
 const PERSPECTIVES_STEP = 4;
+const PARTS_STEP = 8;
+const APPROVAL_STEP = 9;
+const FILING_STEP = 10;
 
 // 'done' | 'partial' (in-progress, or no status line) | 'missing'.
 function sectionStatus(designText, heading) {
@@ -60,8 +70,15 @@ function plain(step, state) {
   return { resumeAt: step, round: null, action: state === 'partial' ? 'continue' : 'start', openSerious: [] };
 }
 
-// -> { steps: {1..7}, resumeAt: 1..7|'complete', round, action, openSerious }
-function readStatus(folder, fsImpl = fs) {
+// -> { steps: {1..10}, resumeAt: 1..10|'complete', round, action, openSerious[, unresolvedLeftFor] }
+// `repository` is `() => 'owner/name' | null`, this checkout's repository. It is
+// called at most once, and only when `## Filing` is done and a part is marked
+// `left for …`: a part marked `left for` that repository is still to file here,
+// so step 10 is not done. With no resolver, or one that returns null, every
+// `left for …` mark counts as marked, and a complete session says so: it
+// carries `unresolvedLeftFor`, the distinct repositories those marks name, in
+// the table's spelling, so the caller can ask again with a repository.
+function readStatus(folder, fsImpl = fs, { repository } = {}) {
   const steps = {};
 
   const evidence = readOrNull(path.join(folder, 'evidence.md'), fsImpl);
@@ -84,6 +101,32 @@ function readStatus(folder, fsImpl = fs) {
     if (!present) steps[STORYBOARD_STEP] = 'partial';
   }
 
+  // Steps 8-10 count only when the table parses clean, the approval's digest
+  // matches it, and every part carries an Issue mark (`left for …` counts,
+  // unless it names this checkout's repository).
+  let reapprove = false;
+  let unresolvedLeftFor = [];
+  if (designText !== null) {
+    const parsed = parseParts(designText);
+    if (steps[PARTS_STEP] === 'done' && (!parsed.present || parsed.errors.length)) steps[PARTS_STEP] = 'partial';
+    if (steps[APPROVAL_STEP] === 'done' || steps[FILING_STEP] === 'done') {
+      const verdict = checkApproval(designText);
+      if (!verdict.approved) {
+        reapprove = verdict.reason === 'digest-mismatch';
+        if (steps[APPROVAL_STEP] === 'done') steps[APPROVAL_STEP] = 'partial';
+      }
+    }
+    if (steps[FILING_STEP] === 'done' && (!parsed.parts.length || parsed.parts.some((p) => p.issue === null))) {
+      steps[FILING_STEP] = 'partial';
+    }
+    const leftFor = parsed.parts.map((p) => p.issue && leftForRepository(p.issue)).filter(Boolean);
+    if (steps[FILING_STEP] === 'done' && leftFor.length) {
+      const here = typeof repository === 'function' ? repository() : null;
+      if (here && leftFor.some((r) => sameRepository(r, here))) steps[FILING_STEP] = 'partial';
+      if (!here) unresolvedLeftFor = leftFor.filter((r, i) => leftFor.findIndex((s) => sameRepository(s, r)) === i);
+    }
+  }
+
   // R = highest notes round within the cap; a file past the cap is never a
   // round to resume.
   const R = lastNotesRound(listOrEmpty(folder, fsImpl));
@@ -98,7 +141,14 @@ function readStatus(folder, fsImpl = fs) {
   }
 
   const first = STEPS.find((n) => steps[n] !== 'done');
-  if (first === undefined) return { steps, resumeAt: 'complete', round: null, action: null, openSerious: [] };
+  if (first === undefined) {
+    const complete = { steps, resumeAt: 'complete', round: null, action: null, openSerious: [] };
+    return unresolvedLeftFor.length ? { ...complete, unresolvedLeftFor } : complete;
+  }
+  // An approval whose digest no longer matches the table is asked for again.
+  if (first === APPROVAL_STEP && reapprove) {
+    return { steps, resumeAt: APPROVAL_STEP, round: null, action: 'reapprove', openSerious: [] };
+  }
   // Loop-exit guard: outside the storyboard/perspectives pair, or once Perspectives
   // is really closed, resume is a plain start/continue of the first open step.
   if (first > PERSPECTIVES_STEP || first < STORYBOARD_STEP || steps[PERSPECTIVES_STEP] === 'done') {
