@@ -26,6 +26,7 @@ const { probeSchemaStrict } = require('../issues/capabilities-probe');
 const recordSnapshot = require('../issues/record-snapshot');
 const { enrichRecords, ghTimeoutFor, warningLine } = require('../issues/author-association');
 const { foreignBlockerBlocks } = require('../issues/record-dependencies');
+const { hasSymbolicBlocker } = require('../issues/blocker-lines');
 const { bodyForeignBlockers } = require('../issues/cross-repo-states');
 
 const CANDIDATE_FIELDS = 'number,title,body,labels,createdAt';
@@ -53,8 +54,9 @@ function withoutForeignBlockers(candidates, foreignByRecord) {
 // (issues, openNumbers, foreignByRecord?) -> candidates surviving refine-headless.md
 // Step 1's cheap pre-pass: agent-filed origin, no existing grant, not already
 // claimed, no open 'Blocked by #N', and no open-or-unreadable body-declared
-// foreign blocker ('Blocked by owner/name#N'). `foreignByRecord` is the
-// precomputed Map<number, [{number, repository, state}]> from
+// foreign blocker ('Blocked by owner/name#N'), and no symbolic blocker
+// ('Blocked by: {part} (left for owner/name)', #6374 — always holds, no state to
+// look up). `foreignByRecord` is the precomputed Map<number, [{number, repository, state}]> from
 // bodyForeignBlockers (computeOutlook builds it, keeping this function pure).
 // It is required (pass `new Map()` for "no foreign refs yet"): a default of "no rule"
 // would fail open for a caller that forgot it, so a missing or non-Map value throws.
@@ -66,7 +68,8 @@ function filterCandidates(issues, openNumbers, foreignByRecord) {
     .filter((i) => i.facets.origin !== null)
     .filter((i) => !i.facets.grants.build && !i.facets.grants.merge)
     .filter((i) => !i.facets.bot.inProgress)
-    .filter((i) => parseDependencies(i.body).every((d) => !openNumbers.has(d)));
+    .filter((i) => parseDependencies(i.body).every((d) => !openNumbers.has(d)))
+    .filter((i) => !hasSymbolicBlocker(i.body));
   return withoutForeignBlockers(cheapSurvivors, foreignByRecord);
 }
 

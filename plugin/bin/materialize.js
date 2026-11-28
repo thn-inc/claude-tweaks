@@ -47,6 +47,7 @@ const {
   parseRecordFacets, extractFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, parseDependencies,
 } = require('./lib/issues/record');
 const { parseCrossRepoDependencies } = require('./lib/issues/cross-repo-refs');
+const { symbolicBlockerRefs } = require('./lib/issues/blocker-lines');
 const { riskFromLabels } = require('./lib/model-profiles/implementer-tier');
 const {
   shapeGate, liftMetadata, composeHeader, composeFile, describeDesignIntentError,
@@ -434,7 +435,7 @@ function run(argv, deps = realDeps) {
   if (opts.check) {
     deps.stdout(JSON.stringify({
       record: opts.n, check: 'passed', title: record.title, ceremony: parseRecordFacets(record.labels).ceremony || null, surface: meta.surface || null,
-      bodyBlockedBy: [...parseDependencies(record.body), ...parseCrossRepoDependencies(record.body)], // #4793, Decisions Q7: a foreign-only body still runs 2.7b's call
+      bodyBlockedBy: [...parseDependencies(record.body), ...parseCrossRepoDependencies(record.body), ...symbolicBlockerRefs(record.body)], // #4793, Decisions Q7: a foreign-only body still runs 2.7b's call
     }) + '\n');
     return 0;
   }
@@ -629,7 +630,7 @@ function run(argv, deps = realDeps) {
     ceremony,
     grants: facets.grants,
     fingerprint: extractFingerprint(record.body),
-    blockedBy: [...parseDependencies(record.body), ...parseCrossRepoDependencies(record.body)], // #4793, Decisions Q7: foreign refs as owner/name#N, after this repository's numbers
+    blockedBy: [...parseDependencies(record.body), ...parseCrossRepoDependencies(record.body), ...symbolicBlockerRefs(record.body)], // #4793, Decisions Q7: foreign refs as owner/name#N, after this repository's numbers
     surface: meta.surface,
     designIntent: meta.designIntent,
     uiStack: meta.uiStack,

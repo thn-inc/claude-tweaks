@@ -17,6 +17,7 @@ const { resolvePolicyConfig, parseFlatLines } = require('../policy-schema');
 const { parseManifestYaml } = require('../flow/manifest');
 const { parseDependencies, withoutCrossRepoBlockers, foreignBlockerBlocks, DEFER_REASONS } = require('../issues/record');
 const { parseCrossRepoDependencies, foreignEntries, bodyOnlyForeign, distinctCrossRepoRefs } = require('../issues/cross-repo-refs');
+const { hasSymbolicBlocker } = require('../issues/blocker-lines');
 const { runWithConcurrency } = require('../reconcile/gh-pool');
 const { gateOriginRepo, repoSlug, ghOptions, injectedGhDeps } = require('../repo-resolve');
 const { readRunStateWithParent } = require('../hooks/context');
@@ -684,6 +685,8 @@ function unblockedLocal(inputs, deps, closed) {
   const dir = path.join(inputs.worktree, 'specs');
   const files = deps.readdir(dir).filter((f) => /^\d+-.*\.md$/.test(f));
   const dependents = deps.queryRecords(dir, {})
+    // #6374: a `Blocked by: {part} (left for owner/name)` line names no record to look up, so it holds the dependent.
+    .filter((r) => !hasSymbolicBlocker(r.body))
     .map((r) => ({ number: r.id, title: r.title, blockedBy: (r.facets && r.facets.blockedBy) || [] }))
     .filter((r) => r.blockedBy.includes(closed));
   const isResolved = (id) => {
@@ -885,7 +888,8 @@ function buildProbes(inputs, deps) {
         // looked up twice.
         const candidates = records.filter((r) => {
           const e = byNumber[r.number];
-          return e && withoutCrossRepoBlockers(e.blockedBy, e.crossRepoBlockers).includes(closed) && !e.openBlocker && !(e.crossRepoBlockers || []).some(foreignBlockerBlocks);
+          // #6374: a symbolic blocker line keeps the dependent blocked and is never looked up.
+          return e && !hasSymbolicBlocker(r.body) && withoutCrossRepoBlockers(e.blockedBy, e.crossRepoBlockers).includes(closed) && !e.openBlocker && !(e.crossRepoBlockers || []).some(foreignBlockerBlocks);
         }).map((r) => ({
           item: r,
           // The empty Map is deliberate: foreignEntries only reshapes the body's refs into entries so
@@ -903,6 +907,8 @@ function buildProbes(inputs, deps) {
       // before the closed test, because `parseDependencies` only reads
       // `Blocked by #N`.
       const dependents = records
+        // #6374: a symbolic blocker line keeps the dependent blocked and is never looked up.
+        .filter((r) => !hasSymbolicBlocker(r.body || ''))
         .map((r) => ({ number: r.number, title: r.title, blockedBy: parseDependencies(r.body || ''), foreignRefs: parseCrossRepoDependencies(r.body || '') }))
         .filter((r) => r.blockedBy.includes(closed));
       if (!dependents.length) return [];

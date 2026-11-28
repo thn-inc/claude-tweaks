@@ -5,7 +5,7 @@
 // entries ({number, repository, state}), so record.js's openBlockerRefs /
 // foreignBlockerBlocks / foreignBlockerRef apply to both unchanged.
 //
-// Pure: requires nothing and shells out nowhere — the property
+// Pure: requires only blocker-lines.js and shells out nowhere — the property
 // batching-failure-posture.md names for record-dependencies.js's builders. Code
 // that runs gh lives in its own module. Not re-exported through record.js;
 // consumers require this file directly.
@@ -25,7 +25,7 @@ const GRAPHQL_INT_MAX = 2147483647;
 
 // The owner class starts with an alphanumeric (GitHub's rule), so no ref can begin with '-' and
 // become a leading-'--' argv element when a key is passed to a CLI.
-const CROSS_REPO_DEP_RE = /^Blocked by ([A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9._-]+)#(\d+)\b/gm;
+const { FOREIGN_BLOCKER_LINE_RE: CROSS_REPO_DEP_RE } = require('./blocker-lines');
 const CROSS_REPO_REF_RE = /^([A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9._-]+)#(\d+)$/;
 // Strips only what the parser accepts: the lookbehind covers the repository class too (so a
 // '_' or '.' before the owner means the token is not an owner/name ref), and the trailing \b

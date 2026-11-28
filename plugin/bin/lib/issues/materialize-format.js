@@ -244,6 +244,15 @@ function composeFile({ header, n, title, body }) {
   return `${header}\n# ${n}: ${title}\n\n${body}\n`;
 }
 
+// The authored part of a body — everything before `## Original request`, with
+// fenced blocks and inline code spans stripped — exactly the text shapeGate
+// tests for placeholders. A marker or blocker line quoted in a code span or
+// inherited in the original request is not the record's own.
+function authoredText(body) {
+  const at = originalRequestOffset(body);
+  return stripCodeSpans(at === -1 ? body : body.slice(0, at));
+}
+
 module.exports = {
-  REQUIRED_SECTIONS, PLACEHOLDER_PATTERNS, ORIGINAL_REQUEST_RE, originalRequestOffset, UNCLOSED_FENCE_PREFIX, DESIGN_INTENT_VALUES, sectionText, shapeGate, normalizeDesignIntent, describeDesignIntentError, liftMetadata, composeHeader, composeFile, stripCodeSpans,
+  authoredText, REQUIRED_SECTIONS, PLACEHOLDER_PATTERNS, ORIGINAL_REQUEST_RE, originalRequestOffset, UNCLOSED_FENCE_PREFIX, DESIGN_INTENT_VALUES, sectionText, shapeGate, normalizeDesignIntent, describeDesignIntentError, liftMetadata, composeHeader, composeFile, stripCodeSpans,
 };

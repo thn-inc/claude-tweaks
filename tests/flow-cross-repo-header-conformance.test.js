@@ -16,6 +16,7 @@ const { missingFactsOf, assertEachPatternGoesRed, lineStartingWith } = require('
 
 const MATERIALIZE = readText(path.join(__dirname, '..', 'plugin', 'skills', 'flow', 'materialize.md'));
 
+const DEPENDENCY_ORDERING = readText(path.join(__dirname, '..', 'plugin', 'skills', 'flow', 'multispec-dependency-ordering.md'));
 const MULTI_SPEC = readText(path.join(__dirname, '..', 'plugin', 'skills', 'flow', 'multi-spec.md'));
 const PREFLIGHT_FAILURE = readText(path.join(__dirname, '..', 'plugin', 'skills', 'flow', 'multispec-preflight-failure.md'));
 const PLUGIN_STRUCTURE = readText(path.join(__dirname, '..', 'docs', 'plugin-structure.md'));
@@ -55,7 +56,18 @@ const STRUCTURE_FACTS = [
   [/a failed or `--records-json` lookup exits 0 with a stderr line, every such ref reading `open`\/`cross-repository-state-unreadable`, never exit 1/, 'plugin-structure.md: a failed body-declared state lookup exits 0 with a stderr line, never exit 1'],
 ];
 
+// #6374: the DAG step reads a symbolic `{part} (left for owner/name)` entry as an open out-of-run blocker.
+const DAG_FACTS = [
+  [/A `\{part\} \(left for owner\/name\)` entry names a blocker with no issue yet and adds no edge either; pre-flight reads it as an `open` out-of-run blocker, a STOP/, 'Build the DAG: a symbolic entry never adds an edge and pre-flight reads it as an open out-of-run blocker'],
+];
+
+const STOP_LINE_FACTS = [
+  [/`via: symbolic-blocker` names a part that is not filed yet, so its stop line names `\{blocker\}` exactly as written \(never `\{repository\}#…`\), says the part is not filed yet in `\{repository\}`, and gives the escape: that repository's run files the part and rewrites the line to `Blocked by owner\/name#N`/, 'Symbolic stop line: names {blocker} as written, says the part is not filed yet, and gives the rewrite escape'],
+];
+
 const REGIONS = [
+  ['multispec-dependency-ordering.md', 'symbolic stop line', region(DEPENDENCY_ORDERING, 'An entry with `via: symbolic-blocker`'), STOP_LINE_FACTS],
+  ['multispec-dependency-ordering.md', 'Build the DAG step', region(DEPENDENCY_ORDERING, '1. **Build the DAG**'), DAG_FACTS],
   ['materialize.md', 'blocked-by header bullet', region(MATERIALIZE, '- `blocked-by`'), HEADER_FACTS],
   ['materialize.md', '--check paragraph', region(MATERIALIZE, '**`bin/materialize.js <n> --check'), CHECK_FACTS],
   ['multi-spec.md', 'Prerequisites step', region(MULTI_SPEC, '2. **Prerequisites**'), PREREQUISITES_FACTS],

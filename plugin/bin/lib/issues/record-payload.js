@@ -128,6 +128,19 @@ function recordPayload({ title, body, type, origin, risk, size, ceremony, soluti
     }
   }
 
+  // A symbolic `Blocked by: … (left for owner/name)` line names no issue and no resolvable
+  // state (no native or `#N` blocker exists yet), so `ready` stays off until a later run
+  // rewrites it to `owner/name#N` (#6374): withhold the label and say so in `readyWithheld`
+  // rather than throw. Lazy require: materialize-format.js loads this file, via
+  // policy-schema.js, at load time, so a top-level require of blocker-lines.js would hand it
+  // a partial export through the load cycle.
+  let readyWithheld = null;
+  if (ready) {
+    const { symbolicBlockerRefs } = require('./blocker-lines');
+    const symbolicRefs = symbolicBlockerRefs(body);
+    if (symbolicRefs.length > 0) readyWithheld = symbolicRefs;
+  }
+
   // Deterministic emission order: by:*, risk:*, size:*, ceremony:*, solution:unjustified, ready, parked, priority:*.
   const labels = [];
 
@@ -148,7 +161,7 @@ function recordPayload({ title, body, type, origin, risk, size, ceremony, soluti
     labels.push(`ceremony:${ceremony}`);
   }
   if (solutionUnjustified) labels.push(LABELS.SOLUTION_UNJUSTIFIED);
-  if (ready) labels.push(LABELS.READY);
+  if (ready && !readyWithheld) labels.push(LABELS.READY);
   if (parked) labels.push(LABELS.PARKED);
   if (priority !== undefined) {
     oneOf('priority', priority, PRIORITIES);
@@ -159,7 +172,9 @@ function recordPayload({ title, body, type, origin, risk, size, ceremony, soluti
     ? `${reasonBody}\n\n<!-- work-fingerprint: ${fingerprint} -->\nwork-fingerprint: ${fingerprint}`
     : reasonBody;
 
-  return { title, body: finalBody, labels, type };
+  return readyWithheld
+    ? { title, body: finalBody, labels, type, readyWithheld }
+    : { title, body: finalBody, labels, type };
 }
 
 // The three extractors below read only unfenced lines: a metadata line inside

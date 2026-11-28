@@ -136,3 +136,19 @@ test('toIssuePayloadV2 with a malformed anchor still produces a payload, omittin
     assert.ok(!payload.body.includes('## Technical Approach'), `Technical Approach present for anchor ${anchor}`);
   }
 });
+
+// #6374: evidence is free text that lands unfenced in the body, so a `Blocked by: … (left for …)`
+// line on its own line reaches recordPayload's withhold. The filing prose applies payload.labels
+// whole (never a literal `--label ready`), so the withhold is what decides whether `ready` is filed.
+test('a symbolic Blocked by line in evidence keeps ready out of payload.labels', () => {
+  const { SYMBOLIC_LINE, SYMBOLIC_REF } = require('../../helpers/symbolic-blocker-fixture');
+  const held = toIssuePayloadV2({ ...V2_FINDING, evidence: `${V2_FINDING.evidence}\n${SYMBOLIC_LINE}\nThe rest of the evidence.` });
+  assert.ok(held.body.split('\n').includes(SYMBOLIC_LINE), 'control: the line is on its own line in the body');
+  assert.deepStrictEqual(held.labels, ['by:code-health', 'risk:high', 'size:low'], 'every label but ready is kept');
+  assert.ok(!held.labels.includes('ready'));
+  assert.deepStrictEqual(held.readyWithheld, [SYMBOLIC_REF]);
+  // the same line quoted in a code span does not hold ready
+  const quoted = toIssuePayloadV2({ ...V2_FINDING, evidence: `${V2_FINDING.evidence} Quoted: \`${SYMBOLIC_LINE}\`` });
+  assert.ok(quoted.labels.includes('ready'));
+  assert.ok(!('readyWithheld' in quoted));
+});

@@ -18,6 +18,9 @@ renders verbatim, never with a `#` prefix; a number renders as `#N`. The string
 `native blockers (state unreadable)` (#5309) is not a dependency: it marks a record excluded
 because the `work-links: native` blockers query failed and the pull failed closed. It renders
 verbatim too, so the line names the failed query rather than an open dependency for that record.
+A `Blocked by: {part} (left for owner/name)` line excludes the record under either `work-links` value
+and renders verbatim as `{part} (left for owner/name)` (#6374): it has no issue and no state, so it
+is never looked up and never suffixed.
 
 Then read the same file's `reason: 'target-missing'` entries (`records: [number], detail: {path}`
 each, #1983 — `queue-pull-script.md` names this report as their reader) and render one line per

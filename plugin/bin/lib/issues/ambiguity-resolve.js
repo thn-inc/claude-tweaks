@@ -5,9 +5,9 @@
 'use strict';
 
 const {
-  shapeGate, stripCodeSpans, originalRequestOffset,
+  shapeGate, authoredText,
 } = require('./materialize-format');
-const { SYMBOLIC_LINE_RE } = require('../design-session/parts');
+const { symbolicBlockerRefs } = require('./blocker-lines');
 
 // The opening of a red-team marker (specify/red-team.md's write-back). Same
 // pattern the spec-shaped gate uses (materialize-format.js's
@@ -19,15 +19,6 @@ const AMBIGUITY_OPEN_RE = /<!--\s*ambiguity:/g;
 // closed: a surviving variant heading keeps `ready` off rather than letting it
 // back on.
 const OPEN_QUESTIONS_HEADING_RE = /^(#{2,4})[ \t]+open questions\b.*$/im;
-
-// The authored part of a body — everything before `## Original request`, with
-// fenced blocks and inline code spans stripped — exactly the text
-// materialize-format.js's shapeGate tests for placeholders. A marker quoted
-// in a code span or inherited in the original request is not an open one.
-function authoredText(body) {
-  const at = originalRequestOffset(body);
-  return stripCodeSpans(at === -1 ? body : body.slice(0, at));
-}
 
 function countAmbiguityMarkers(body) {
   if (typeof body !== 'string') return 0;
@@ -45,11 +36,23 @@ function hasOpenQuestionsSection(body) {
 // sections present and no TBD/TODO/ambiguity placeholder) and no Open
 // Questions section survives (spec-template.md: resolve every row, then
 // delete the section), and no symbolic `Blocked by: … (left for owner/name)`
-// line remains: no blocker surface reads one, so `ready` would show the record
-// unblocked until the later repository's run rewrites it (design-session/parts.js).
+// line remains: that line names no issue and no resolvable state (no native or
+// `#N` blocker exists yet), so `ready` stays off until a later run rewrites it to
+// `owner/name#N` (design-session/parts.js).
 function readyRestorable(body) {
-  if (typeof body !== 'string') return false;
-  return shapeGate(body).ok && !hasOpenQuestionsSection(body) && !SYMBOLIC_LINE_RE.test(authoredText(body));
+  return readyGate(body).ok;
+}
+
+// The ready-grant gate: every reason `ready` must stay off a body, in order —
+// shapeGate's missing entries, a surviving Open Questions heading, then one
+// `symbolic-blocker: {ref}` per symbolic Blocked by line. readyRestorable is
+// its boolean; bin/ready-gate.js prints it for the skills that grant `ready`.
+function readyGate(body) {
+  if (typeof body !== 'string') return { ok: false, reasons: ['body-not-a-string'] };
+  const reasons = [...shapeGate(body).missing];
+  if (hasOpenQuestionsSection(body)) reasons.push('open-questions-section');
+  for (const ref of symbolicBlockerRefs(body)) reasons.push(`symbolic-blocker: ${ref}`);
+  return { ok: reasons.length === 0, reasons };
 }
 
 // Deletes an Open Questions section whose table has no data rows left (only
@@ -123,6 +126,7 @@ function resolveAmbiguityMarker(body, markerText, resolutionText) {
 module.exports = {
   countAmbiguityMarkers,
   hasOpenQuestionsSection,
+  readyGate,
   readyRestorable,
   resolveAmbiguityMarker,
 };

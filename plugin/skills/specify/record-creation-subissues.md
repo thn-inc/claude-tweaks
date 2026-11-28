@@ -12,7 +12,7 @@ session-scoped temp path below resolves per `_shared/session-tmp-root.md` — ci
 
 **Only sub-issues get `ready`** — and only sub-issues carry `risk:*`/`size:*` scoring; a kept parent gets neither. One per work unit from Step 2, in any order — Step 4 does the linking once every number exists, so creation order doesn't matter.
 
-**No `ready` on a symbolic blocker.** On an approved parts list (`decomposition-mode.md` Step 2), a sub-issue whose blockers include a `symbolic` one, a part left for another repository and written `Blocked by: {ref}`, is created without `ready`: no blocker surface reads that line, so `ready` would show the sub-issue unblocked. Drop `--label ready` from its create call and pass `ready: false` in its payload; under `local-files`, leave `stage: 'ready'` out of its facets. The later repository's run restores `ready` when it writes the `owner/name#N` form (`decomposition-mode-closeout.md` Step 4).
+**No `ready` on a symbolic blocker.** On an approved parts list (`decomposition-mode.md` Step 2), a sub-issue whose blockers include a `symbolic` one, a part left for another repository and written `Blocked by: {ref}`, is created without `ready`: the line names no issue and no resolvable state, so `ready` stays off until a later run rewrites it to `owner/name#N`. `recordPayload` withholds `ready` from a body that carries such a line and `compose-record.js` prints one `Warning: ready withheld` line, but neither create call below reads that payload's printed `labels`, so each runs `node "${CLAUDE_PLUGIN_ROOT}/bin/ready-gate.js" "$SPECIFY_SUB_ISSUE_BODY"` and adds `ready` (the `--label ready` flag under `github-issues`, `stage: 'ready'` under `local-files`) only on exit 0; on exit 1 it files the sub-issue without `ready` and names the printed `reasons` in the run's summary, on exit 2 the create fails and files nothing. The later repository's run restores `ready` when it writes the `owner/name#N` form (`decomposition-mode-closeout.md` Step 4).
 
 **Fresh manifest for this invocation.** Once, before the per-work-unit loop below processes its first unit, reset the batch manifest that Accumulate this unit (below) appends to. That file is session-scoped, so without this reset a second decomposition in the same session — or a resumed one, whose loop re-accumulates every unit including Idempotency-resolved ones — would carry earlier entries into this batch's cross-reference pass (`crossReferenceKeyFiles`) and Ceremony tally, which both read it:
 
@@ -106,7 +106,7 @@ SPECIFY_SUB_ISSUE_EXISTING=$(node -e "
 " -- "${DESIGN_DOC_SLUG}:${UNIT_SLUG}")
 ```
 
-**`work-backend: github-issues`** — same Type expression branch as the parent. The `recordPayload` call above never passes `solutionUnjustified`, so its `.labels` cover only `risk:{tier}`, `size:{tier}`, `ceremony:{tier}`, `ready`, and no `by:*` label — a decomposition is human-shaped work, not a health-skill filing. The `--label` flags below are exactly that set; `solution:unjustified` is added separately, below the create blocks, once the Framing verdict is known:
+**`work-backend: github-issues`** — same Type expression branch as the parent. The `recordPayload` call above never passes `solutionUnjustified`, so its `.labels` cover only `risk:{tier}`, `size:{tier}`, `ceremony:{tier}`, `ready`, and no `by:*` label — a decomposition is human-shaped work, not a health-skill filing. The `--label` flags below are that set, with `ready` added only on `ready-gate.js` exit 0 (the fence's `SUB_ISSUE_READY` array); `solution:unjustified` is added separately, below the create blocks, once the Framing verdict is known:
 
 ```bash
 if [ -n "$SPECIFY_SUB_ISSUE_EXISTING" ]; then
@@ -117,31 +117,41 @@ else
     const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
     console.log(sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, 'specify-sub-issue-body.md') || require('path').join(require('os').tmpdir(), 'specify-sub-issue-body.md'))
   ")
-  # work-types: native
-  SUB_ISSUE_URL=$(gh issue create --title "$SUB_ISSUE_TITLE" --body-file "$SPECIFY_SUB_ISSUE_BODY" \
-    --type "$SUB_ISSUE_TYPE" \
-    --label "risk:$SUB_ISSUE_RISK" --label "size:$SUB_ISSUE_SIZE" --label "ceremony:$SUB_ISSUE_CEREMONY" --label ready)
+  node "${CLAUDE_PLUGIN_ROOT}/bin/ready-gate.js" "$SPECIFY_SUB_ISSUE_BODY"
+  SUB_ISSUE_GATE=$?
+  if [ "$SUB_ISSUE_GATE" = "2" ]; then
+    SUB_ISSUE_NUM=""
+    echo "ready-gate.js exited 2: the create fails" >&2
+  else
+    SUB_ISSUE_READY=()
+    if [ "$SUB_ISSUE_GATE" = "0" ]; then SUB_ISSUE_READY=(--label ready); fi
 
-  # work-types: labels
-  SUB_ISSUE_URL=$(gh issue create --title "$SUB_ISSUE_TITLE" --body-file "$SPECIFY_SUB_ISSUE_BODY" \
-    --label "risk:$SUB_ISSUE_RISK" --label "size:$SUB_ISSUE_SIZE" --label "ceremony:$SUB_ISSUE_CEREMONY" --label ready \
-    --label "type:$SUB_ISSUE_TYPE")
+    # work-types: native
+    SUB_ISSUE_URL=$(gh issue create --title "$SUB_ISSUE_TITLE" --body-file "$SPECIFY_SUB_ISSUE_BODY" \
+      --type "$SUB_ISSUE_TYPE" \
+      --label "risk:$SUB_ISSUE_RISK" --label "size:$SUB_ISSUE_SIZE" --label "ceremony:$SUB_ISSUE_CEREMONY" "${SUB_ISSUE_READY[@]}")
 
-  SUB_ISSUE_NUM=$(basename "$SUB_ISSUE_URL")
+    # work-types: labels
+    SUB_ISSUE_URL=$(gh issue create --title "$SUB_ISSUE_TITLE" --body-file "$SPECIFY_SUB_ISSUE_BODY" \
+      --label "risk:$SUB_ISSUE_RISK" --label "size:$SUB_ISSUE_SIZE" --label "ceremony:$SUB_ISSUE_CEREMONY" "${SUB_ISSUE_READY[@]}" \
+      --label "type:$SUB_ISSUE_TYPE")
 
-  node -e "
-    const fs = require('fs');
-    const { recordFingerprint } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
-    const map = require('$SPECIFY_EXISTING_FINGERPRINTS');
-    recordFingerprint(map, process.argv[1], Number(process.argv[2]));
-    fs.writeFileSync('$SPECIFY_EXISTING_FINGERPRINTS', JSON.stringify(map));
-  " -- "${DESIGN_DOC_SLUG}:${UNIT_SLUG}" "$SUB_ISSUE_NUM"
+    SUB_ISSUE_NUM=$(basename "$SUB_ISSUE_URL")
+
+    node -e "
+      const fs = require('fs');
+      const { recordFingerprint } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
+      const map = require('$SPECIFY_EXISTING_FINGERPRINTS');
+      recordFingerprint(map, process.argv[1], Number(process.argv[2]));
+      fs.writeFileSync('$SPECIFY_EXISTING_FINGERPRINTS', JSON.stringify(map));
+    " -- "${DESIGN_DOC_SLUG}:${UNIT_SLUG}" "$SUB_ISSUE_NUM"
+  fi
 fi
 ```
 
 When this sub-issue's Framing verdict (above) was `solution-baked`, add `--label "solution:unjustified"` to the create call; on `open` add nothing — the label is presence-only, and absence is the common case. Skip the label add entirely when the idempotency check above resolved to an existing number — its labels are already whatever the original create applied.
 
-**`work-backend: local-files`** — use `createRecord`, not `allocateId`+`writeRecord` separately, for the same concurrent-creation-race reason as the parent above. One call carries the same state as facets: `stage: 'ready'` instead of the `ready` label, `origin` omitted for the same no-`by:*` reason. `"$SPECIFY_SUB_ISSUE_BODY"` already carries the fingerprint marker, so the local write preserves it:
+**`work-backend: local-files`** — use `createRecord`, not `allocateId`+`writeRecord` separately, for the same concurrent-creation-race reason as the parent above. One call carries the same state as facets: `stage: 'ready'` (only on `ready-gate.js` exit 0, above) instead of the `ready` label, `origin` omitted for the same no-`by:*` reason. `"$SPECIFY_SUB_ISSUE_BODY"` already carries the fingerprint marker, so the local write preserves it:
 
 ```bash
 if [ -n "$SPECIFY_SUB_ISSUE_EXISTING" ]; then
@@ -152,23 +162,28 @@ else
     const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
     console.log(sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, 'specify-sub-issue-body.md') || require('path').join(require('os').tmpdir(), 'specify-sub-issue-body.md'))
   ")
+  node "${CLAUDE_PLUGIN_ROOT}/bin/ready-gate.js" "$SPECIFY_SUB_ISSUE_BODY"
+  SUB_ISSUE_GATE=$?
   SUB_ISSUE_ID=$(node -e "const {createRecord}=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/local-store.js');
+    if (process.argv[8] === '2') throw new Error('ready-gate.js exited 2: the create fails');
     const body = require('fs').readFileSync(process.argv[7], 'utf8');
     const record = createRecord('specs', {
       slug: process.argv[1],
       title: process.argv[2],
       body,
-      facets: { type: process.argv[3], risk: process.argv[4], size: process.argv[5], ceremony: process.argv[6], stage: 'ready' }
+      facets: { type: process.argv[3], risk: process.argv[4], size: process.argv[5], ceremony: process.argv[6], ...(process.argv[8] === '0' ? { stage: 'ready' } : {}) }
     });
-    console.log(record.id)" -- "$UNIT_SLUG" "$SUB_ISSUE_TITLE" "$SUB_ISSUE_TYPE" "$SUB_ISSUE_RISK" "$SUB_ISSUE_SIZE" "$SUB_ISSUE_CEREMONY" "$SPECIFY_SUB_ISSUE_BODY")
+    console.log(record.id)" -- "$UNIT_SLUG" "$SUB_ISSUE_TITLE" "$SUB_ISSUE_TYPE" "$SUB_ISSUE_RISK" "$SUB_ISSUE_SIZE" "$SUB_ISSUE_CEREMONY" "$SPECIFY_SUB_ISSUE_BODY" "$SUB_ISSUE_GATE")
 
-  node -e "
-    const fs = require('fs');
-    const { recordFingerprint } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
-    const map = require('$SPECIFY_EXISTING_FINGERPRINTS');
-    recordFingerprint(map, process.argv[1], Number(process.argv[2]));
-    fs.writeFileSync('$SPECIFY_EXISTING_FINGERPRINTS', JSON.stringify(map));
-  " -- "${DESIGN_DOC_SLUG}:${UNIT_SLUG}" "$SUB_ISSUE_ID"
+  if [ -n "$SUB_ISSUE_ID" ]; then
+    node -e "
+      const fs = require('fs');
+      const { recordFingerprint } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
+      const map = require('$SPECIFY_EXISTING_FINGERPRINTS');
+      recordFingerprint(map, process.argv[1], Number(process.argv[2]));
+      fs.writeFileSync('$SPECIFY_EXISTING_FINGERPRINTS', JSON.stringify(map));
+    " -- "${DESIGN_DOC_SLUG}:${UNIT_SLUG}" "$SUB_ISSUE_ID"
+  fi
 fi
 ```
 
@@ -183,13 +198,19 @@ SPECIFY_DECOMP_MANIFEST=$(node -e "
   const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
   console.log(sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, 'specify-decomp-manifest.json') || require('path').join(require('os').tmpdir(), 'specify-decomp-manifest.json'))
 ")
-node -e "const fs=require('fs');
-  const path=process.argv[1];
-  const entry={title:process.argv[2], num:process.argv[3], body:fs.readFileSync(process.argv[4],'utf8'), ceremony:process.argv[5]};
-  const list=fs.existsSync(path)?JSON.parse(fs.readFileSync(path,'utf8')):[];
-  list.push(entry);
-  fs.writeFileSync(path, JSON.stringify(list))" -- "$SPECIFY_DECOMP_MANIFEST" "$SUB_ISSUE_TITLE" "${SUB_ISSUE_NUM:-$SUB_ISSUE_ID}" "$SPECIFY_SUB_ISSUE_BODY" "$SUB_ISSUE_CEREMONY"
+if [ -n "${SUB_ISSUE_NUM:-$SUB_ISSUE_ID}" ]; then
+  node -e "const fs=require('fs');
+    const path=process.argv[1];
+    const entry={title:process.argv[2], num:process.argv[3], body:fs.readFileSync(process.argv[4],'utf8'), ceremony:process.argv[5]};
+    const list=fs.existsSync(path)?JSON.parse(fs.readFileSync(path,'utf8')):[];
+    list.push(entry);
+    fs.writeFileSync(path, JSON.stringify(list))" -- "$SPECIFY_DECOMP_MANIFEST" "$SUB_ISSUE_TITLE" "${SUB_ISSUE_NUM:-$SUB_ISSUE_ID}" "$SPECIFY_SUB_ISSUE_BODY" "$SUB_ISSUE_CEREMONY"
+else
+  printf 'create failed for "%s": no record number, not accumulated\n' "$SUB_ISSUE_TITLE" >&2
+fi
 ```
+
+**A unit with no record number is not accumulated.** A unit whose create failed on `ready-gate.js` exit 2 has no `$SUB_ISSUE_NUM`/`$SUB_ISSUE_ID`, under either backend, and is not accumulated: an entry with an empty number would reach the cross-reference pass and the Ceremony tally as a record that does not exist. Report it as a failed create with the gate's stderr verbatim and continue with the next unit, as a `classify`, `settle` or `confirm` that exits non-zero is reported (Risk flags, above).
 
 **Write-path resilience.** A `gh` create failure for one sub-issue (any kept parent already exists on GitHub by this point) falls back to `local-store.js` for that sub-issue only — write it locally with `unsynced: true` (fingerprint preserved, so a later sync still dedups correctly) and continue with the rest of the batch rather than aborting the whole decomposition over one failure. `/tidy`'s Sync finding reconciles it onto GitHub on a later pass. The same rule applies to Step 4's linking edits below — a failed link is noted and the pass continues; nothing already created rolls back.
 

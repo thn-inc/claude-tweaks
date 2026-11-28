@@ -1482,6 +1482,82 @@ test('gatherPack: work-backend local-files reads the local store, keeping only r
   assert.deepStrictEqual(pack.unblocked.value, [{ number: 1600, title: 'Dependent' }]);
 });
 
+// #6374 AC2.6: a dependent whose other blocker is a symbolic `Blocked by: {part} (left for owner/name)`
+// line stays blocked, and its symbolic name is never handed to the foreign lookup. The sibling
+// dependent carrying a CLOSED foreign ref is still reported, so the probe did not fail as a whole.
+const { symbolicBody } = require('../../helpers/symbolic-blocker-fixture');
+
+test('AC2.6: a dependent whose other blocker is a symbolic line is never reported newly unblocked (body-text)', async () => {
+  const calls = [];
+  const deps = okDeps({
+    resolvePolicy: policyFake({ 'integration-branch': 'main', 'work-links': 'body-text' }),
+    execFile: async (cmd, args) => {
+      if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'list' && args.includes('open')) {
+        return { stdout: JSON.stringify([
+          { number: 1600, title: 'Symbolic', body: symbolicBody(['Blocked by #1535', 'Blocked by other/repo#9']) },
+          { number: 1601, title: 'Sibling', body: 'Blocked by #1535\nBlocked by other/repo#7\n' },
+        ]), stderr: '' };
+      }
+      if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'list' && args.includes('all')) return { stdout: JSON.stringify([{ number: 1535, state: 'CLOSED' }]), stderr: '' };
+      if (cmd === 'node' && String(args[0]).endsWith('resolve-foreign-blockers.js')) { calls.push(args); return { stdout: '{"other/repo#7":"CLOSED"}', stderr: '' }; }
+      return okDeps().execFile(cmd, args);
+    },
+  });
+  const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['unblocked'], deps });
+  assert.strictEqual(pack.unblocked.ok, true, pack.unblocked.error);
+  assert.deepStrictEqual(pack.unblocked.value, [{ number: 1601, title: 'Sibling' }]);
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0][1], 'other/repo#7', 'the symbolic name is never looked up');
+});
+
+test('AC2.6: a dependent whose other blocker is a symbolic line is never reported newly unblocked (native)', async () => {
+  const calls = [];
+  const entry = { blockedBy: [1535], openBlocker: false, openBlockerIds: [], crossRepoBlockers: [] };
+  const deps = okDeps({
+    resolvePolicy: policyFake({ 'integration-branch': 'main', 'work-links': 'native' }),
+    execFile: async (cmd, args) => {
+      if (cmd === 'gh' && args[0] === 'issue' && args[1] === 'list' && args.includes('open')) {
+        return { stdout: JSON.stringify([
+          { number: 1600, title: 'Symbolic', body: symbolicBody(['Blocked by other/repo#9']) },
+          { number: 1601, title: 'Sibling', body: 'Blocked by other/repo#7\n' },
+        ]), stderr: '' };
+      }
+      if (cmd === 'node' && String(args[0]).endsWith('resolve-blockers.js')) return { stdout: JSON.stringify({ 1600: entry, 1601: entry }), stderr: '' };
+      if (cmd === 'node' && String(args[0]).endsWith('resolve-foreign-blockers.js')) { calls.push(args); return { stdout: '{"other/repo#7":"CLOSED"}', stderr: '' }; }
+      return okDeps().execFile(cmd, args);
+    },
+  });
+  const pack = await gatherPack({ runDir: fixtureRunDir(), cwd: '/w/tree', only: ['unblocked'], deps });
+  assert.strictEqual(pack.unblocked.ok, true, pack.unblocked.error);
+  assert.deepStrictEqual(pack.unblocked.value, [{ number: 1601, title: 'Sibling' }]);
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0][1], 'other/repo#7', 'the symbolic name is never looked up');
+});
+
+test('AC2.6: a dependent whose other blocker is a symbolic line is never reported newly unblocked (local-files)', async () => {
+  const tree = scratchDir('wrap-up-pack-local-sym-');
+  fs.mkdirSync(path.join(tree, 'specs'), { recursive: true });
+  for (const f of ['1600-symbolic.md', '1601-sibling.md']) fs.writeFileSync(path.join(tree, 'specs', f), '# x\n');
+  const store = {
+    1600: { id: 1600, title: 'Symbolic', body: symbolicBody(), facets: { blockedBy: [1535], closed: false } },
+    1601: { id: 1601, title: 'Sibling', body: 'Plain body\n', facets: { blockedBy: [1535], closed: false } },
+  };
+  const deps = okDeps({
+    readFile: readFileFake('work-backend: local-files\n'),
+    resolvePolicy: policyFake({ 'integration-branch': 'main' }),
+    queryRecords: () => [store[1600], store[1601]],
+    readRecord: (p) => store[Number(path.basename(p).split('-')[0])],
+    execFile: async () => { throw new Error('local-files must not shell out to gh'); },
+  });
+  const runDir = fixtureRunDir();
+  const state = JSON.parse(fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8'));
+  state.worktree = tree;
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify(state));
+  const pack = await gatherPack({ runDir, cwd: tree, only: ['unblocked'], deps });
+  assert.strictEqual(pack.unblocked.ok, true, pack.unblocked.error);
+  assert.deepStrictEqual(pack.unblocked.value, [{ number: 1601, title: 'Sibling' }]);
+});
+
 test('gatherPack: local-files — a dependent\'s blocker file pruned between readdir and read counts as already gone, not a probe failure (#1930 review lens 3c)', async () => {
   const tree = scratchDir('wrap-up-pack-local-race-');
   fs.mkdirSync(path.join(tree, 'specs'), { recursive: true });

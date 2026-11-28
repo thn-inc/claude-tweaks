@@ -185,3 +185,19 @@ test('resolveAmbiguityMarker: rejects an empty markerText', () => {
 test('resolveAmbiguityMarker: rejects a non-string resolutionText', () => {
   assert.throws(() => resolveAmbiguityMarker('body', 'body', null), /resolutionText must be a string/);
 });
+
+// --- readyGate (#6374) -----------------------------------------------------
+
+const { readyGate } = require('../../../plugin/bin/lib/issues/ambiguity-resolve');
+const { SYMBOLIC_LINE, SYMBOLIC_REF, symbolicBody } = require('../../helpers/symbolic-blocker-fixture');
+
+test('AC2.1: readyGate names every reason ready must stay off', () => {
+  assert.deepEqual(readyGate(symbolicBody()), { ok: false, reasons: ['symbolic-blocker: ' + SYMBOLIC_REF] });
+  const both = symbolicBody() + OPEN_QUESTIONS;
+  assert.deepEqual(readyGate(both), { ok: false, reasons: ['open-questions-section', 'symbolic-blocker: ' + SYMBOLIC_REF] });
+  const rewritten = symbolicBody().replace(SYMBOLIC_LINE, 'Blocked by thn-inc/other#7004');
+  assert.deepEqual(readyGate(rewritten), { ok: true, reasons: [] });
+  assert.deepEqual(readyGate(null), { ok: false, reasons: ['body-not-a-string'] });
+  assert.equal(readyRestorable(symbolicBody()), false);
+  assert.equal(readyRestorable(rewritten), true);
+});

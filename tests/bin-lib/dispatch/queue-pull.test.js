@@ -15,6 +15,7 @@ const path = require('node:path');
 const { spawnSync, execFileSync } = require('node:child_process');
 
 const { readText } = require('../../helpers/read-skill');
+const { SYMBOLIC_REF, symbolicBody } = require('../../helpers/symbolic-blocker-fixture');
 const { chmodDenialSkip } = require('../../helpers/root');
 const { treeEntryWithContinuations } = require('../../helpers/plugin-structure-entry');
 const { gitRepo, fixtureGit } = require('../../helpers/git-fixtures');
@@ -855,6 +856,34 @@ test('#5227 foreign blocker: a Blocked by owner/name#N line holds the record whi
   const omitted = pull(foreignScenario(), { spawn: {}, omit: ['blocked'] });
   assert.deepEqual(omitted.cliCalls.filter(([n]) => n === 'resolve-foreign-blockers.js'), [], 'omitting blocked skips the foreign lookup');
   assert.deepEqual(groupNumbers(omitted), [[9001]]);
+});
+
+test('AC2.2: a symbolic Blocked-by line excludes the record from the queue under body-text and native, named in the exclusion', () => {
+  for (const workLinks of ['body-text', 'native']) {
+    const scenario = () => ({
+      name: 'SSymbolic',
+      policy: { 'work-links': workLinks },
+      gh: [
+        { argv: QUEUE_ARGV, stdout: JSON.stringify([ghRecord(9001, { body: symbolicBody() })]) + '\n' },
+        { argv: OPEN_NUMBERS_ARGV, stdout: '[{"number":9001}]\n' },
+      ],
+    });
+    const r = pull(scenario(), { spawn: { 'resolve-blockers.js': { status: 0, stdout: '{}', stderr: '' } } });
+    assert.deepEqual(entriesOf(r, 'blocked'), [{ reason: 'blocked', records: [9001], detail: { blockedBy: [SYMBOLIC_REF] } }], workLinks);
+    assert.deepEqual(groupNumbers(r), [], workLinks);
+    assert.deepEqual(r.cliCalls.filter(([n]) => n === 'resolve-foreign-blockers.js'), [], workLinks + ': the foreign-state lookup is never asked');
+  }
+});
+
+test('AC2.2: files transport: a symbolic Blocked-by line excludes the record, named in the exclusion, with no gh call', () => {
+  const r = pull(S1(), { transport: 'files', run: noGhOnFiles, prepare: (own) => ({ inputs: {
+    queueRaw: writeInput(own, 'queue.json', JSON.stringify([mcpRecord(9001, symbolicBody())])),
+    openNumbers: writeInput(own, 'open.json', '[{"number":9001}]'),
+    depFreshness: writeInput(own, 'dep.json', '[]'),
+    verifiedOpenDeps: writeInput(own, 'verified.txt', ''),
+  } }) });
+  assert.deepEqual(entriesOf(r, 'blocked'), [{ reason: 'blocked', records: [9001], detail: { blockedBy: [SYMBOLIC_REF] } }]);
+  assert.deepEqual(groupNumbers(r), []);
 });
 
 test('#5227 foreign blocker: a spawn error reaches the Warning as the library prints it; an unreadable states file adds its own fail-closed Warning and the CLI is still asked', () => {

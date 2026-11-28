@@ -28,6 +28,14 @@ const NAMESPACE = 'queue-order';
 // `grouping` stamp lets a cache hit refuse groups computed under the old rule.
 const GROUPING_MODE = 'per-record';
 
+// #6374: the version of the blocker rules a blob's `excluded` was computed under. The freshness
+// signal cannot see a rule change, so a blob written under an older rule (the symbolic
+// `Blocked by: … (left for …)` line left a record eligible) would replay its verdict after an
+// upgrade. cacheUsable requires this exact value; bump it when a blocker rule changes what a
+// record's exclusion is. Absent on a blob an older release wrote, which therefore misses once.
+// An older build's cacheUsable reads none of this, so it still hits on a blob carrying it.
+const BLOCKER_RULES = 1;
+
 // #4025: with the express lane on, express-eligible records stay out of
 // fast-lane bundles, so those groups are stamped apart from GROUPING_MODE's.
 // #6011: with the driver half on, driver-routable records also stay out of
@@ -116,13 +124,14 @@ function signalsMatch(persisted, current) {
 // fallback (queue-pull-script.md's cache-hit path), never this module.
 // `fingerprint` (#6062) is the settings fingerprint cacheUsable compares; written
 // only when given, so a blob without it is an older writer's and always a miss,
-// and older readers ignore the extra field. Any other property is ignored, so a
+// and older readers ignore the extra field; `blockerRules` (#6374) is always written and is
+// likewise ignored by an older reader. Any other property is ignored, so a
 // caller may spread the expressQueuePolicy() result into the argument.
 function composeOrderBlob({
   computedAt, runId, freshnessSignal, groups, excluded, bundles, grouping = GROUPING_MODE, fingerprint,
 }) {
   return {
-    computedAt, runId, freshnessSignal, groups, excluded, grouping,
+    computedAt, runId, freshnessSignal, groups, excluded, grouping, blockerRules: BLOCKER_RULES,
     ...(bundles !== undefined ? { bundles } : {}),
     ...(fingerprint !== undefined ? { fingerprint } : {}),
   };
@@ -142,12 +151,14 @@ function namesForeignBlocker(excluded) {
 // `fingerprint` (#6062: the settings the grouping reads, which the stamp alone
 // does not carry) AND its freshness signal still matches. A blob without
 // `grouping` or `fingerprint` (any older plugin install's write) fails closed,
-// as does a key without a string fingerprint, and so does a current signal flagged
+// as does a key without a string fingerprint, a blob whose `blockerRules` is not this
+// release's BLOCKER_RULES (#6374), and so does a current signal flagged
 // `foreignDeclared` (buildFreshnessSignal, #4793) or a blob whose exclusions name
 // a foreign blocker (namesForeignBlocker). Never throws.
 function cacheUsable(persisted, current, key) {
   return !!persisted && !!key && typeof key === 'object' && typeof key.fingerprint === 'string'
     && persisted.fingerprint === key.fingerprint && persisted.grouping === key.grouping
+    && persisted.blockerRules === BLOCKER_RULES
     && !(current && current.foreignDeclared)
     && !namesForeignBlocker(persisted.excluded)
     && signalsMatch(persisted.freshnessSignal, current);

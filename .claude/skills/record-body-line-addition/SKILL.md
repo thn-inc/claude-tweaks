@@ -27,6 +27,8 @@ The test for "this is the line" must be wider than the exact grammar, or a varia
 
 Read only the preamble (after an optional frontmatter block, before the first `## ` heading) and skip fenced lines, so a quoted example is never the record's own line. Use `plugin/bin/lib/markdown-blocks.js`'s fence helpers: `parseRiskFlags` uses `fencedLineMask`, and `extractPremiseCheck`, `extractVerifiedAsOf` and `extractTemplateStamp` in `record-payload.js` read through `unfencedText`. The one deliberate whole-body exception is `ownOriginLine` in `record-payload.js`: it scans the whole body, skipping fenced lines and lines under a `## Absorbed: …` section, and a line under `## Original request` still counts, since for 170 records it is the only `Origin:` line (#4502).
 
+The same rule hides a line that a composer quotes inside a fence. A body built from other bodies, such as `composeBundle`'s fenced member bodies in `plugin/bin/lib/console/bundle.js`, runs each line's reader on every member before quoting it, never on the composed body (#6374).
+
 ### Sanctioned writers
 
 When the line must not be hand-edited, put its writers in the reader's module and pin them with a writer scan over `plugin/bin` (`tests/risk-flags-writer-conformance.test.js`; `bin-source-scan-conformance` covers the scan's shape). Writers normalize `\r\n?` to `\n` on entry and put `\r\n` back when the body was uniformly CRLF. A writer that removes information requires an explicit human-decision argument (`humanConfirmed === true`) and refuses on an unreadable line.

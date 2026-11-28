@@ -6,7 +6,7 @@ A target may declare prerequisite records — `blocked-by:` on the record (mater
 
 ## Procedure
 
-1. **Build the DAG** — for each target in the list, add edges from each prerequisite to the target itself, from its `blocked-by:` entries — a `blocked-by:` entry written `owner/name#N` names another repository's issue and never adds an edge, whatever its number: `preflight-records.js` builds the DAG from each record's `blockedBy`, which carries this repository's numbers only (#4793)
+1. **Build the DAG** — for each target in the list, add edges from each prerequisite to the target itself, from its `blocked-by:` entries — a `blocked-by:` entry written `owner/name#N` names another repository's issue and never adds an edge, whatever its number: `preflight-records.js` builds the DAG from each record's `blockedBy`, which carries this repository's numbers only (#4793). A `{part} (left for owner/name)` entry names a blocker with no issue yet and adds no edge either; pre-flight reads it as an `open` out-of-run blocker, a STOP (#6374)
 2. **Detect cycles** — if any cycle exists across the listed specs, **hard fail**:
    ```
    Cycle detected in dependency graph:
@@ -54,6 +54,8 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --sec
 An `open`, `unlanded` or `hollow` verdict's stop is gate `blocker-landing`; under `/claude-tweaks:dispatch` report it per `failure-cards.md`'s blocker-landing row.
 
 An entry with `via: cross-repository` or `via: cross-repository-state-unreadable` is a blocker in another repository, linked natively or declared by a `Blocked by owner/name#N` body line; its `repository` key holds `owner/name`, and its number names that repository's issue, so write it as `{repository}#{blocker}`. An `open` entry stops as the table says, its stop line naming `{repository}#{blocker}`; with `via: cross-repository-state-unreadable` the stop line reads "159 depends on {repository}#{blocker} (state unreadable) — read as open (fail closed)". An `undetermined` entry writes the SKIP line `condition: {repository}#{blocker} lives in another repository (via cross-repository) → fallback: proceeded without judging its landing — blocker landing reads only this repository's integration branch` (#4793, Decisions Q1 and Q5).
+
+An entry with `via: symbolic-blocker` names a part that is not filed yet, so its stop line names `{blocker}` exactly as written (never `{repository}#…`), says the part is not filed yet in `{repository}`, and gives the escape: that repository's run files the part and rewrites the line to `Blocked by owner/name#N`.
 
 A failed blocker query is not `undetermined` — the call exits non-zero and the run stops before claiming (`multispec-preflight-failure.md`).
 

@@ -84,7 +84,7 @@ const FACTS = {
     [/The parts in `filing\.file` are the work units, in table order/, 'F2a filing.file parts are the units, in order'],
     [/each unit's title is the part's `name`, its `size:` label the part's `size`, its unit slug the part's `slug`, and its blockers the part's resolved `blockers`/, 'F2b name, size, slug, blockers taken'],
     [/`sibling` → that sibling sub-issue's link in Step 4, `issue` → the `owner\/name#N` ref as written, `symbolic` → the line `Blocked by: \{ref\}`, its printed `ref` \(`\{part name\} \(left for \{owner\/name\}\)`\) as is/, 'F2c blocker kinds'],
-    [/No blocker surface reads a `symbolic` line, so a sub-issue carrying one is created without `ready`; the later repository's run restores it when it writes the `owner\/name#N` form/, 'F2f a symbolic blocker means no ready'],
+    [/A `symbolic` line names no issue and no resolvable state, so a sub-issue carrying one is created without `ready`; the later repository's run restores it when it writes the `owner\/name#N` form/, 'F2f a symbolic blocker means no ready'],
     [/Skip `### Sizing Guidelines`, `### Decomposition Heuristics` \(its rewrite-signal check included\) and `--granularity`/, 'F2d skips sizing, heuristics, granularity'],
     [/Implicit Dependency Detection with its file-overlap check, Step 2\.6 and Steps 3 to 9 still run, each under Step 1's no-gate rule/, 'F2e the rest runs under the rule'],
     [/Parts in `filing\.leftFor` are not filed: Step 9's summary lists each as left for that repository's run/, 'F3a leftFor not filed'],
@@ -396,7 +396,7 @@ test('a local-files slug collision keeps the part slug in the fingerprint', () =
 const READY_REGION = (text) => between(text, '**Only sub-issues get `ready`**', '**Fresh manifest for this invocation.**', 'ready region');
 const READY_FACTS = [
   [/\*\*No `ready` on a symbolic blocker\.\*\* On an approved parts list \(`decomposition-mode\.md` Step 2\), a sub-issue whose blockers include a `symbolic` one, a part left for another repository and written `Blocked by: \{ref\}`, is created without `ready`/, 'Y1 a symbolic blocker creates the sub-issue without ready'],
-  [/Drop `--label ready` from its create call and pass `ready: false` in its payload; under `local-files`, leave `stage: 'ready'` out of its facets\./, 'Y2 no ready label, payload flag or local stage'],
+  [/each runs `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/ready-gate\.js" "\$SPECIFY_SUB_ISSUE_BODY"` and adds `ready` \(the `--label ready` flag under `github-issues`, `stage: 'ready'` under `local-files`\) only on exit 0/, 'Y2 the ready label or stage follows the gate'],
   [/The later repository's run restores `ready` when it writes the `owner\/name#N` form \(`decomposition-mode-closeout\.md` Step 4\)\./, 'Y3 the later run restores ready'],
 ];
 const missingReady = missingFactsOf(READY_FACTS);
@@ -444,7 +444,7 @@ const T5_FACTS = {
     [/`gh issue view \{n\} --repo \{owner\/name\} --json body` read and one `gh issue edit \{n\} --repo \{owner\/name\} --body-file` write per issue/, 'W2 gh read and write per issue'],
     [/A line that is not there is left alone and named in Step 9's summary\./, 'W3 a missing line is named, not edited'],
     [/Under `local-files` there is no other repository's store to edit, so each entry is listed in Step 9's summary instead, with the `ready` it would restore\./, 'W4 local-files lists the entries'],
-    [/once all its entries are replaced, add `ready` back only when no other `Blocked by: … \(left for …\)` line remains in its body and the body carries no `<!-- ambiguity:` marker or `## Open Questions` heading/, 'W5 ready comes back once no symbolic line or open finding remains'],
+    [/once all its entries are replaced, add `ready` back only when `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/ready-gate\.js"` exits 0 on the composed body \(written to a session temp file first\); on exit 1 `ready` stays off/, 'W5 ready comes back only when ready-gate.js exits 0 on the composed body'],
     [/\(with `--add-label ready` when `ready` comes back\)/, 'W6 the gh write adds ready back'],
     [/an issue this check keeps without `ready` is named in Step 9's summary with its number and the reason\./, 'W7 an issue kept without ready is named in Step 9'],
   ],
@@ -480,7 +480,7 @@ const T5_FACTS = {
     [/The `### Left for another repository` block lists each part in `filing\.leftFor` with its repository and the rerun line `\/claude-tweaks:design \{argument\}` \(in that repository's checkout, from a copy of the folder as this step commits it; its `status` reads that repository, finds the part marked `left for` it and resumes at step 10\)/, 'S3 block content and rerun line'],
     [/- \{part name\} — left for \{owner\/name\}; copy the design folder, as this step commits it, into that repository's checkout and rerun `\/claude-tweaks:design \{argument\}` there: it resumes at step 10/, 'S7 the template rerun line copies the committed folder'],
     [/With an empty `filing\.file` the summary says nothing was filed here and lists the left and skipped parts\./, 'S4 empty filing.file'],
-    [/each issue whose `ready` Step 4 kept off \(`\{owner\/name\}#\{n\} — ready stays off: \{an ambiguity marker \| an Open Questions heading \| another left-for line\} remains`\)/, 'S8 an issue Step 4 kept without ready, with its number and why'],
+    [/each issue whose `ready` Step 4 kept off \(`\{owner\/name\}#\{n\} — ready stays off: \{each of the gate's printed `reasons`\} remains`\)/, 'S8 an issue Step 4 kept without ready, with its number and why'],
   ],
   row: [
     [/\| Approved parts \(omit unless Step 2 took the approved branch\) \| `check-approval`'s JSON \(parts, measure, designSlug, and `filing`'s file, skipped, leftFor and writeBack lists\), the folder path, and the no-gate rule in one sentence, since the subagent never reads `decomposition-mode\.md` \|/, 'H1 row inputs carry the JSON, folder and the no-gate rule'],

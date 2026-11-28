@@ -61,7 +61,9 @@ exported):
    cannot read. Build the Map with `bodyForeignBlockers(cheapSurvivors, { states })`
    (`bin/lib/issues/cross-repo-states.js`) and pass it as the third argument of the second
    `filterCandidates` call. A ref left out, or `null`, still blocks (fail closed). `backlog overview`
-   hard-gates on `gh`, so it has no `gh`-absent funnel to supply states to.
+   hard-gates on `gh`, so it has no `gh`-absent funnel to supply states to. A symbolic `Blocked by:
+   {part} (left for owner/name)` line (#6374) needs no state: both `filterCandidates` calls drop it
+   from the body alone, so this path needs no extra read for it.
 3. **Compute, locally, no MCP call:** continue from step 2's `filterCandidates` result →
    `computePhaseA` / `machineGrantOutlook` / `trustRows` directly, via a `node -e` snippet
    `require`-ing `bin/lib/backlog-grant-gate/backlog-grant-gate.js` and `bin/lib/issues/backlog.js`

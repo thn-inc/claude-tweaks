@@ -11,6 +11,7 @@ const {
   buildLinkedPRQuery, partitionByOpenLinkedPR, extractSection, isRepoRelativeKeyFilePath,
   crossRepositoryBlockers, withoutCrossRepoBlockers, foreignBlockerBlocks, foreignBlockerRef, openBlockerRefs, openNativeBlockerRefs,
 } = require('../../../plugin/bin/lib/issues/record');
+const { SYMBOLIC_REF, symbolicBody } = require('../../helpers/symbolic-blocker-fixture');
 
 test('recordPayload assembles labels for a born-ready health record', () => {
   const result = recordPayload({
@@ -20,6 +21,32 @@ test('recordPayload assembles labels for a born-ready health record', () => {
   assert.deepStrictEqual(result.labels, ['by:code-health', 'risk:low', 'size:low', 'ready']);
   assert.strictEqual(result.type, 'task');
   assert.strictEqual(result.body, 'b\n\n<!-- work-fingerprint: ch:abc -->\nwork-fingerprint: ch:abc');
+});
+
+test('AC2.1: recordPayload withholds ready from a body with a symbolic blocker and says so', () => {
+  const { SYMBOLIC_LINE, SYMBOLIC_REF, symbolicBody } = require('../../helpers/symbolic-blocker-fixture');
+  const withheld = recordPayload({ title: 't', body: symbolicBody(), type: 'task', ready: true });
+  assert.ok(!withheld.labels.includes('ready'));
+  assert.deepStrictEqual(withheld.readyWithheld, [SYMBOLIC_REF]);
+  const rewritten = symbolicBody().replace(SYMBOLIC_LINE, 'Blocked by thn-inc/other#7004');
+  const kept = recordPayload({ title: 't', body: rewritten, type: 'task', ready: true });
+  assert.ok(kept.labels.includes('ready'));
+  assert.ok(!('readyWithheld' in kept));
+  const notReady = recordPayload({ title: 't', body: symbolicBody(), type: 'task', ready: false });
+  assert.deepStrictEqual(notReady.labels, []);
+  assert.ok(!('readyWithheld' in notReady));
+});
+
+test('AC2.1: the withhold tests ready the way the label does, so a truthy non-true ready is withheld too', () => {
+  for (const ready of [1, 'true']) {
+    const withheld = recordPayload({ title: 't', body: symbolicBody(), type: 'task', ready });
+    assert.ok(!withheld.labels.includes('ready'), `ready: ${JSON.stringify(ready)} must not reach the label`);
+    assert.deepStrictEqual(withheld.readyWithheld, [SYMBOLIC_REF], `ready: ${JSON.stringify(ready)}`);
+  }
+  // control: the same truthy values still earn the label on a body with no symbolic line
+  for (const ready of [1, 'true']) {
+    assert.ok(recordPayload({ title: 't', body: 'b', type: 'task', ready }).labels.includes('ready'), `ready: ${JSON.stringify(ready)}`);
+  }
 });
 
 test('recordPayload assembles a plain capture record', () => {
@@ -550,6 +577,15 @@ test('partitionByOpenBodyBlockers keeps a candidate whose blocker is not in open
   const { eligible, excluded } = partitionByOpenBodyBlockers(candidates, new Set(), new Map());
   assert.deepStrictEqual(eligible.map((c) => c.number), [12]);
   assert.deepStrictEqual(excluded, []);
+});
+
+test('AC2.2: partitionByOpenBodyBlockers excludes a record whose only blocker is a symbolic line, naming it', () => {
+  const { eligible, excluded } = partitionByOpenBodyBlockers([{ number: 9, body: symbolicBody() }], new Set(), new Map());
+  assert.deepStrictEqual(eligible, []);
+  assert.deepStrictEqual(excluded, [{ number: 9, blockedBy: [SYMBOLIC_REF] }]);
+  const foreign = new Map([[10, [{ repository: 'acme/x', number: 5, state: 'OPEN' }]]]);
+  const mixed = partitionByOpenBodyBlockers([{ number: 10, body: symbolicBody() }], new Set(), foreign);
+  assert.deepStrictEqual(mixed.excluded, [{ number: 10, blockedBy: ['acme/x#5', SYMBOLIC_REF] }]);
 });
 
 test('partitionByOpenBodyBlockers reports a two-member dependency cycle as two entries naming each other', () => {

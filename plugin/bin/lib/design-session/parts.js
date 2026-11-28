@@ -50,6 +50,7 @@ const crypto = require('node:crypto');
 const { fencedLineMask } = require('../markdown-blocks');
 const { STATUS_RE, splitLines } = require('./notes');
 const { sectionLines, sectionRange } = require('./design-md');
+const { symbolicBlockerRef, REPO } = require('../issues/blocker-lines');
 
 const PARTS_HEADING = 'Parts';
 const APPROVAL_HEADING = 'Approval';
@@ -63,7 +64,7 @@ const SIZES = ['size:low', 'size:medium', 'size:high'];
 const ISSUE_COL = TABLE_HEADER.indexOf('Issue');
 const ESTIMATE_BASIS = 'v6 records no per-size token use in its timing or model-profile data.';
 
-const REPO = '[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+';
+// REPO (the owner/name pattern source) is imported from blocker-lines.js: one definition.
 const REPO_RE = new RegExp(`^${REPO}$`);
 // GitHub owner/name is case-insensitive: the one comparison of two repositories.
 const sameRepository = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
@@ -313,10 +314,7 @@ function markFiled(designText, marks) {
 // A blocker on a part left for another repository: its name and that part's
 // Repository cell, spelled as the table spells it. The earlier run writes it as
 // `Blocked by: {ref}`; the later run's writeBack `line` is that same text.
-const symbolicRef = (name, repository) => `${name} (left for ${repository})`;
-// A body line holding a symbolic blocker, `Blocked by: {symbolicRef}` (a list
-// bullet allowed). While one remains, the record's `ready` stays off.
-const SYMBOLIC_LINE_RE = new RegExp(`^[ \\t]*(?:[-*][ \\t]+)?Blocked by: .+ \\(left for ${REPO}\\)[ \\t]*$`, 'm');
+const symbolicRef = (name, repository) => symbolicBlockerRef({ part: name, repository });
 
 // What one filing run from `thisRepository` does with the parts table. Takes
 // parts from a parse with no errors; a Waits for name matching no part, or a
@@ -358,7 +356,7 @@ function planFiling(parts, thisRepository) {
 
 module.exports = {
   PARTS_HEADING, APPROVAL_HEADING, FILING_HEADING, FRAME_HEADING, APPROACHES_HEADING, WORTH_IT_HEADING,
-  MEASURE_KEY, TABLE_HEADER, SIZES, REPO_RE, SYMBOLIC_LINE_RE, sameRepository,
+  MEASURE_KEY, TABLE_HEADER, SIZES, REPO_RE, sameRepository,
   markRepository, leftForRepository, parseParts, partsDigest, approvalLine, checkApproval, estimate, measure, unitSlug, designSlug, markFiled,
   planFiling,
 };
