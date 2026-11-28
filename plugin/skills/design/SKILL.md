@@ -54,8 +54,14 @@ The session's folder is `docs/superpowers/specs/{YYYY-MM-DD}-{slug}/` in the rep
    ```
 
    It prints `steps`, `resumeAt`, `round`, `action` and `openSerious`. Exit 2 → stop and show stderr. When the session knows this checkout's `owner/name` — the cloud session's repository, or the one step 10 passed to `check-approval` — add `--repository {owner/name}` to this and every later `status` call: a part marked `left for` that repository keeps step 10 open, and without the flag `status` reads the repository from the origin, so an origin that names none counts every `left for …` mark as marked.
+
+   `resumeAt: 'complete'` with a non-empty `unresolvedLeftFor` means no repository resolved while parts are marked `left for` those repositories, so this may be one of them with nothing filed yet. Before telling the maintainer the session is finished, get this checkout's `owner/name` (`gh repo view --json nameWithOwner -q .nameWithOwner`, or ask the maintainer) and run `status` again with it, then follow that output:
+
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/bin/design-session.js" status --folder "{folder}" --repository {owner/name}
+   ```
 5. **Session model check** (`## Model`, The session) — every start, whatever step `status` resumes at, before going on.
-6. Continue at `resumeAt`, in the mode `action` names, and load only that step's sub-file (`## Steps`). `resumeAt: 'complete'` → say the session is finished and render `## Next Actions`; nothing is rewritten.
+6. Continue at `resumeAt`, in the mode `action` names, and load only that step's sub-file (`## Steps`). `resumeAt: 'complete'` with no `unresolvedLeftFor` → say the session is finished and render `## Next Actions`; nothing is rewritten.
 
 Run `status` again after each step finishes, and follow it; never pick the next step by hand.
 

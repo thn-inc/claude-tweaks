@@ -405,6 +405,7 @@ const PINNED_CALLS = [
   ['design-session.js', CHECK_APPROVAL_CALL, STEP10],
   ['resolve-profile.js', EXCEPTION_CALL, SKILL],
   ['resolve-policy.js', 'node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values worktree-always', SKILL],
+  ['design-session.js', `${DS} status --folder "{folder}" --repository {owner/name}`, SKILL],
 ];
 
 test('every --flag in a pinned call line is one the CLI accepts', () => {
@@ -611,16 +612,26 @@ test('step 10 files only through /claude-tweaks:specify', () => {
   pinFacts(STEP10, [
     [/`no-repository`, run it again with `--repository \{owner\/name\}`/, 'step 10: no-repository retries with --repository or stops'],
     [/run step 9 again/, 'step 10: a refusal sends the session back to step 9'],
-    [/^## Filing\nStatus: done\nParent: \{record ref\}$/m, 'step 10: the Filing section and its Parent line'],
-    [/`Parent: none — one part`/, 'step 10: the collapse form of Parent'],
+    [/^## Filing\nStatus: done\nParent: \{owner\/name\}#\{N\}$/m, 'step 10: the Filing section and its Parent line'],
+    [/`Parent: \{owner\/name\} — none, one part`/, 'step 10: the collapse form of Parent'],
     [/A part marked `left for \{owner\/name\}` belongs to that repository/, 'step 10: parts for another repository are left'],
     [/`\/claude-tweaks:design \{argument\}` there/, 'step 10: the other repository resumes with design there'],
     [/`\/claude-tweaks:specify`'s Step 9 committed this folder, its marks included; the copy for that repository is taken from that commit\./, 'step 10: specify Step 9 committed the folder, the copy comes from that commit'],
     [/`status` there reads that repository, so the part marked `left for` it keeps step 10 open: it resumes at step 10/, 'step 10: the other repository\'s status resumes at step 10'],
     [/Then run `status` \(with `--repository \{owner\/name\}` when section 1 passed it to `check-approval`\)/, 'step 10: the closing status call carries --repository'],
     [/check every part carries an Issue mark and none is still marked `left for` this checkout's repository/, 'step 10: section 2 checks no part is still left for this repository'],
-    [/A later repository's run keeps the earlier `Parent:` line and adds its own below it as `Parent: \{owner\/name\}#\{N\}`\./, 'step 10: a later run adds its own Parent line'],
+    [/Every `Parent:` line is repository-qualified, in the same form as the filed marks: `\{owner\/name\}` is this checkout's repository \(`check-approval`'s `thisRepository`\), and `\{N\}` the parent's issue number under `github-issues` or its record id under `local-files`\./, 'step 10: every Parent line is repository-qualified'],
+    [/There is one line per repository: a later repository's run keeps the earlier lines and adds its own below them\./, 'step 10: one Parent line per repository'],
   ]);
+});
+
+const assertNoBareParent = (text) => assert.ok(!/\{record ref\}|Parent: #|backend's own form/.test(text), 'step 10 writes a bare Parent line');
+
+test('step 10 never writes a bare, unqualified Parent line', () => {
+  assertNoBareParent(STEP10);
+  for (const planted of ['Parent: {record ref}', 'Parent: #7000', '`{record ref}` is in the backend\'s own form']) {
+    assert.throws(() => assertNoBareParent(`${STEP10}\n${planted}\n`), { message: 'step 10 writes a bare Parent line' }, planted);
+  }
 });
 
 const assertNoUncommitted = (text) => assert.ok(!/uncommitted/i.test(text), 'step 10 calls the folder uncommitted');
@@ -639,7 +650,18 @@ test('status takes --repository when the session knows this checkout\'s reposito
     [/When the session knows this checkout's `owner\/name` — the cloud session's repository, or the one step 10 passed to `check-approval` — add `--repository \{owner\/name\}` to this and every later `status` call/, 'SKILL: status takes --repository when the session knows it'],
     [/a part marked `left for` that repository keeps step 10 open/, 'SKILL: a part left for this repository keeps step 10 open'],
     [/an origin that names none counts every `left for …` mark as marked\./, 'SKILL: with no repository, every left-for mark counts as marked'],
+    [/`resumeAt: 'complete'` with a non-empty `unresolvedLeftFor` means no repository resolved while parts are marked `left for` those repositories/, 'SKILL: complete with unresolvedLeftFor is not yet finished'],
+    [/Before telling the maintainer the session is finished, get this checkout's `owner\/name` \(`gh repo view --json nameWithOwner -q \.nameWithOwner`, or ask the maintainer\) and run `status` again with it/, 'SKILL: get owner/name and rerun status first'],
+    [/`resumeAt: 'complete'` with no `unresolvedLeftFor` → say the session is finished/, 'SKILL: finished only with no unresolvedLeftFor'],
   ]);
+  // the rerun rule sits in item 4, before item 6 says the session is finished
+  const order = (text) => requireOrder(text, 'with a non-empty `unresolvedLeftFor`', 'with no `unresolvedLeftFor` → say the session is finished', 'rerun before finished');
+  const section = sectionOf(SKILL, '## Session folder and resume');
+  order(section);
+  const para = section.split('\n').find((l) => l.includes('with a non-empty `unresolvedLeftFor`'));
+  const moved = `${section.replace(`${para}\n`, '')}\n${para}\n`;
+  assert.notEqual(moved, section);
+  assert.throws(() => order(moved), { message: 'rerun before finished: order violated' });
   const usageHas = (usage) => assert.ok(usage.split('\n').some((l) => l.includes('design-session.js status --folder <dir> [--repository <owner/name>]')), 'status no longer takes --repository');
   const usage = cliUsage('design-session.js');
   usageHas(usage);

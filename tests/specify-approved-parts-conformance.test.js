@@ -425,6 +425,8 @@ const T5_REGIONS = {
   step4: (text) => between(text, '## Step 4: Link and order', '## Step 5: Multi-Persona Red-Team', 'closeout Step 4'),
   step6: (text) => between(text, '3. **Scope check**', '4. **Ambiguity check**', 'closeout Step 6 scope check'),
   check5: (text) => between(text, '5. **Design-doc coverage**', 'When all five checks come back clean', 'closeout Step 6 check 5'),
+  staged: (text) => between(text, '**Resolving a `### Staged for caller` row.**', '`{ref}` is `#{N}` under', 'closeout staged-row resolution'),
+  rtConsole: (text) => between(text, '   - **A run directory resolved**', '   - **No run directory resolved**', 'red-team staged-proposal bullet'),
   kept: (text) => between(text, '## Step 4: Link and order', '## Step 7: Delete Consumed Artifacts', 'closeout Steps 4-6'),
   step7: (text) => between(text, '## Step 7: Delete Consumed Artifacts', '## Step 9: Summary and Commit', 'closeout Step 7'),
   step9: (text) => between(text, '## Step 9: Summary and Commit', 'By the time Next Actions renders', 'closeout Step 9'),
@@ -444,6 +446,13 @@ const T5_FACTS = {
     [/Under `local-files` there is no other repository's store to edit, so each entry is listed in Step 9's summary instead, with the `ready` it would restore\./, 'W4 local-files lists the entries'],
     [/once all its entries are replaced, add `ready` back only when no other `Blocked by: … \(left for …\)` line remains in its body and the body carries no `<!-- ambiguity:` marker or `## Open Questions` heading/, 'W5 ready comes back once no symbolic line or open finding remains'],
     [/\(with `--add-label ready` when `ready` comes back\)/, 'W6 the gh write adds ready back'],
+    [/an issue this check keeps without `ready` is named in Step 9's summary with its number and the reason\./, 'W7 an issue kept without ready is named in Step 9'],
+  ],
+  staged: [
+    [/no `## Open Questions` heading is left, and no `Blocked by: … \(left for …\)` line remains \(a part left for another repository keeps `ready` off until that repository's run rewrites the line\)\./, 'R4a a staged-row resolution keeps ready off while a left-for line remains'],
+  ],
+  rtConsole: [
+    [/restores `ready`, except while the body still carries a `Blocked by: … \(left for …\)` line: that keeps `ready` off until the later repository's run rewrites it \(`bin\/resolve-ambiguity\.js` prints `readyRestorable: false` then\)\./, 'R4b the Review Console keeps ready off while a left-for line remains'],
   ],
   step6: [
     [/On the approved branch this check does not apply to approved parts: a scope concern on a part goes through `decomposition-mode\.md`'s no-gate rule, which the dispatch prompt's `Approved parts` line states, and the part stays as approved\./, 'C1 Step 6 split and merge never touch an approved part'],
@@ -471,6 +480,7 @@ const T5_FACTS = {
     [/The `### Left for another repository` block lists each part in `filing\.leftFor` with its repository and the rerun line `\/claude-tweaks:design \{argument\}` \(in that repository's checkout, from a copy of the folder as this step commits it; its `status` reads that repository, finds the part marked `left for` it and resumes at step 10\)/, 'S3 block content and rerun line'],
     [/- \{part name\} — left for \{owner\/name\}; copy the design folder, as this step commits it, into that repository's checkout and rerun `\/claude-tweaks:design \{argument\}` there: it resumes at step 10/, 'S7 the template rerun line copies the committed folder'],
     [/With an empty `filing\.file` the summary says nothing was filed here and lists the left and skipped parts\./, 'S4 empty filing.file'],
+    [/each issue whose `ready` Step 4 kept off \(`\{owner\/name\}#\{n\} — ready stays off: \{an ambiguity marker \| an Open Questions heading \| another left-for line\} remains`\)/, 'S8 an issue Step 4 kept without ready, with its number and why'],
   ],
   row: [
     [/\| Approved parts \(omit unless Step 2 took the approved branch\) \| `check-approval`'s JSON \(parts, measure, designSlug, and `filing`'s file, skipped, leftFor and writeBack lists\), the folder path, and the no-gate rule in one sentence, since the subagent never reads `decomposition-mode\.md` \|/, 'H1 row inputs carry the JSON, folder and the no-gate rule'],
@@ -484,7 +494,7 @@ const T5_FACTS = {
   ],
 };
 const missingT5 = Object.fromEntries(Object.entries(T5_FACTS).map(([k, f]) => [k, missingFactsOf(f)]));
-const T5_SOURCE = { rt: RT, step4: CLOSE, step6: CLOSE, check5: CLOSE, kept: CLOSE, step7: CLOSE, step9: CLOSE, row: HANDOFF, prompt: HANDOFF };
+const T5_SOURCE = { rt: RT, rtConsole: RT, step4: CLOSE, step6: CLOSE, check5: CLOSE, staged: CLOSE, kept: CLOSE, step7: CLOSE, step9: CLOSE, row: HANDOFF, prompt: HANDOFF };
 const allFacts = (region) => T5_FACTS[region].map(([, f]) => f);
 
 function pinT5(region, ...prefixes) {
@@ -579,7 +589,29 @@ test('parts left for another repository appear in the Step 9 summary', () => {
   const moved = CLOSE.replace(`${para}\n\n`, '').replace('## Step 9: Summary and Commit\n', () => `${para}\n\n## Step 9: Summary and Commit\n`);
   assert.notEqual(moved, CLOSE);
   assert.ok(moved.includes(para));
-  assert.deepEqual(missingT5.step9(T5_REGIONS.step9(moved)), ['S1 Artifacts line', 'S3 block content and rerun line', 'S4 empty filing.file']);
+  assert.deepEqual(missingT5.step9(T5_REGIONS.step9(moved)), ['S1 Artifacts line', 'S3 block content and rerun line', 'S4 empty filing.file', 'S8 an issue Step 4 kept without ready, with its number and why']);
+});
+
+test('an issue whose ready the write-back held back is named in Step 9 with its number and why', () => {
+  pinT5('step4', 'W7');
+  pinT5('step9', 'S8');
+});
+
+test('neither the staged-row resolution nor the Review Console re-readies an issue with a left-for line', () => {
+  pinT5('staged', 'R4a');
+  pinT5('rtConsole', 'R4b');
+  // Control: the old staged-row wording, with no left-for clause, goes red on R4a alone.
+  const old = CLOSE.replace(", no `## Open Questions` heading is left, and no `Blocked by: … (left for …)` line remains (a part left for another repository keeps `ready` off until that repository's run rewrites the line).",
+    ' and no `## Open Questions` heading is left.');
+  assert.notEqual(old, CLOSE);
+  assert.deepEqual(missingT5.staged(T5_REGIONS.staged(old)), ['R4a a staged-row resolution keeps ready off while a left-for line remains']);
+  // Control: the console clause moved below the staged-proposal bullet, still in the file, leaves that bullet red.
+  const clause = RT.match(T5_FACTS.rtConsole[0][0])[0];
+  const tail = clause.slice('restores `ready`'.length);
+  const moved = RT.replace(tail, '.').replace('   Everything below this bar keeps the existing no-stop flow.', (m) => `${m}\n   The console ${clause}`);
+  assert.notEqual(moved, RT);
+  assert.ok(T5_FACTS.rtConsole[0][0].test(moved), 'the moved clause must stay in the file');
+  assert.deepEqual(missingT5.rtConsole(T5_REGIONS.rtConsole(moved)), ['R4b the Review Console keeps ready off while a left-for line remains']);
 });
 
 test('Step 6 never splits or merges an approved part, and Steps 4-6 keep the design folder', () => {

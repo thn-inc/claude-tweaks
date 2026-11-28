@@ -23,10 +23,10 @@ Then run `parts --folder "{folder}"` and check every part carries an Issue mark 
 ```
 ## Filing
 Status: done
-Parent: {record ref}
+Parent: {owner/name}#{N}
 ```
 
-`{record ref}` is in the backend's own form: `#{N}` under `github-issues`, the record id under `local-files`. A collapse to one part writes `Parent: none — one part`. A later repository's run keeps the earlier `Parent:` line and adds its own below it as `Parent: {owner/name}#{N}`. Append the filing to `## Decisions` (`by: model`).
+Every `Parent:` line is repository-qualified, in the same form as the filed marks: `{owner/name}` is this checkout's repository (`check-approval`'s `thisRepository`), and `{N}` the parent's issue number under `github-issues` or its record id under `local-files`. There is one line per repository: a later repository's run keeps the earlier lines and adds its own below them. A collapse to one part writes `Parent: {owner/name} — none, one part`. Append the filing to `## Decisions` (`by: model`).
 
 ## 4. Parts for another repository
 
