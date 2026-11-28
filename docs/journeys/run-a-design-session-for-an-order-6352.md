@@ -105,16 +105,17 @@ files:
 - **Should understand:**
   - The first run's summary lists each part marked `left for {owner/name}`. Those sub-issues' blockers on another repository are written `Blocked by: {part} (left for {owner/name})`, and the issues stay out of `ready` until the later run rewrites that line to `owner/name#N`.
   - `status --repository {owner/name}` (or a parseable origin) reads a part `left for` this repository as unfiled, so the session resumes at step 10 and files only that repository's parts. When no repository resolves, a `complete` status lists `unresolvedLeftFor`, and the session reruns with `--repository` before calling itself finished.
-- **Red flags:** The second repository's session reading `complete` while a part is still left for it. A `ready` sub-issue that is still blocked by a part with no issue number.
+  - An order of two or more approved parts keeps a parent in this repository too, even when only one part is filed here. `## Filing` keeps the first repository's `Parent:` line and adds this repository's below it.
+- **Red flags:** The second repository's session reading `complete` while a part is still left for it. The first repository's `Parent:` line replaced rather than kept. A `ready` sub-issue that is still blocked by a part with no issue number.
 
 ### 10. Resume a lost session, then hand off — status
 - **URL:** `/claude-tweaks:design {topic|#N}` again, then Next Actions
-- **Action:** Rerun the same command after a crash or a stop. When the session is finished, take Next Actions' recommendation.
+- **Action:** Rerun the same command after a crash or a stop. When the session is finished, run the `/claude-tweaks:flow` command `/claude-tweaks:specify`'s filing summary recommends for the filed parts.
 - **Should feel:** Like nothing was lost. The session picks up at the first step whose file or section is missing or unfinished, and repeats nothing.
 - **Should understand:**
   - `design-session.js status` prints `resumeAt`, `round` and `action`, and the skill follows it rather than choosing the next step by hand. A folder with `evidence.md` and a done frame resumes at step 3.
   - A resumed round dispatches only the perspectives still missing from it. A resumed filing skips every part already marked `owner/name#N`.
-  - A session that stopped early renders only the resume line.
+  - The design skill's own Next Actions is only the resume line, whether the session finished or stopped early: the flow commands come from `/claude-tweaks:specify`'s summary, not from this skill.
 - **Red flags:** Evidence or the frame rewritten on resume. A reader re-run whose notes were already recorded. A part filed twice. The skill starting a build.
 
 ## Origin
