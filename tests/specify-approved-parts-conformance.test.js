@@ -372,8 +372,10 @@ const HANDOFF = read('mechanical-handoff.md');
 const T5_REGIONS = {
   rt: (text) => between(text, '5. **Decision-worthy findings stage instead', '6. **Compose-then-write-once**', 'red-team write-back step 5'),
   step4: (text) => between(text, '## Step 4: Link and order', '## Step 5: Multi-Persona Red-Team', 'closeout Step 4'),
+  step6: (text) => between(text, '3. **Scope check**', '4. **Ambiguity check**', 'closeout Step 6 scope check'),
+  kept: (text) => between(text, '## Step 4: Link and order', '## Step 7: Delete Consumed Artifacts', 'closeout Steps 4-6'),
   step7: (text) => between(text, '## Step 7: Delete Consumed Artifacts', '## Step 9: Summary and Commit', 'closeout Step 7'),
-  step9: (text) => between(text, '## Step 9: Summary and Commit', '**Resolving a `### Staged for caller` row.**', 'closeout Step 9'),
+  step9: (text) => between(text, '## Step 9: Summary and Commit', 'By the time Next Actions renders', 'closeout Step 9'),
   row: (text) => between(text, '\n## Required inputs', '\n## Dispatch prompt', 'handoff Required inputs'),
   prompt: (text) => between(text, '\n## Dispatch prompt', '\nStatus line (required)', 'handoff dispatch prompt'),
 };
@@ -389,15 +391,25 @@ const T5_FACTS = {
     [/A line that is not there is left alone and named in Step 9's summary\./, 'W3 a missing line is named, not edited'],
     [/Under `local-files` there is no other repository's store to edit, so each entry is listed in Step 9's summary instead\./, 'W4 local-files lists the entries'],
   ],
+  step6: [
+    [/On the approved branch this check does not apply to approved parts: a scope concern on a part goes through `decomposition-mode\.md`'s no-gate rule, which the dispatch prompt's `Approved parts` line states, and the part stays as approved\./, 'C1 Step 6 split and merge never touch an approved part'],
+  ],
+  kept: [
+    [/before Step 7 \(on the approved branch the design folder is kept, never deleted\)/, 'D1 Step 4 keeps the folder'],
+    [/Before deleting the design doc \(on the approved branch the design folder is kept, never deleted\), dispatch persona/, 'D2 Step 5 keeps the folder'],
+    [/Before deleting the design doc \(on the approved branch the design folder is kept, never deleted\), look at every record/, 'D3 Step 6 keeps the folder'],
+  ],
   step7: [
     [/\| Approved parts list \(Step 2's approved branch\) \| \*\*No\*\* — the design folder is kept, since it holds the evidence and the notes\./, 'K1 the folder is kept'],
     [/Mark each part this run filed `\{thisRepository\}#\{N\}` and each part in `filing\.leftFor` `left for \{owner\/name\}` \(never a part in `filing\.skipped`\)/, 'K2 filed, left-for and skipped marks'],
-    [/write the marks to a session temp JSON file with the Write tool, run `mark-filed`, and commit `design\.md` with this step's commit\./, 'K3 marks file by Write, then mark-filed and commit'],
+    [/write the marks to a session temp JSON file with the Write tool, run `mark-filed`, and leave `design\.md` staged for Step 9's commit\./, 'K3 marks file by Write, then mark-filed, design.md left for Step 9'],
     [/node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/design-session\.js" mark-filed --folder "\{folder\}" --marks "\{marks file\}"/, 'K4 the mark-filed call'],
-    [/The `git rm` block below does not run on this branch\./, 'K5 git rm does not run'],
+    [/The `git rm` block below does not run on this branch, and Step 7 makes no commit of its own: Step 9's commit stages the marked `design\.md`\./, 'K5 git rm does not run, Step 9 commits'],
   ],
   step9: [
-    [/Under the approved branch\*\* the summary's Artifacts line reads `Design folder kept: \{path\} \(parts marked filed\)`/, 'S1 Artifacts line'],
+    [/the design-doc deletion\/marker from Step 7 \(on the approved branch, the marked `design\.md`\)/, 'S5 Step 9 commit stages the marked design.md'],
+    [/docs\/: design-doc removal\/marker, or the marked design\.md on the approved branch/, 'S6 bash comment names the marked design.md'],
+    [/Under the approved branch\*\* \(`\{argument\}` is `check-approval`'s `designSlug` with each `-` read as a space, which slugs back to the same design folder\) the summary's Artifacts line reads `Design folder kept: \{path\} \(parts marked filed\)`/, 'S1 Artifacts line'],
     [/### Left for another repository \(optional/, 'S2 the block heading in the template'],
     [/The `### Left for another repository` block lists each part in `filing\.leftFor` with its repository and the rerun line `\/claude-tweaks:design \{argument\}` \(step 10, in that repository's checkout\)/, 'S3 block content and rerun line'],
     [/With an empty `filing\.file` the summary says nothing was filed here and lists the left and skipped parts\./, 'S4 empty filing.file'],
@@ -413,7 +425,7 @@ const T5_FACTS = {
   ],
 };
 const missingT5 = Object.fromEntries(Object.entries(T5_FACTS).map(([k, f]) => [k, missingFactsOf(f)]));
-const T5_SOURCE = { rt: RT, step4: CLOSE, step7: CLOSE, step9: CLOSE, row: HANDOFF, prompt: HANDOFF };
+const T5_SOURCE = { rt: RT, step4: CLOSE, step6: CLOSE, kept: CLOSE, step7: CLOSE, step9: CLOSE, row: HANDOFF, prompt: HANDOFF };
 const allFacts = (region) => T5_FACTS[region].map(([, f]) => f);
 
 function pinT5(region, ...prefixes) {
@@ -478,9 +490,26 @@ test('the design folder is kept and its parts marked filed', () => {
 
 test('the mark-filed call is one the CLI accepts', () => {
   const usage = execFileSync(process.execPath, [path.join(ROOT, 'plugin', 'bin', 'design-session.js'), '--help'], { encoding: 'utf8' });
-  const accepted = (text) => text.includes('design-session.js mark-filed --folder <dir> --marks <file>');
-  assert.ok(accepted(usage), 'mark-filed no longer takes --folder and --marks');
-  assert.equal(accepted(usage.replace('--marks', '--file')), false);
+  const flagsOf = (line) => [...line.matchAll(/--[a-z-]+/g)].map((m) => m[0]);
+  const closeoutCall = (text) => {
+    const line = text.split('\n').find((l) => l.startsWith('node "${CLAUDE_PLUGIN_ROOT}/bin/design-session.js" mark-filed'));
+    assert.ok(line, 'the closeout must carry the mark-filed call');
+    return line;
+  };
+  const accepted = (text, usageText) => {
+    const usageLine = usageText.split('\n').find((l) => l.includes('design-session.js mark-filed'));
+    assert.ok(usageLine, 'the CLI usage must list mark-filed');
+    const allowed = flagsOf(usageLine);
+    assert.ok(allowed.length > 0, 'the usage line must list flags');
+    const used = flagsOf(closeoutCall(text));
+    assert.ok(used.length > 0, 'the closeout call must pass flags');
+    for (const flag of used) assert.ok(allowed.includes(flag), `mark-filed flag ${flag} is not in the CLI usage`);
+  };
+  accepted(CLOSE, usage);
+  // Control: a renamed flag in the closeout copy goes red on its own message.
+  const renamed = CLOSE.replace('mark-filed --folder "{folder}" --marks', 'mark-filed --folder "{folder}" --marksfile');
+  assert.notEqual(renamed, CLOSE);
+  assert.throws(() => accepted(renamed, usage), { message: /mark-filed flag --marksfile is not in the CLI usage/ });
 });
 
 test('parts left for another repository appear in the Step 9 summary', () => {
@@ -492,6 +521,24 @@ test('parts left for another repository appear in the Step 9 summary', () => {
   assert.notEqual(moved, CLOSE);
   assert.ok(moved.includes(para));
   assert.deepEqual(missingT5.step9(T5_REGIONS.step9(moved)), ['S1 Artifacts line', 'S3 block content and rerun line', 'S4 empty filing.file']);
+});
+
+test('Step 6 never splits or merges an approved part, and Steps 4-6 keep the design folder', () => {
+  pinT5('step6', 'C');
+  pinT5('kept', 'D');
+  // Move-out control: the Step 6 carve-out moved to Step 7 stays in the file but leaves the scope check red.
+  const clause = ' On the approved branch this check does not apply to approved parts';
+  const line = CLOSE.split('\n').find((l) => l.includes(clause));
+  assert.ok(line, 'carve-out must sit on the scope check line');
+  const tail = line.slice(line.indexOf(clause));
+  const moved = CLOSE.replace(tail, '').replace('## Step 7: Delete Consumed Artifacts (only when fully decomposed)\n', (m) => `${m}\n${tail.trim()}\n`);
+  assert.notEqual(moved, CLOSE);
+  assert.ok(moved.includes(tail.trim()));
+  assert.deepEqual(missingT5.step6(T5_REGIONS.step6(moved)), allFacts('step6'));
+  // The deletion wording alone, with the keep note stripped from Step 5, goes red on D2 only.
+  const stripped = CLOSE.replace('Before deleting the design doc (on the approved branch the design folder is kept, never deleted), dispatch', 'Before deleting the design doc, dispatch');
+  assert.notEqual(stripped, CLOSE);
+  assert.deepEqual(missingT5.kept(T5_REGIONS.kept(stripped)), ['D2 Step 5 keeps the folder']);
 });
 
 test('the mechanical handoff carries the approved parts', () => {
