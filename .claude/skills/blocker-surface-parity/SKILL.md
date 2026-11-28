@@ -49,7 +49,7 @@ Many surfaces read a record's blockers, and each must reach the same verdict, or
 Derive the current reader list instead of trusting the table:
 
 ```bash
-git grep -n -l -E "openBlockerRefs|foreignBlockerBlocks|partitionByOpenBodyBlockers|bodyForeignBlockers|openNativeBlockerRefs" -- plugin tests
+git grep -n -l -E "openBlockerRefs|foreignBlockerBlocks|partitionByOpenBodyBlockers|bodyForeignBlockers|openNativeBlockerRefs|symbolicBlocker" -- plugin tests
 ```
 
 ## Anti-Patterns
