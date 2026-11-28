@@ -14,8 +14,9 @@
 // The *-file forms exist so record-derived text never passes through a shell
 // (backticks, `$(...)`, quotes); one trailing newline is stripped from each.
 // Also reports whether `ready` is restorable: the body passes the spec-shaped
-// gate (materialize-format.js's shapeGate) and no `## Open Questions` heading
-// survives. The caller writes the body back (`gh issue edit --body-file` /
+// gate (materialize-format.js's shapeGate), no `## Open Questions` heading
+// survives, and no symbolic `Blocked by: … (left for owner/name)` line remains
+// (i.e. the ready-grant gate, bin/ready-gate.js, passes). The caller writes the body back (`gh issue edit --body-file` /
 // `create_or_update_file`) and conditionally re-adds `ready` — see
 // specify/decomposition-mode-closeout.md's "Staged for caller" procedure.
 // Exit 0 = replaced, --out written (stdout: {out, markersRemaining,

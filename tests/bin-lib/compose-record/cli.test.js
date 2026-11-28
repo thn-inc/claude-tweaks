@@ -42,6 +42,27 @@ test('composes and writes the body; prints the envelope', () => {
   assert.equal(envelope.out, outFile);
 });
 
+test('AC2.1: a ready payload whose body has a symbolic blocker composes without ready and warns once', () => {
+  const { symbolicBody, SYMBOLIC_REF } = require('../../helpers/symbolic-blocker-fixture');
+  const dir = tmpDir();
+  const payloadFile = path.join(dir, 'payload.json');
+  const outFile = path.join(dir, 'body.md');
+  fs.writeFileSync(payloadFile, JSON.stringify({ title: 't', body: symbolicBody(), type: 'task', ready: true }));
+  const out = [];
+  assert.equal(run([payloadFile, '--out', outFile], deps(out)), 0);
+  assert.ok(!JSON.parse(streamOf(out, 'out')).labels.includes('ready'));
+  const warnings = streamOf(out, 'err').split('\n').filter((l) => l.startsWith('Warning: ready withheld'));
+  assert.equal(warnings.length, 1);
+  assert.ok(warnings[0].endsWith(SYMBOLIC_REF));
+});
+
+test('AC3.1: --check accepts a body whose blocker line is symbolic', () => {
+  const { symbolicBody } = require('../../helpers/symbolic-blocker-fixture');
+  const file = path.join(tmpDir(), 'body.md');
+  fs.writeFileSync(file, symbolicBody());
+  assert.equal(run(['--check', file], deps([])), 0);
+});
+
 test('escaping-safety: quotes, backticks, newlines, and $() in title/body survive verbatim', () => {
   const dir = tmpDir();
   const payloadFile = path.join(dir, 'payload.json');

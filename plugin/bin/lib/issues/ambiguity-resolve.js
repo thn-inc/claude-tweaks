@@ -7,7 +7,7 @@
 const {
   shapeGate, authoredText,
 } = require('./materialize-format');
-const { hasSymbolicBlocker } = require('./blocker-lines');
+const { symbolicBlockerRefs } = require('./blocker-lines');
 
 // The opening of a red-team marker (specify/red-team.md's write-back). Same
 // pattern the spec-shaped gate uses (materialize-format.js's
@@ -39,8 +39,19 @@ function hasOpenQuestionsSection(body) {
 // line remains: no blocker surface reads one, so `ready` would show the record
 // unblocked until the later repository's run rewrites it (design-session/parts.js).
 function readyRestorable(body) {
-  if (typeof body !== 'string') return false;
-  return shapeGate(body).ok && !hasOpenQuestionsSection(body) && !hasSymbolicBlocker(body);
+  return readyGate(body).ok;
+}
+
+// The ready-grant gate: every reason `ready` must stay off a body, in order —
+// shapeGate's missing entries, a surviving Open Questions heading, then one
+// `symbolic-blocker: {ref}` per symbolic Blocked by line. readyRestorable is
+// its boolean; bin/ready-gate.js prints it for the skills that grant `ready`.
+function readyGate(body) {
+  if (typeof body !== 'string') return { ok: false, reasons: ['body-not-a-string'] };
+  const reasons = [...(shapeGate(body).missing || [])];
+  if (hasOpenQuestionsSection(body)) reasons.push('open-questions-section');
+  for (const ref of symbolicBlockerRefs(body)) reasons.push(`symbolic-blocker: ${ref}`);
+  return { ok: reasons.length === 0, reasons };
 }
 
 // Deletes an Open Questions section whose table has no data rows left (only
@@ -114,6 +125,7 @@ function resolveAmbiguityMarker(body, markerText, resolutionText) {
 module.exports = {
   countAmbiguityMarkers,
   hasOpenQuestionsSection,
+  readyGate,
   readyRestorable,
   resolveAmbiguityMarker,
 };

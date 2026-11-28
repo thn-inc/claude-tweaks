@@ -138,6 +138,10 @@ function run(argv, deps = realDeps) {
     return 5;
   }
 
+  if (result.readyWithheld && result.readyWithheld.length) {
+    deps.stderr(`Warning: ready withheld — a Blocked by: … (left for owner/name) line remains: ${result.readyWithheld.join(', ')}\n`);
+  }
+
   deps.stdout(JSON.stringify({ title: result.title, type: result.type, labels: result.labels, out: o.out }) + '\n');
   return 0;
 }

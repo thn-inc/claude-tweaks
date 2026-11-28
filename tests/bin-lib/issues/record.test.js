@@ -22,6 +22,20 @@ test('recordPayload assembles labels for a born-ready health record', () => {
   assert.strictEqual(result.body, 'b\n\n<!-- work-fingerprint: ch:abc -->\nwork-fingerprint: ch:abc');
 });
 
+test('AC2.1: recordPayload withholds ready from a body with a symbolic blocker and says so', () => {
+  const { SYMBOLIC_LINE, SYMBOLIC_REF, symbolicBody } = require('../../helpers/symbolic-blocker-fixture');
+  const withheld = recordPayload({ title: 't', body: symbolicBody(), type: 'task', ready: true });
+  assert.ok(!withheld.labels.includes('ready'));
+  assert.deepStrictEqual(withheld.readyWithheld, [SYMBOLIC_REF]);
+  const rewritten = symbolicBody().replace(SYMBOLIC_LINE, 'Blocked by thn-inc/other#7004');
+  const kept = recordPayload({ title: 't', body: rewritten, type: 'task', ready: true });
+  assert.ok(kept.labels.includes('ready'));
+  assert.ok(!('readyWithheld' in kept));
+  const notReady = recordPayload({ title: 't', body: symbolicBody(), type: 'task', ready: false });
+  assert.deepStrictEqual(notReady.labels, []);
+  assert.ok(!('readyWithheld' in notReady));
+});
+
 test('recordPayload assembles a plain capture record', () => {
   const result = recordPayload({ title: 't', body: 'b', type: 'feature', origin: 'capture' });
   assert.deepStrictEqual(result.labels, ['by:capture']);
