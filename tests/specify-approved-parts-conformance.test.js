@@ -396,7 +396,7 @@ test('a local-files slug collision keeps the part slug in the fingerprint', () =
 const READY_REGION = (text) => between(text, '**Only sub-issues get `ready`**', '**Fresh manifest for this invocation.**', 'ready region');
 const READY_FACTS = [
   [/\*\*No `ready` on a symbolic blocker\.\*\* On an approved parts list \(`decomposition-mode\.md` Step 2\), a sub-issue whose blockers include a `symbolic` one, a part left for another repository and written `Blocked by: \{ref\}`, is created without `ready`/, 'Y1 a symbolic blocker creates the sub-issue without ready'],
-  [/Drop `--label ready` from its create call and pass `ready: false` in its payload; under `local-files`, leave `stage: 'ready'` out of its facets\./, 'Y2 no ready label, payload flag or local stage'],
+  [/Drop `--label ready` from its create call and pass `ready: false` in its payload\./, 'Y2 no ready label or payload flag'],
   [/The later repository's run restores `ready` when it writes the `owner\/name#N` form \(`decomposition-mode-closeout\.md` Step 4\)\./, 'Y3 the later run restores ready'],
 ];
 const missingReady = missingFactsOf(READY_FACTS);
@@ -480,7 +480,7 @@ const T5_FACTS = {
     [/The `### Left for another repository` block lists each part in `filing\.leftFor` with its repository and the rerun line `\/claude-tweaks:design \{argument\}` \(in that repository's checkout, from a copy of the folder as this step commits it; its `status` reads that repository, finds the part marked `left for` it and resumes at step 10\)/, 'S3 block content and rerun line'],
     [/- \{part name\} — left for \{owner\/name\}; copy the design folder, as this step commits it, into that repository's checkout and rerun `\/claude-tweaks:design \{argument\}` there: it resumes at step 10/, 'S7 the template rerun line copies the committed folder'],
     [/With an empty `filing\.file` the summary says nothing was filed here and lists the left and skipped parts\./, 'S4 empty filing.file'],
-    [/each issue whose `ready` Step 4 kept off \(`\{owner\/name\}#\{n\} — ready stays off: \{an ambiguity marker \| an Open Questions heading \| another left-for line\} remains`\)/, 'S8 an issue Step 4 kept without ready, with its number and why'],
+    [/each issue whose `ready` Step 4 kept off \(`\{owner\/name\}#\{n\} — ready stays off: \{each of the gate's printed `reasons`\} remains`\)/, 'S8 an issue Step 4 kept without ready, with its number and why'],
   ],
   row: [
     [/\| Approved parts \(omit unless Step 2 took the approved branch\) \| `check-approval`'s JSON \(parts, measure, designSlug, and `filing`'s file, skipped, leftFor and writeBack lists\), the folder path, and the no-gate rule in one sentence, since the subagent never reads `decomposition-mode\.md` \|/, 'H1 row inputs carry the JSON, folder and the no-gate rule'],

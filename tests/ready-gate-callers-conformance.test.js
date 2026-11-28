@@ -8,10 +8,16 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
+const { scratchDir } = require('./helpers/tmp-dir');
+const { SYMBOLIC_LINE, symbolicBody } = require('./helpers/symbolic-blocker-fixture');
 const { missingFactsOf, assertEachPatternGoesRed, lineStartingWith } = require('./helpers/conformance-asserts');
+const { sessionTmpPath } = require('../plugin/bin/lib/session-tmp');
 
+const PLUGIN_ROOT = path.join(__dirname, '..', 'plugin');
 const SPECIFY_DIR = path.join(__dirname, '..', 'plugin', 'skills', 'specify');
 const collapse = (text) => text.replace(/\s+/g, ' ');
 const STAMPING = readText(path.join(SPECIFY_DIR, 'shaping-mode-stamping.md'));
@@ -50,6 +56,10 @@ const REGIONS = [
     [/`"readyRestorable":true`, the ready-grant gate's verdict \(`readyGate`, the gate `bin\/ready-gate\.js` runs\)/, 'readyRestorable is named as the ready-grant gate verdict'],
     [/no `## Open Questions` heading is left, and no `Blocked by: … \(left for …\)` line remains/, 'the gate keeps its three named conditions'],
   ]],
+  ['decomposition-mode-closeout Step 9 summary', region(CLOSE, '**Under the approved branch**'), [
+    [/each issue whose `ready` Step 4 kept off \(`\{owner\/name\}#\{n\} — ready stays off: \{each of the gate's printed `reasons`\} remains`\)/, 'a kept-off issue is named with the gate\'s printed reasons'],
+    [/each issue whose write-back failed on `ready-gate\.js` exit 2 \(`\{owner\/name\}#\{n\} — write-back failed: "\{the gate's stderr line\}"`\)/, 'an exit-2 write-back failure is named with its number and the quoted stderr line'],
+  ]],
   ['record-creation-subissues local-files create', region(SUB, '**`work-backend: local-files`** — use `createRecord`'), [
     [/`stage: 'ready'` \(only on `ready-gate\.js` exit 0, above\)/, 'the local-files create paragraph conditions stage ready on the gate'],
   ]],
@@ -77,4 +87,85 @@ test('no prose still says a blocker surface cannot read the symbolic line', () =
   assert.equal(stale.test(SUB), false, 'record-creation-subissues.md');
   assert.equal(stale.test(DECOMP), false, 'decomposition-mode.md');
   assert.equal(stale.test('No blocker surface reads a `symbolic` line'), true, 'control: the stale phrase is matched');
+});
+
+// The pre-fix Step 9 alternatives and the pre-fix repetition (4eff44164c): frozen controls so each
+// absence check below is shown to match the text it bans.
+const OLD_STEP9_ALTERNATIVES = '`{owner/name}#{n} — ready stays off: {an ambiguity marker | an Open Questions heading | another left-for line} remains`';
+const OLD_LOCAL_STAGE_REPEAT = "pass `ready: false` in its payload; under `local-files`, leave `stage: 'ready'` out of its facets.";
+
+test('Step 9 names the gate\'s printed reasons, not a fixed list of three', () => {
+  const step9 = region(CLOSE, '**Under the approved branch**');
+  const alternatives = /\{an ambiguity marker \| an Open Questions heading \| another left-for line\}/;
+  assert.equal(alternatives.test(step9), false, 'the fixed alternatives have no slot for a missing spec section');
+  assert.equal(alternatives.test(OLD_STEP9_ALTERNATIVES), true, 'control: the old alternatives are matched');
+});
+
+test('record-creation-subissues states the local-files ready rule once', () => {
+  const para = region(SUB, '**No `ready` on a symbolic blocker.**');
+  const repeat = /under `local-files`, leave `stage: 'ready'` out of its facets/;
+  assert.equal(repeat.test(para), false, 'the trailing clause repeats the gate sentence earlier in the paragraph');
+  assert.equal(repeat.test(OLD_LOCAL_STAGE_REPEAT), true, 'control: the old clause is matched');
+  assert.equal(para.split("`stage: 'ready'`").length - 1, 1, 'the paragraph names the ready stage once');
+});
+
+// The local-files createRecord fence takes `stage` from the gate's exit code. Pinned byte-wise, then run.
+const FENCE = /```bash\n([\s\S]*?)```/;
+function createFence(text) {
+  const at = text.indexOf('**`work-backend: local-files`** — use `createRecord`');
+  assert.notEqual(at, -1, 'the local-files createRecord paragraph is missing');
+  const m = FENCE.exec(text.slice(at));
+  assert.ok(m, 'no bash fence follows the local-files createRecord paragraph');
+  return m[1];
+}
+const FENCE_FACTS = [
+  [/node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/ready-gate\.js" "\$SPECIFY_SUB_ISSUE_BODY" SUB_ISSUE_GATE=\$\?/, 'the fence runs ready-gate.js on the body file and keeps its exit code'],
+  [/if \(process\.argv\[8\] === '2'\) throw new Error\('ready-gate\.js exited 2: the create fails'\);/, 'gate exit 2 fails the create'],
+  [/\.\.\.\(process\.argv\[8\] === '0' \? \{ stage: 'ready' \} : \{\}\)/, 'the ready stage joins the facets only on gate exit 0'],
+  [/"\$SPECIFY_SUB_ISSUE_BODY" "\$SUB_ISSUE_GATE"\)/, 'the exit code is passed to the create as argv'],
+];
+const OLD_FENCE_FACETS = "facets: { type: process.argv[3], risk: process.argv[4], size: process.argv[5], ceremony: process.argv[6], stage: 'ready' }";
+
+test('the local-files createRecord fence takes stage from the gate exit code (byte pins)', () => {
+  const fence = collapse(createFence(SUB));
+  const missing = missingFactsOf(FENCE_FACTS);
+  assert.deepEqual(missing(fence), []);
+  assertEachPatternGoesRed(fence, FENCE_FACTS, missing);
+  const unconditional = /ceremony: process\.argv\[6\], stage: 'ready' \}/;
+  assert.equal(unconditional.test(fence), false, 'an ungated stage ready is back in the facets');
+  assert.equal(unconditional.test(collapse(OLD_FENCE_FACETS)), true, 'control: the old facets are matched');
+});
+
+const SKIP_RUN = process.platform === 'win32' ? 'bash fence' : false;
+function runFence(body) {
+  const dir = scratchDir('ready-gate-fence-');
+  const sessionId = 'ready-gate-fence-test';
+  const bodyPath = sessionTmpPath(sessionId, 'specify-sub-issue-body.md', { tmpdir: dir });
+  if (body !== null) fs.writeFileSync(bodyPath, body);
+  fs.writeFileSync(path.join(dir, 'fingerprints.json'), '{}');
+  const env = {
+    ...process.env, TMPDIR: dir, TMP: dir, TEMP: dir, CLAUDE_CODE_SESSION_ID: sessionId,
+    CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, DESIGN_DOC_SLUG: 'doc', UNIT_SLUG: 'unit-a', SUB_ISSUE_TITLE: 'Unit A',
+    SUB_ISSUE_TYPE: 'task', SUB_ISSUE_RISK: 'low', SUB_ISSUE_SIZE: 'small', SUB_ISSUE_CEREMONY: 'standard',
+    SPECIFY_SUB_ISSUE_EXISTING: '', SPECIFY_EXISTING_FINGERPRINTS: path.join(dir, 'fingerprints.json'),
+  };
+  const r = spawnSync('bash', ['-c', createFence(SUB)], { cwd: dir, env, encoding: 'utf8' });
+  const specs = path.join(dir, 'specs');
+  const files = fs.existsSync(specs) ? fs.readdirSync(specs).filter((f) => f.endsWith('.md')) : [];
+  return { r, files, text: files.map((f) => fs.readFileSync(path.join(specs, f), 'utf8')).join('\n') };
+}
+
+test('run: the fence files a ready stage only when the gate exits 0', { skip: SKIP_RUN }, () => {
+  const ok = runFence(symbolicBody().replace(SYMBOLIC_LINE, 'Blocked by thn-inc/other#7004'));
+  assert.equal(ok.files.length, 1, ok.r.stderr);
+  assert.match(ok.text, /stage: ready/, 'gate exit 0 files the ready stage');
+
+  const held = runFence(symbolicBody());
+  assert.equal(held.files.length, 1, held.r.stderr);
+  assert.doesNotMatch(held.text, /stage: ready/, 'gate exit 1 files the record without the ready stage');
+  assert.match(held.r.stdout, /symbolic-blocker: /, 'the gate prints its reasons');
+
+  const broken = runFence(null);
+  assert.equal(broken.files.length, 0, 'gate exit 2 creates nothing');
+  assert.match(broken.r.stderr, /ready-gate\.js exited 2: the create fails/);
 });

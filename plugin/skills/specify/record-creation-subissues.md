@@ -12,7 +12,7 @@ session-scoped temp path below resolves per `_shared/session-tmp-root.md` — ci
 
 **Only sub-issues get `ready`** — and only sub-issues carry `risk:*`/`size:*` scoring; a kept parent gets neither. One per work unit from Step 2, in any order — Step 4 does the linking once every number exists, so creation order doesn't matter.
 
-**No `ready` on a symbolic blocker.** On an approved parts list (`decomposition-mode.md` Step 2), a sub-issue whose blockers include a `symbolic` one, a part left for another repository and written `Blocked by: {ref}`, is created without `ready`: the line names no issue and no resolvable state, so `ready` stays off until a later run rewrites it to `owner/name#N`. `recordPayload` withholds `ready` from a body that carries such a line and returns `readyWithheld`, and `compose-record.js` prints one `Warning: ready withheld` line, so under `github-issues` a missed drop still files the sub-issue without `ready`. Under `local-files`, `createRecord` never goes through `recordPayload`: run `node "${CLAUDE_PLUGIN_ROOT}/bin/ready-gate.js" "$SPECIFY_SUB_ISSUE_BODY"` and set `stage: 'ready'` only on exit 0; on exit 1 file it without the ready stage and name the printed `reasons` in the run's summary, on exit 2 the create fails. Drop `--label ready` from its create call and pass `ready: false` in its payload; under `local-files`, leave `stage: 'ready'` out of its facets. The later repository's run restores `ready` when it writes the `owner/name#N` form (`decomposition-mode-closeout.md` Step 4).
+**No `ready` on a symbolic blocker.** On an approved parts list (`decomposition-mode.md` Step 2), a sub-issue whose blockers include a `symbolic` one, a part left for another repository and written `Blocked by: {ref}`, is created without `ready`: the line names no issue and no resolvable state, so `ready` stays off until a later run rewrites it to `owner/name#N`. `recordPayload` withholds `ready` from a body that carries such a line and returns `readyWithheld`, and `compose-record.js` prints one `Warning: ready withheld` line, so under `github-issues` a missed drop still files the sub-issue without `ready`. Under `local-files`, `createRecord` never goes through `recordPayload`: run `node "${CLAUDE_PLUGIN_ROOT}/bin/ready-gate.js" "$SPECIFY_SUB_ISSUE_BODY"` and set `stage: 'ready'` only on exit 0; on exit 1 file it without the ready stage and name the printed `reasons` in the run's summary, on exit 2 the create fails. Drop `--label ready` from its create call and pass `ready: false` in its payload. The later repository's run restores `ready` when it writes the `owner/name#N` form (`decomposition-mode-closeout.md` Step 4).
 
 **Fresh manifest for this invocation.** Once, before the per-work-unit loop below processes its first unit, reset the batch manifest that Accumulate this unit (below) appends to. That file is session-scoped, so without this reset a second decomposition in the same session — or a resumed one, whose loop re-accumulates every unit including Idempotency-resolved ones — would carry earlier entries into this batch's cross-reference pass (`crossReferenceKeyFiles`) and Ceremony tally, which both read it:
 
@@ -152,15 +152,18 @@ else
     const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');
     console.log(sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, 'specify-sub-issue-body.md') || require('path').join(require('os').tmpdir(), 'specify-sub-issue-body.md'))
   ")
+  node "${CLAUDE_PLUGIN_ROOT}/bin/ready-gate.js" "$SPECIFY_SUB_ISSUE_BODY"
+  SUB_ISSUE_GATE=$?
   SUB_ISSUE_ID=$(node -e "const {createRecord}=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/local-store.js');
+    if (process.argv[8] === '2') throw new Error('ready-gate.js exited 2: the create fails');
     const body = require('fs').readFileSync(process.argv[7], 'utf8');
     const record = createRecord('specs', {
       slug: process.argv[1],
       title: process.argv[2],
       body,
-      facets: { type: process.argv[3], risk: process.argv[4], size: process.argv[5], ceremony: process.argv[6], stage: 'ready' }
+      facets: { type: process.argv[3], risk: process.argv[4], size: process.argv[5], ceremony: process.argv[6], ...(process.argv[8] === '0' ? { stage: 'ready' } : {}) }
     });
-    console.log(record.id)" -- "$UNIT_SLUG" "$SUB_ISSUE_TITLE" "$SUB_ISSUE_TYPE" "$SUB_ISSUE_RISK" "$SUB_ISSUE_SIZE" "$SUB_ISSUE_CEREMONY" "$SPECIFY_SUB_ISSUE_BODY")
+    console.log(record.id)" -- "$UNIT_SLUG" "$SUB_ISSUE_TITLE" "$SUB_ISSUE_TYPE" "$SUB_ISSUE_RISK" "$SUB_ISSUE_SIZE" "$SUB_ISSUE_CEREMONY" "$SPECIFY_SUB_ISSUE_BODY" "$SUB_ISSUE_GATE")
 
   node -e "
     const fs = require('fs');
