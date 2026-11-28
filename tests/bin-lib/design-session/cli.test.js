@@ -245,7 +245,12 @@ function orderFolder(t, text = APPROVED, name = '2026-11-27-factory-v7-slice1') 
   fs.writeFileSync(path.join(dir, 'design.md'), text);
   return dir;
 }
-const withRemote = (url) => ({ remoteUrl: () => { if (url instanceof Error) throw url; return url; } });
+// The gate reads GH_HOST and ~/.config/gh/hosts.yml unless told otherwise: pin both so the verdict is the fixture's, whatever the shell exports.
+const GATE = { env: {}, readFile: () => { throw new Error('no hosts.yml'); } };
+const withRemote = (url, gateDeps = GATE) => ({
+  remoteUrl: () => { if (url instanceof Error) throw url; return url; },
+  gateDeps,
+});
 const writeMarks = (t, value) => {
   const file = path.join(scratch(t), 'marks.json');
   fs.writeFileSync(file, typeof value === 'string' ? value : JSON.stringify(value));
@@ -325,7 +330,7 @@ test('check-approval: an origin on an unknown host is refused as no-repository, 
 test('check-approval hands the folder to the remote seam', (t) => {
   const dir = orderFolder(t);
   const seen = [];
-  const r = call(['check-approval', '--folder', dir], '/', { remoteUrl: (d) => { seen.push(d); return REMOTE; } });
+  const r = call(['check-approval', '--folder', dir], '/', { remoteUrl: (d) => { seen.push(d); return REMOTE; }, gateDeps: GATE });
   assert.strictEqual(r.code, 0);
   assert.deepStrictEqual(seen, [dir]);
 });
@@ -398,4 +403,62 @@ test('a missing design.md is exit 2 for parts, digest, check-approval and mark-f
 test('--help names the four new verbs and --marks', (t) => {
   const r = call(['--help'], scratch(t));
   for (const word of ['parts', 'digest', 'check-approval', 'mark-filed', '--marks']) assert.ok(r.stdout.includes(word), word);
+});
+
+test('check-approval: an exported GH_HOST decides the host, on purpose', (t) => {
+  const r = call(['check-approval', '--folder', orderFolder(t)], '/', withRemote('git@git.corp.invalid:thn-inc/claude-tweaks.git', { ...GATE, env: { GH_HOST: 'github.com' } }));
+  assert.strictEqual(r.code, 0, r.stdout);
+  assert.strictEqual(JSON.parse(r.stdout).thisRepository, 'thn-inc/claude-tweaks');
+});
+
+test('check-approval --repository is thisRepository and skips the origin read', (t) => {
+  const boom = { remoteUrl: () => { throw new Error('origin must not be read'); }, gateDeps: GATE };
+  const r = call(['check-approval', '--folder', orderFolder(t), '--repository', REPO], '/', boom);
+  assert.strictEqual(r.code, 0, r.stderr + r.stdout);
+  const out = JSON.parse(r.stdout);
+  assert.strictEqual(out.thisRepository, REPO);
+  assert.strictEqual(out.filing.file.length, 4);
+  const other = call(['check-approval', '--folder', orderFolder(t), '--repository', 'thn-inc/other'], '/', boom);
+  assert.strictEqual(other.code, 0);
+  assert.strictEqual(JSON.parse(other.stdout).filing.file.length, 0);
+});
+
+test('--repository: a malformed value or another verb is exit 2', (t) => {
+  const dir = orderFolder(t);
+  for (const argv of [['check-approval', '--folder', dir, '--repository', 'nope'], ['check-approval', '--folder', dir, '--repository', 'a/b/c'],
+    ['parts', '--folder', dir, '--repository', REPO], ['status', '--folder', dir, '--repository', REPO]]) {
+    const r = call(argv, '/', withRemote(REMOTE));
+    assert.strictEqual(r.code, 2, JSON.stringify(argv));
+    assert.ok(r.stderr.includes('--repository'), JSON.stringify(argv));
+  }
+});
+
+test('mark-filed reports only the cells it changed; re-marking and an empty file leave design.md untouched', (t) => {
+  const dir = orderFolder(t);
+  const file = path.join(dir, 'design.md');
+  const first = call(['mark-filed', '--folder', dir, '--marks', writeMarks(t, { Parser: `${REPO}#7001` })], '/');
+  assert.deepStrictEqual(JSON.parse(first.stdout).marked, ['Parser']);
+  const before = fs.statSync(file).mtimeMs;
+  const again = call(['mark-filed', '--folder', dir, '--marks', writeMarks(t, { Parser: `${REPO}#7001` })], '/');
+  assert.strictEqual(again.code, 0);
+  assert.deepStrictEqual(JSON.parse(again.stdout).marked, []);
+  const empty = call(['mark-filed', '--folder', dir, '--marks', writeMarks(t, {})], '/');
+  assert.strictEqual(empty.code, 0);
+  assert.deepStrictEqual(JSON.parse(empty.stdout), { marked: [], unknown: [], conflicts: [] });
+  assert.strictEqual(fs.statSync(file).mtimeMs, before);
+});
+
+test('a symlinked design.md is exit 2 for every parts verb, and nothing is written through it', (t) => {
+  const dir = orderFolder(t);
+  const outside = path.join(scratch(t), 'o.md');
+  fs.writeFileSync(outside, APPROVED);
+  fs.rmSync(path.join(dir, 'design.md'));
+  fs.symlinkSync(outside, path.join(dir, 'design.md'));
+  const marks = writeMarks(t, { Parser: `${REPO}#7001` });
+  for (const argv of [['parts'], ['digest'], ['check-approval'], ['mark-filed', '--marks', marks]]) {
+    const r = call([argv[0], '--folder', dir, ...argv.slice(1)], '/', withRemote(REMOTE));
+    assert.strictEqual(r.code, 2, argv[0]);
+    assert.ok(r.stderr.includes('design.md') && r.stderr.includes('symlink'), argv[0]);
+  }
+  assert.strictEqual(fs.readFileSync(outside, 'utf8'), APPROVED);
 });

@@ -27,9 +27,11 @@
 //   design-session.js digest --folder <dir>
 //       Prints { ok: true, digest } (the approval digest), or { ok: false,
 //       reason: 'missing-sections' } when Frame, Approaches or Parts is absent.
-//   design-session.js check-approval --folder <dir>
+//   design-session.js check-approval --folder <dir> [--repository <owner/name>]
 //       Prints checkApproval's verdict plus designSlug, thisRepository (the origin
 //       remote of the checkout holding --folder) and, when approved, the filing plan.
+//       --repository names thisRepository directly and skips the origin read (a cloud
+//       sandbox's proxy origin does not parse).
 //   design-session.js mark-filed --folder <dir> --marks <file>
 //       Writes the Issue marks in the JSON object at --marks ({ "Part": "owner/name#N"
 //       | "left for owner/name" }) into design.md in place; prints
@@ -61,7 +63,7 @@ const { checkEvidence } = require('./lib/design-session/evidence');
 const { PERSPECTIVES, checkNotes } = require('./lib/design-session/notes');
 const { composeBrief } = require('./lib/design-session/brief');
 const {
-  parseParts, partsDigest, checkApproval, estimate, markFiled, planFiling, designSlug,
+  parseParts, partsDigest, checkApproval, estimate, markFiled, markRepository, planFiling, designSlug,
 } = require('./lib/design-session/parts');
 const { remoteUrl, gateOriginRepo } = require('./lib/repo-resolve');
 
@@ -81,7 +83,7 @@ const USAGE = [
   '  design-session.js brief --folder <dir> --reader <name> [--round <N>]',
   '  design-session.js parts --folder <dir>',
   '  design-session.js digest --folder <dir>',
-  '  design-session.js check-approval --folder <dir>',
+  '  design-session.js check-approval --folder <dir> [--repository <owner/name>]',
   '  design-session.js mark-filed --folder <dir> --marks <file>',
   '  design-session.js --help',
   '',
@@ -92,16 +94,17 @@ const USAGE = [
   '  --folder <dir>    the session folder, relative to the current directory or absolute',
   '  --round <N>       the notes round, 1 to 4',
   '  --reader <name>   user | smallest | ownership | token-cost | introduction | pre-mortem | builder',
+  '  --repository <r>  this checkout owner/name, instead of reading origin (check-approval only)',
   '  --marks <file>    JSON object of Part name -> "owner/name#N" | "left for owner/name" (mark-filed only)',
   '',
   'Exit: 0 ok / check passed, 1 check failed or brief refused (JSON on stdout), 2 malformed invocation.',
   '',
 ].join('\n');
 
-const VALUE_FLAGS = new Set(['--topic', '--root', '--folder', '--round', '--reader', '--marks']);
+const VALUE_FLAGS = new Set(['--topic', '--root', '--folder', '--round', '--reader', '--marks', '--repository']);
 const BOOL_FLAGS = new Set(['--create']);
 const VERBS = new Set(['folder', 'status', 'check-evidence', 'check-notes', 'brief', 'parts', 'digest', 'check-approval', 'mark-filed']);
-const MARK_RE = /^(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#\d+|left for [A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)$/;
+const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
 class UsageError extends Error {}
 
@@ -206,6 +209,7 @@ function runPartsVerb(verb, folder, flags, deps) {
   if (verb === 'mark-filed') need(flags, ['--marks']);
   else if (flags['--marks'] !== undefined) throw new UsageError('--marks applies only to the mark-filed verb');
   const designFile = path.join(folder, 'design.md');
+  if (lstatType(designFile, { fsImpl: deps.fs }).type === 'symlink') throw new UsageError(`design.md is a symlink, refusing to use it: ${designFile}`);
   const designText = readFileOrUsage(deps, designFile, 'design.md');
 
   if (verb === 'parts') {
@@ -226,7 +230,9 @@ function runPartsVerb(verb, folder, flags, deps) {
 
   if (verb === 'check-approval') {
     const verdict = checkApproval(designText);
-    const { repository: thisRepository, refusal } = thisRepositoryOf(deps, folder);
+    const { repository: thisRepository, refusal } = flags['--repository'] === undefined
+      ? thisRepositoryOf(deps, folder)
+      : { repository: flags['--repository'], refusal: null };
     const out = { ...verdict, designSlug: designSlug(path.basename(folder)), thisRepository };
     if (refusal) out.repositoryRefusal = refusal;
     if (verdict.approved && thisRepository === null) {
@@ -241,7 +247,7 @@ function runPartsVerb(verb, folder, flags, deps) {
 
   // mark-filed
   const marks = readMarks(deps, flags);
-  const invalid = Object.keys(marks).filter((name) => typeof marks[name] !== 'string' || !MARK_RE.test(marks[name]));
+  const invalid = Object.keys(marks).filter((name) => typeof marks[name] !== 'string' || markRepository(marks[name]) === null);
   if (invalid.length) {
     json(deps, { ok: false, reason: 'invalid-marks', invalid });
     return EXIT_REFUSED;
@@ -251,12 +257,16 @@ function runPartsVerb(verb, folder, flags, deps) {
     json(deps, { marked: [], unknown: r.unknown, conflicts: r.conflicts });
     return EXIT_REFUSED;
   }
-  deps.fs.writeFileSync(designFile, r.text);
-  json(deps, { marked: Object.keys(marks), unknown: [], conflicts: [] });
+  if (r.marked.length) deps.fs.writeFileSync(designFile, r.text);
+  json(deps, { marked: r.marked, unknown: [], conflicts: [] });
   return EXIT_OK;
 }
 
 function runVerb(verb, flags, deps) {
+  if (flags['--repository'] !== undefined) {
+    if (verb !== 'check-approval') throw new UsageError('--repository applies only to the check-approval verb');
+    if (!REPOSITORY_RE.test(flags['--repository'])) throw new UsageError('--repository must be owner/name');
+  }
   if (flags['--create'] && verb !== 'folder') throw new UsageError('--create applies only to the folder verb');
   if (verb === 'folder') {
     need(flags, ['--topic', '--root']);

@@ -266,6 +266,7 @@ function markFiled(designText, marks) {
   const byName = new Map(rows.slice(1).map((i) => [cellsOf(lines[i])[1], i]));
   const unknown = [];
   const conflicts = [];
+  const marked = [];
   for (const [name, mark] of Object.entries(marks)) {
     const markRepo = markRepository(mark);
     if (markRepo === null) {
@@ -285,19 +286,21 @@ function markFiled(designText, marks) {
     }
     segs[ISSUE_COL + 1] = ` ${mark} `;
     lines[i] = segs.join('|');
+    marked.push(name);
   }
-  return { text: lines.join(eol), unknown, conflicts };
+  return { text: lines.join(eol), marked, unknown, conflicts };
 }
 
 // What one filing run from `thisRepository` does with the parts table. Takes
 // parts from a parse with no errors; a Waits for name matching no part, or a
 // this-repository part that is neither fileable nor filed, throws.
 function planFiling(parts, thisRepository) {
+  const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
   const filed = (p) => p.issue !== null && FILED_RE.test(p.issue) && markRepository(p.issue) === p.repository;
-  const file = parts.filter((p) => p.repository === thisRepository
-    && (p.issue === null || p.issue === `left for ${thisRepository}`));
+  const file = parts.filter((p) => same(p.repository, thisRepository)
+    && (p.issue === null || (LEFT_RE.test(p.issue) && same(markRepository(p.issue), thisRepository))));
   for (const p of parts) {
-    if (p.repository === thisRepository && !file.includes(p) && !filed(p)) {
+    if (same(p.repository, thisRepository) && !file.includes(p) && !filed(p)) {
       throw new Error(`planFiling: part '${p.name}' of ${thisRepository} is neither fileable nor filed (Issue '${p.issue}')`);
     }
   }
@@ -313,13 +316,13 @@ function planFiling(parts, thisRepository) {
   };
   const writeBack = [];
   for (const p of parts) {
-    if (p.repository === thisRepository || !filed(p)) continue;
+    if (same(p.repository, thisRepository) || !filed(p)) continue;
     for (const w of p.waitsFor) if (fileNames.has(w)) writeBack.push({ issue: p.issue, waitsOn: w });
   }
   return {
     file: file.map((p) => ({ ...p, blockers: p.waitsFor.map(blocker) })),
     skipped: parts.filter(filed).map((p) => p.name),
-    leftFor: parts.filter((p) => p.repository !== thisRepository && !filed(p))
+    leftFor: parts.filter((p) => !same(p.repository, thisRepository) && !filed(p))
       .map((p) => ({ name: p.name, repository: p.repository })),
     writeBack,
   };
@@ -328,6 +331,6 @@ function planFiling(parts, thisRepository) {
 module.exports = {
   PARTS_HEADING, APPROVAL_HEADING, FILING_HEADING, FRAME_HEADING, APPROACHES_HEADING, WORTH_IT_HEADING,
   MEASURE_KEY, TABLE_HEADER, SIZES,
-  parseParts, partsDigest, approvalLine, checkApproval, estimate, measure, unitSlug, designSlug, markFiled,
+  markRepository, parseParts, partsDigest, approvalLine, checkApproval, estimate, measure, unitSlug, designSlug, markFiled,
   planFiling,
 };

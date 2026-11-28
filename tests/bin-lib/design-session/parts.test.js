@@ -138,6 +138,24 @@ test('markFiled keeps CRLF line endings', () => {
   assert.equal(r.text, markFiled(APPROVED_FOUR, { Parser: `${REPO}#7001` }).text.replace(/\n/g, '\r\n'));
 });
 
+test('planFiling compares the repository case-insensitively and keeps each cell\'s own spelling', () => {
+  const parts = parseParts(designWith(TWO_REPO_ROWS())).parts;
+  const plan = planFiling(parts, REPO.toUpperCase());
+  assert.deepEqual(plan.file.map((p) => p.name), ['Parser', 'Docs and help']);
+  assert.equal(plan.file[0].repository, REPO);
+  assert.deepEqual(plan.leftFor, [{ name: 'Skill steps', repository: OTHER }]);
+  const left = parseParts(designWith(TWO_REPO_ROWS({ Parser: `left for ${REPO}` }))).parts;
+  assert.deepEqual(planFiling(left, REPO.toUpperCase()).file.map((p) => p.name), ['Parser', 'Docs and help']);
+});
+
+test('markFiled reports the names it changed', () => {
+  const text = designWith(TWO_REPO_ROWS());
+  const first = markFiled(text, { Parser: `${REPO}#7001` });
+  assert.deepEqual(first.marked, ['Parser']);
+  assert.deepEqual(markFiled(first.text, { Parser: `${REPO}#7001` }).marked, []);
+  assert.deepEqual(markFiled(text, { Nope: `${REPO}#7001` }).marked, []);
+});
+
 test('planFiling', () => {
   const first = planFiling(parseParts(designWith(TWO_REPO_ROWS())).parts, REPO);
   assert.deepEqual(first.file.map((p) => p.name), ['Parser', 'Docs and help']);
