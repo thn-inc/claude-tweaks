@@ -31,6 +31,7 @@ const REGIONS = [
     [/After `compose-record\.js --check` passes and before the `gh issue edit`/, 'it runs after the check and before the write'],
     [/Exit 1 drops `--add-label ready` from that call \(and adds `--remove-label ready` when the record carries it\)/, 'exit 1 drops the ready add and removes a carried ready'],
     [/names the printed `reasons` in the run's summary/, 'exit 1 names the printed reasons in the summary'],
+    [/A bare-drain shape that gets exit 1 still adds `--add-label "shaped:headless"`, as a held record does, so the record is left without `ready` but stamped/, 'a bare-drain exit 1 keeps the shaped:headless stamp'],
     [/Exit 2 stops/, 'exit 2 stops'],
     [/The `gh`-absent write and the `local-files` `writeRecord` follow the same rule \(`facets\.stage` stays out of the facets on exit 1\)/, 'the gh-absent and local-files variants follow the same rule'],
   ]],
@@ -42,14 +43,22 @@ const REGIONS = [
   ['decomposition-mode-closeout Step 4 write-back', region(CLOSE, "**Approved parts list (Step 2's approved branch) — write back"), [
     [/--add-label ready/, 'the region holds the write that adds ready'],
     [/add `ready` back only when `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/ready-gate\.js"` exits 0 on the composed body/, 'ready comes back only when ready-gate.js exits 0 on the composed body'],
+    [/on exit 2 the write-back fails for that issue, which Step 9's report names with its number/, 'exit 2 fails the write-back and is named in Step 9'],
     [/an issue this check keeps without `ready` is named in Step 9's summary with its number and the reason\. The reason is the printed `reasons`/, 'exit 1 keeps ready off and names the reasons in Step 9'],
   ]],
   ['decomposition-mode-closeout Step 9 readyRestorable', region(CLOSE, 'Exit 3 means the text is not in the body'), [
     [/`"readyRestorable":true`, the ready-grant gate's verdict \(`readyGate`, the gate `bin\/ready-gate\.js` runs\)/, 'readyRestorable is named as the ready-grant gate verdict'],
     [/no `## Open Questions` heading is left, and no `Blocked by: … \(left for …\)` line remains/, 'the gate keeps its three named conditions'],
   ]],
+  ['record-creation-subissues local-files create', region(SUB, '**`work-backend: local-files`** — use `createRecord`'), [
+    [/`stage: 'ready'` \(only on `ready-gate\.js` exit 0, above\)/, 'the local-files create paragraph conditions stage ready on the gate'],
+  ]],
+  ['shaping-mode-stamping local-files write', region(STAMPING, '**`work-backend: local-files`:** write'), [
+    [/setting `facets.stage: 'ready'` \(only on `ready-gate\.js` exit 0, above;/, 'the local-files write conditions stage ready on the gate'],
+  ]],
   ['record-creation-subissues symbolic blocker', region(SUB, '**No `ready` on a symbolic blocker.**'), [
-    [/`recordPayload` withholds `ready` from a body that carries such a line and returns `readyWithheld`, and `compose-record\.js` prints one `Warning: ready withheld` line, so a missed drop still files the sub-issue without `ready`/, 'recordPayload withholds ready and compose-record warns'],
+    [/`recordPayload` withholds `ready` from a body that carries such a line and returns `readyWithheld`, and `compose-record\.js` prints one `Warning: ready withheld` line, so under `github-issues` a missed drop still files the sub-issue without `ready`/, 'recordPayload withholds ready and compose-record warns, scoped to github-issues'],
+    [/Under `local-files`, `createRecord` never goes through `recordPayload`: run `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/ready-gate\.js" "\$SPECIFY_SUB_ISSUE_BODY"` and set `stage: 'ready'` only on exit 0/, 'local-files sub-issue stage ready only on gate exit 0'],
     [/the line names no issue and no resolvable state, so `ready` stays off until a later run rewrites it to `owner\/name#N`/, 'the lasting reason ready stays off'],
   ]],
 ];
