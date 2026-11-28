@@ -43,8 +43,16 @@ const checkGit = ({ ls, head, fetchFails = false, priorAncestor = true }) => {
   git.calls = 0;
   return git;
 };
-const countingGh = (prs) => {
-  const gh = () => { gh.calls += 1; return JSON.stringify(prs); };
+// #4058: a closed PR is a prior attempt only with a trusted `Attempt N failed` issue comment just before its
+// `closedAt`, so the fake answers the issue-comment read with one by default.
+const CLOSED_AT = '2026-10-21T12:00:00Z';
+const TOMBSTONE_COMMENT = {
+  body: 'Attempt 1 failed: tests red. Claim released, will retry.',
+  authorAssociation: 'MEMBER',
+  createdAt: '2026-10-21T11:59:55Z',
+};
+const countingGh = (prs, comments = [TOMBSTONE_COMMENT]) => {
+  const gh = (args) => { gh.calls += 1; return JSON.stringify(args && args[0] === 'issue' ? { comments } : prs); };
   gh.calls = 0;
   return gh;
 };
@@ -64,6 +72,7 @@ const closedPr = (over) => ({
   url: 'https://example.test/pr/9',
   state: 'CLOSED',
   isCrossRepository: false,
+  closedAt: CLOSED_AT,
   headRefOid: SHA_B,
   closingIssuesReferences: [ref(42)],
   body: '<!-- claude-tweaks-run: 2026-10-21T000000-record-42 -->\nclaude-tweaks-run: 2026-10-21T000000-record-42\n\nFixes #42\n',
